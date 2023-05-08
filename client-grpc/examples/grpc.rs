@@ -2,7 +2,7 @@
 
 use std::env;
 #[allow(unused_qualifications, missing_docs)]
-use svc_template_rust_client_grpc::client::{rpc_service_client::RpcServiceClient, ReadyRequest};
+use svc_gis_client_grpc::client::{rpc_service_client::RpcServiceClient, ReadyRequest};
 
 /// Provide endpoint url to use
 pub fn get_grpc_endpoint() -> String {
@@ -20,7 +20,7 @@ pub fn get_grpc_endpoint() -> String {
     format!("http://{}:{}", address, port)
 }
 
-/// Example svc-template-client-grpc
+/// Example svc-gis-client-grpc
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let grpc_endpoint = get_grpc_endpoint();
