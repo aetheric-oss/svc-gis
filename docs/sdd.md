@@ -1,4 +1,4 @@
-# Software Design Document (SDD) - `svc-FIXME` 
+# Software Design Document (SDD) - `svc-gis` 
 
 <center>
 
@@ -8,9 +8,9 @@
 
 ## Overview
 
-This document details the software implementation of FIXME.
+This document details the software implementation of svc-gis.
 
-This service is responsible for FIXME
+This service is the abstraction layer to the PostGIS database, similar to how `svc-storage` is the abstraction layer to the PostgreSQL database.
 
 Attribute | Description
 --- | ---
@@ -22,9 +22,9 @@ Document | Description
 --- | ---
 [High-Level Concept of Operations (CONOPS)](https://github.com/Arrow-air/se-services/blob/develop/docs/conops.md) | Overview of Arrow microservices.
 [High-Level Interface Control Document (ICD)](https://github.com/Arrow-air/se-services/blob/develop/docs/icd.md)  | Interfaces and frameworks common to all Arrow microservices.
-[Requirements - `svc-FIXME`](FIXME - generate a link specifically for this module's view in NocoDB) | Requirements and user stories for this microservice.
-[Concept of Operations - `svc-FIXME`](./conops.md) | Defines the motivation and duties of this microservice.
-[Interface Control Document (ICD) - `svc-FIXME`](./icd.md) | Defines the inputs and outputs of this microservice.
+[Requirements - `svc-gis`](https://nocodb.arrowair.com/dashboard/#/nc/view/5a893886-20f3-41f6-af95-6a235ca52647) | Requirements and user stories for this microservice.
+[Concept of Operations - `svc-gis`](./conops.md) | Defines the motivation and duties of this microservice.
+[Interface Control Document (ICD) - `svc-gis`](./icd.md) | Defines the inputs and outputs of this microservice.
 
 ## Module Attributes
 

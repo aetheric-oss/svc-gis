@@ -1,12 +1,12 @@
 [workspace]
-members = ["server", "client-grpc", "client-rest"]
+members = ["server", "client-grpc"]
 
 [workspace.package]
 edition      = "2021"
 homepage     = "https://www.arrowair.com/docs/documentation/services/intro"
-keywords     = ["vtol", "server", "template"]                               # max 5
+keywords     = ["vtol", "server", "gis"]                                    # max 5
 license-file = "LICENSE"
-repository   = "https://github.com/Arrow-air/svc-template-rust"
+repository   = "https://github.com/Arrow-air/svc-gis"
 
 categories = [
   "aerospace::drones",

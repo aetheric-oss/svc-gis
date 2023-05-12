@@ -1,6 +1,6 @@
 [package]
-description = "Arrow template service GRPC client"
-name        = "svc-template-rust-client-grpc"
+description = "Arrow svc-gis GRPC client"
+name        = "svc-gis-client-grpc"
 version     = "0.2.0-develop.2"
 
 categories.workspace   = true

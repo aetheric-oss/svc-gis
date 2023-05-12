@@ -1,6 +1,6 @@
 //! gRPC server implementation
 
-///module generated from proto/svc-template-rust-grpc.proto
+///module generated from proto/svc-svc-gis-grpc.proto
 pub mod grpc_server {
     #![allow(unused_qualifications, missing_docs)]
     tonic::include_proto!("grpc");
@@ -37,10 +37,10 @@ impl RpcService for GRPCServerImpl {
 ///
 /// # Example:
 /// ```
-/// use svc_template_rust::grpc::server::grpc_server;
-/// use svc_template_rust::config::Config;
+/// use svc_gis::grpc::server::grpc_server;
+/// use svc_gis::config::Config;
 /// async fn example() -> Result<(), tokio::task::JoinError> {
-///     let config = Config::default();
+///     let config = Config::from_env().unwrap();
 ///     tokio::spawn(grpc_server(config)).await
 /// }
 /// ```
