@@ -3,10 +3,72 @@
 # This file was provisioned by Terraform
 # File origin: https://github.com/Arrow-air/tf-github/tree/main/src/templates/rust-svc/docker-compose.yml
 version: '3.6'
+volumes:
+  postgis-data:
+  postgis-ssl:
+
 services:
+  postgis-init:
+    container_name: ${DOCKER_NAME}-example-postgis-init
+    image: ghcr.io/arrow-air/tools/arrow-gis:1.0
+    volumes:
+      - type: volume
+        source: postgis-data
+        target: /var/lib/postgresql
+      - type: volume
+        source: postgis-ssl
+        target: /ssl
+      - type: bind
+        source: scripts/postgis-init.sh
+        target: /scripts/postgis-init.sh
+        read_only: true
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["/scripts/postgis-init.sh"]
+    environment:
+      - UID=postgres
+      - GID=1001
+
+  postgis:
+    container_name: ${DOCKER_NAME}-example-postgis
+    image: ghcr.io/arrow-air/tools/arrow-gis:1.0
+    depends_on:
+      postgis-init:
+        condition: service_completed_successfully
+    restart: always
+    user: "postgres:1001"
+    ports:
+      - 5432:5432
+    healthcheck:
+      test: "pg_isready -d gis -h localhost -p 5432 -U svc_gis"
+      interval: 2s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - type: volume
+        source: postgis-data
+        target: /var/lib/postgresql
+      - type: volume
+        source: postgis-ssl
+        target: /ssl
+        read_only: true
+      - type: bind
+        source: scripts/init.sql
+        target: /docker-entrypoint-initdb.d/init.sql
+    environment:
+      - POSTGRES_PASSWORD=${PG__PASSWORD} # Locally defined for this commit
+      - POSTGRES_USER=${PG__USER}
+    command: >
+      -c ssl=on
+      -c ssl_ca_file=${DB_CA_CERT}
+      -c ssl_cert_file=${DB_CLIENT_CERT}
+      -c ssl_key_file=${DB_CLIENT_KEY}
+
   web-server:
     container_name: ${DOCKER_NAME}-example-server
     image: ${PACKAGE_NAME}:latest
+    depends_on:
+      postgis:
+        condition: service_healthy
     ports:
       - ${HOST_PORT_REST}:${DOCKER_PORT_REST}
       - ${HOST_PORT_GRPC}:${DOCKER_PORT_GRPC}
@@ -23,6 +85,22 @@ services:
       - type: bind
         source: logs/
         target: /logs/
+      - type: volume
+        source: postgis-ssl
+        target: /ssl
+        read_only: true
+    environment:
+      - PG__USER=postgres
+      - PG__DBNAME=gis
+      - PG__HOST=postgis
+      - PG__PORT=5432
+      - PG__SSLMODE=require
+      - DB_CA_CERT
+      - DB_CLIENT_CERT
+      - DB_CLIENT_KEY
+      - DOCKER_PORT_GRPC
+      - LOG_CONFIG
+
   example:
     links:
       - web-server

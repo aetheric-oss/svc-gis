@@ -2,6 +2,7 @@
 
 pub mod config;
 pub mod grpc;
+pub mod postgis;
 
 /// Tokio signal handler that will wait for a user to press CTRL+C.
 /// This signal handler can be used in our [`tonic::transport::Server`] method `serve_with_shutdown`.
