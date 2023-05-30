@@ -147,3 +147,64 @@ pub async fn grpc_server(config: Config, pool: deadpool_postgres::Pool) {
         }
     };
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ut_nodes_request_to_gis_valid() {
+        let request_nodes: Vec<RequestNode> = vec![
+            RequestNode {
+                uuid: "00000000-0000-0000-0000-000000000000".to_string(),
+                latitude: 0.0,
+                longitude: 0.0,
+                node_type: grpc_server::NodeType::Vertiport as i32,
+            },
+            RequestNode {
+                uuid: "00000000-0000-0000-0000-000000000001".to_string(),
+                latitude: 1.0,
+                longitude: 1.0,
+                node_type: grpc_server::NodeType::Waypoint as i32,
+            },
+        ];
+
+        let nodes = match nodes_grpc_to_gis(request_nodes.clone()) {
+            Ok(nodes) => nodes,
+            Err(_) => panic!("Failed to convert nodes."),
+        };
+
+        assert_eq!(nodes.len(), request_nodes.len());
+
+        for (i, node) in nodes.iter().enumerate() {
+            assert_eq!(node.uuid.to_string(), request_nodes[i].uuid);
+            assert_eq!(node.latitude, request_nodes[i].latitude);
+            assert_eq!(node.longitude, request_nodes[i].longitude);
+            // assert_eq!(node.node_type, request_nodes[i].node_type);
+        }
+    }
+
+    #[test]
+    fn ut_nodes_request_to_gis_invalid_uuid() {
+        let request_nodes: Vec<RequestNode> = vec![RequestNode {
+            uuid: "invalid".to_string(),
+            latitude: 0.0,
+            longitude: 0.0,
+            node_type: grpc_server::NodeType::Vertiport as i32,
+        }];
+
+        assert!(nodes_grpc_to_gis(request_nodes).is_err());
+    }
+
+    #[test]
+    fn ut_nodes_request_to_gis_invalid_node_type() {
+        let request_nodes: Vec<RequestNode> = vec![RequestNode {
+            uuid: "invalid".to_string(),
+            latitude: 0.0,
+            longitude: 0.0,
+            node_type: grpc_server::NodeType::Vertiport as i32 + 1,
+        }];
+
+        assert!(nodes_grpc_to_gis(request_nodes).is_err());
+    }
+}

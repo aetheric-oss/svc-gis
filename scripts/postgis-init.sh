@@ -34,14 +34,13 @@ if [ ! -f "${CERT_DIR}/root.crt" ]; then
 
 	# Create Root CA Request
 	openssl req -new -nodes -text -out ${CERT_DIR}/root.csr \
-		-keyout ${KEY_DIR}/root.key -subj "/CN=localhost"
-	chmod og+rwx ${KEY_DIR}/root.key
+	-keyout ${KEY_DIR}/root.key \
+	-subj "/CN=localhost"
 
 	printf "%s\n" "Signing root certificate request...."
 
 	# Sign the Request to Make a Root CA certificate
 	openssl x509 -req -in ${CERT_DIR}/root.csr -text -days 3650 \
-		-extfile /etc/ssl/openssl.cnf -extensions v3_ca \
 		-signkey ${KEY_DIR}/root.key -out ${CERT_DIR}/root.crt
 
 	chown -R ${UID}:${GID} ${CERT_DIR}/root.crt
@@ -53,8 +52,8 @@ if [ ! -f "${CERT_DIR}/client.${CLIENT}.crt" ]; then
 
 	# Create Client CA Request
 	openssl req -new -nodes -text -out ${CERT_DIR}/client.${CLIENT}.csr \
-		-keyout ${KEY_DIR}/client.${CLIENT}.key -subj "/CN=localhost"
-	chmod og+rwx ${KEY_DIR}/client.${CLIENT}.key
+		-keyout ${KEY_DIR}/client.${CLIENT}.key -subj "/CN=postgis"
+	# chmod og+rwx ${KEY_DIR}/client.${CLIENT}.key
 
 	printf "%s\n" "Signing client request with root CA...."
 

@@ -22,11 +22,13 @@ Additionally, these corridors can be assigned a max capacity. Corridors at max c
 
 ### :telescope: Overview
 
+The `arrow` schema defines the following tables:
+
 | Table | Description | 
 | ---- | ---- |
-| [`arrow.rnodes`](#pushpin-arrowrnodes) | This table lists nodes through which aircraft can route.<br>Node types currently includes:<br>- Waypoints<br>- Vertiports |
+| [`rnodes`](#pushpin-rnodes) | This table lists nodes through which aircraft can route.<br>Node types currently includes:<br>- Waypoints<br>- Vertiports |
 
-### :pushpin: `arrow.rnodes`
+### :pushpin: `rnodes`
 
 | Column | Type | Description |
 | ---- | ---- | --- | 
