@@ -55,10 +55,9 @@ services:
         source: scripts/init.sql
         target: /docker-entrypoint-initdb.d/init.sql
     environment:
-      - POSTGRES_PASSWORD=${PG__PASSWORD} # Locally defined for this commit
-      - POSTGRES_USER=${PG__USER}
+        - POSTGRES_HOST_AUTH_METHOD=trust # TODO(R3) - Fix, unsafe
     command: >
-      -c ssl=on
+      -c ssl=true
       -c ssl_ca_file=${DB_CA_CERT}
       -c ssl_cert_file=${DB_CLIENT_CERT}
       -c ssl_key_file=${DB_CLIENT_KEY}
@@ -90,11 +89,11 @@ services:
         target: /ssl
         read_only: true
     environment:
-      - PG__USER=postgres
-      - PG__DBNAME=gis
-      - PG__HOST=postgis
-      - PG__PORT=5432
-      - PG__SSLMODE=require
+      - PG__USER
+      - PG__DBNAME
+      - PG__HOST
+      - PG__PORT
+      - PG__SSLMODE
       - DB_CA_CERT
       - DB_CLIENT_CERT
       - DB_CLIENT_KEY
