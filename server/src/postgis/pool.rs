@@ -4,6 +4,7 @@
 use deadpool_postgres::{ManagerConfig, Pool, RecyclingMethod, Runtime};
 use native_tls::{Certificate, Identity, TlsConnector};
 use postgres_native_tls::MakeTlsConnector;
+// use tokio_postgres::tls::MakeTlsConnect;
 
 use crate::config::Config;
 use std::fs;
@@ -19,54 +20,56 @@ pub fn create_pool(mut config: Config) -> Pool {
 
     let root_cert_file = fs::read(config.db_ca_cert.clone()).unwrap_or_else(|e| {
         panic!(
-            "Unable to read db_ca_cert file [{}]: {}",
+            "(create_pool) unable to read db_ca_cert file [{}]: {}",
             config.db_ca_cert, e
         )
     });
 
     let root_cert = Certificate::from_pem(&root_cert_file).unwrap_or_else(|e| {
         panic!(
-            "Unable to load Certificate from pem file [{}]: {}",
+            "(create_pool) unable to load Certificate from pem file [{}]: {}",
             config.db_ca_cert, e
         )
     });
 
     let client_cert_file = fs::read(client_cert).unwrap_or_else(|e| {
         panic!(
-            "Unable to read client certificate db_client_cert file: {}",
+            "(create_pool) unable to read client certificate db_client_cert file: {}",
             e
-        );
+        )
     });
 
     let client_key_file = fs::read(client_key).unwrap_or_else(|e| {
-        panic!("Unable to read client key db_client_key file: {}", e);
+        panic!(
+            "(create_pool) unable to read client key db_client_key file: {}",
+            e
+        )
     });
 
-    let builder = TlsConnector::builder()
+    let connector = TlsConnector::builder()
         .add_root_certificate(root_cert)
         .identity(
             Identity::from_pkcs8(&client_cert_file, &client_key_file).unwrap_or_else(|e| {
                 panic!(
-                    "Unable to create identity from specified cert and key: {}",
+                    "(create_pool) unable to create identity from specified cert and key: {}",
                     e
-                );
+                )
             }),
         )
         .build()
         .unwrap_or_else(|e| {
             panic!(
-                "Unable to connect build connector custom ca and client certs: {}",
+                "(create_pool) unable to connect build connector custom ca and client certs: {}",
                 e
             )
         });
 
-    let connector = MakeTlsConnector::new(builder);
-
+    let connector = MakeTlsConnector::new(connector);
     let result = config.pg.create_pool(Some(Runtime::Tokio1), connector);
     match result {
         Ok(pool) => pool,
         Err(e) => {
-            panic!("Error creating pool: {}", e);
+            panic!("(create_pool) error creating pool: {}", e);
         }
     }
 }

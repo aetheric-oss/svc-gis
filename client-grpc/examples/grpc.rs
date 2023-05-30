@@ -2,7 +2,9 @@
 
 use std::env;
 #[allow(unused_qualifications, missing_docs)]
-use svc_gis_client_grpc::client::{rpc_service_client::RpcServiceClient, ReadyRequest};
+use svc_gis_client_grpc::client::{
+    rpc_service_client::RpcServiceClient, Node, NodeType, ReadyRequest, UpdateNodesRequest,
+};
 
 /// Provide endpoint url to use
 pub fn get_grpc_endpoint() -> String {
@@ -31,14 +33,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let mut client = RpcServiceClient::connect(grpc_endpoint).await?;
-
     println!("Client created");
 
-    let response = client
-        .is_ready(tonic::Request::new(ReadyRequest {}))
-        .await?;
+    // Update Nodes
+    {
+        let request = tonic::Request::new(UpdateNodesRequest {
+            nodes: vec![
+                Node {
+                    uuid: "00000000-0000-0000-0000-000000000000".to_string(),
+                    latitude: 1.0,
+                    longitude: 1.0,
+                    node_type: NodeType::Vertiport as i32,
+                },
+                Node {
+                    uuid: "00000000-0000-0000-0000-000000000001".to_string(),
+                    latitude: 2.0,
+                    longitude: 2.0,
+                    node_type: NodeType::Waypoint as i32,
+                },
+            ],
+        });
 
-    println!("RESPONSE={:?}", response.into_inner());
+        let response = client.update_nodes(request).await?;
+
+        println!("RESPONSE={:?}", response.into_inner());
+    }
+
+    {
+        let response = client
+            .is_ready(tonic::Request::new(ReadyRequest {}))
+            .await?;
+
+        println!("RESPONSE={:?}", response.into_inner());
+    }
 
     Ok(())
 }
