@@ -14,6 +14,69 @@ pub struct ReadyResponse {
     #[prost(bool, tag = "1")]
     pub ready: bool,
 }
+/// Points in space used for routing (waypoints, vertiports, etc.)
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Node {
+    /// Unique Arrow ID
+    #[prost(string, tag = "1")]
+    pub uuid: ::prost::alloc::string::String,
+    /// Latitude Coordinate
+    #[prost(double, tag = "2")]
+    pub latitude: f64,
+    /// Longitude Coordinate
+    #[prost(double, tag = "3")]
+    pub longitude: f64,
+    /// Node Type
+    #[prost(enumeration = "NodeType", tag = "4")]
+    pub node_type: i32,
+}
+/// Update Nodes Request object
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct UpdateNodesRequest {
+    /// Nodes to update
+    #[prost(message, repeated, tag = "1")]
+    pub nodes: ::prost::alloc::vec::Vec<Node>,
+}
+/// Update Nodes Response object
+#[derive(Eq, Copy)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct UpdateNodesResponse {
+    /// True if updated
+    #[prost(bool, tag = "1")]
+    pub updated: bool,
+}
+/// Node Type
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum NodeType {
+    /// Waypoint
+    Waypoint = 0,
+    /// Vertiport
+    Vertiport = 1,
+}
+impl NodeType {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            NodeType::Waypoint => "WAYPOINT",
+            NodeType::Vertiport => "VERTIPORT",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "WAYPOINT" => Some(Self::Waypoint),
+            "VERTIPORT" => Some(Self::Vertiport),
+            _ => None,
+        }
+    }
+}
 /// Generated client implementations.
 pub mod rpc_service_client {
     #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
@@ -100,6 +163,25 @@ pub mod rpc_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static("/grpc.RpcService/isReady");
+            self.inner.unary(request.into_request(), path, codec).await
+        }
+        pub async fn update_nodes(
+            &mut self,
+            request: impl tonic::IntoRequest<super::UpdateNodesRequest>,
+        ) -> Result<tonic::Response<super::UpdateNodesResponse>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/grpc.RpcService/updateNodes",
+            );
             self.inner.unary(request.into_request(), path, codec).await
         }
     }

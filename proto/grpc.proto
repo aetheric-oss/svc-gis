@@ -6,6 +6,7 @@ package grpc;
 service RpcService {
     // Common Interfaces
     rpc isReady (ReadyRequest) returns (ReadyResponse);
+    rpc updateNodes (UpdateNodesRequest) returns (UpdateNodesResponse);
 }
 
 // Ready Request object
@@ -18,4 +19,41 @@ message ReadyResponse {
 
     // True if ready
     bool ready = 1;
+}
+
+// Node Type
+enum NodeType {
+    // Waypoint
+    WAYPOINT = 0;
+
+    // Vertiport
+    VERTIPORT = 1;
+}
+
+// Points in space used for routing (waypoints, vertiports, etc.)
+message Node {
+    // Unique Arrow ID
+    string uuid = 1;
+
+    // Latitude Coordinate
+    double latitude = 2;
+
+    // Longitude Coordinate
+    double longitude = 3;
+
+    // Node Type
+    NodeType node_type = 4;
+}
+
+// Update Nodes Request object
+message UpdateNodesRequest {
+    // Nodes to update
+    repeated Node nodes = 1;
+}
+
+// Update Nodes Response object
+message UpdateNodesResponse {
+
+    // True if updated
+    bool updated = 1;
 }
