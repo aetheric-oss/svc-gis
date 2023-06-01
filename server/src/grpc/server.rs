@@ -5,6 +5,8 @@ pub mod grpc_server {
     #![allow(unused_qualifications, missing_docs)]
     tonic::include_proto!("grpc");
 }
+use crate::postgis::node::{nodes_grpc_to_gis, update_nodes};
+use crate::postgis::nofly::{nofly_grpc_to_gis, update_nofly};
 use grpc_server::rpc_service_server::{RpcService, RpcServiceServer};
 use grpc_server::{ReadyRequest, ReadyResponse};
 
@@ -16,50 +18,10 @@ use std::net::SocketAddr;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status};
 
-use crate::postgis::node::Node as GisNode;
-use crate::postgis::node::NodeType as GisNodeType;
-use grpc_server::Node as RequestNode;
-
 /// struct to implement the gRPC server functions
 #[derive(Debug, Clone)]
 pub struct GRPCServerImpl {
     pool: deadpool_postgres::Pool,
-}
-
-/// Convert nodes from the GRPC request into nodes for the GIS database,
-///  detecting invalid arguments and returning an error if necessary.
-fn nodes_grpc_to_gis(req_nodes: Vec<RequestNode>) -> Result<Vec<GisNode>, Status> {
-    let mut nodes: Vec<GisNode> = vec![];
-    for node in &req_nodes {
-        let uuid = match uuid::Uuid::parse_str(&node.uuid) {
-            Ok(uuid) => uuid,
-            Err(e) => {
-                grpc_error!("Failed to parse uuid: {}", e);
-                return Err(Status::invalid_argument("Invalid UUID provided."));
-            }
-        };
-
-        let node_type = match node.node_type {
-            x if x == (grpc_server::NodeType::Vertiport as i32) => GisNodeType::Vertiport,
-            y if y == (grpc_server::NodeType::Waypoint as i32) => GisNodeType::Waypoint,
-            e => {
-                grpc_error!("(update_node) invalid node type: {}", e);
-                return Err(Status::invalid_argument("Invalid node type provided."));
-            }
-        };
-
-        // TODO(R4): Check if lat, lon inside geofence for this region
-        let node = GisNode {
-            uuid,
-            latitude: node.latitude,
-            longitude: node.longitude,
-            node_type,
-        };
-
-        nodes.push(node);
-    }
-
-    Ok(nodes)
 }
 
 #[tonic::async_trait]
@@ -83,17 +45,41 @@ impl RpcService for GRPCServerImpl {
         // Sanitize inputs
         let nodes = match nodes_grpc_to_gis(request.into_inner().nodes) {
             Ok(nodes) => nodes,
-            Err(e) => return Err(e),
+            Err(e) => return Err(Status::invalid_argument(e.to_string())),
         };
 
         // Update nodes in PostGIS
-        match crate::postgis::node::update_nodes(nodes, self.pool.clone()).await {
+        match update_nodes(nodes, self.pool.clone()).await {
             Ok(_) => Ok(Response::new(grpc_server::UpdateNodesResponse {
                 updated: true,
             })),
             Err(_) => {
                 grpc_error!("(grpc update_node) error updating nodes.");
                 Err(Status::internal("Error updating nodes."))
+            }
+        }
+    }
+
+    async fn update_no_fly_zones(
+        &self,
+        request: Request<grpc_server::UpdateNoFlyZonesRequest>,
+    ) -> Result<Response<grpc_server::UpdateNoFlyZonesResponse>, Status> {
+        grpc_debug!("(grpc update_no_fly_zones) entry.");
+
+        // Sanitize inputs
+        let zones = match nofly_grpc_to_gis(request.into_inner().zones) {
+            Ok(zones) => zones,
+            Err(e) => return Err(Status::invalid_argument(e.to_string())),
+        };
+
+        // Update nodes in PostGIS
+        match update_nofly(zones, self.pool.clone()).await {
+            Ok(_) => Ok(Response::new(grpc_server::UpdateNoFlyZonesResponse {
+                updated: true,
+            })),
+            Err(_) => {
+                grpc_error!("(grpc update_no_fly_zones) error updating zones.");
+                Err(Status::internal("Error updating zones."))
             }
         }
     }
@@ -146,65 +132,4 @@ pub async fn grpc_server(config: Config, pool: deadpool_postgres::Pool) {
             grpc_error!("could not start gRPC server: {}", e);
         }
     };
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn ut_nodes_request_to_gis_valid() {
-        let request_nodes: Vec<RequestNode> = vec![
-            RequestNode {
-                uuid: "00000000-0000-0000-0000-000000000000".to_string(),
-                latitude: 0.0,
-                longitude: 0.0,
-                node_type: grpc_server::NodeType::Vertiport as i32,
-            },
-            RequestNode {
-                uuid: "00000000-0000-0000-0000-000000000001".to_string(),
-                latitude: 1.0,
-                longitude: 1.0,
-                node_type: grpc_server::NodeType::Waypoint as i32,
-            },
-        ];
-
-        let nodes = match nodes_grpc_to_gis(request_nodes.clone()) {
-            Ok(nodes) => nodes,
-            Err(_) => panic!("Failed to convert nodes."),
-        };
-
-        assert_eq!(nodes.len(), request_nodes.len());
-
-        for (i, node) in nodes.iter().enumerate() {
-            assert_eq!(node.uuid.to_string(), request_nodes[i].uuid);
-            assert_eq!(node.latitude, request_nodes[i].latitude);
-            assert_eq!(node.longitude, request_nodes[i].longitude);
-            // assert_eq!(node.node_type, request_nodes[i].node_type);
-        }
-    }
-
-    #[test]
-    fn ut_nodes_request_to_gis_invalid_uuid() {
-        let request_nodes: Vec<RequestNode> = vec![RequestNode {
-            uuid: "invalid".to_string(),
-            latitude: 0.0,
-            longitude: 0.0,
-            node_type: grpc_server::NodeType::Vertiport as i32,
-        }];
-
-        assert!(nodes_grpc_to_gis(request_nodes).is_err());
-    }
-
-    #[test]
-    fn ut_nodes_request_to_gis_invalid_node_type() {
-        let request_nodes: Vec<RequestNode> = vec![RequestNode {
-            uuid: "invalid".to_string(),
-            latitude: 0.0,
-            longitude: 0.0,
-            node_type: grpc_server::NodeType::Vertiport as i32 + 1,
-        }];
-
-        assert!(nodes_grpc_to_gis(request_nodes).is_err());
-    }
 }

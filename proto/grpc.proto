@@ -1,5 +1,6 @@
 // Test Documentation
 syntax = "proto3";
+import "google/protobuf/timestamp.proto";
 package grpc;
 
 // Heartbeat
@@ -7,6 +8,7 @@ service RpcService {
     // Common Interfaces
     rpc isReady (ReadyRequest) returns (ReadyResponse);
     rpc updateNodes (UpdateNodesRequest) returns (UpdateNodesResponse);
+    rpc updateNoFlyZones (UpdateNoFlyZonesRequest) returns (UpdateNoFlyZonesResponse);
 }
 
 // Ready Request object
@@ -19,6 +21,15 @@ message ReadyResponse {
 
     // True if ready
     bool ready = 1;
+}
+
+// Geospatial Coordinates
+message Coordinates {
+    // Latitude Coordinate
+    float latitude = 1;
+
+    // Longitude Coordinate
+    float longitude = 2;
 }
 
 // Node Type
@@ -36,13 +47,10 @@ message Node {
     string uuid = 1;
 
     // Latitude Coordinate
-    double latitude = 2;
-
-    // Longitude Coordinate
-    double longitude = 3;
+    Coordinates location = 2;
 
     // Node Type
-    NodeType node_type = 4;
+    NodeType node_type = 3;
 }
 
 // Update Nodes Request object
@@ -53,6 +61,38 @@ message UpdateNodesRequest {
 
 // Update Nodes Response object
 message UpdateNodesResponse {
+
+    // True if updated
+    bool updated = 1;
+}
+
+// Points in space used for routing (waypoints, vertiports, etc.)
+message NoFlyZone {
+    // Unique label (NOTAM id, etc.)
+    string label = 1;
+
+    // Vertices bounding the No-Fly Zone
+    // The first vertex should match the end vertex (closed shape)
+    repeated Coordinates vertices = 2;
+
+    // Start datetime for this zone
+    google.protobuf.Timestamp time_start = 3;
+
+    // End datetime for this zone
+    google.protobuf.Timestamp time_end = 4;
+
+    // If this is a no-fly centered around a vertiport, provide UUID
+    optional string vertiport_id = 5;
+}
+
+// Update No Fly Zones Request object
+message UpdateNoFlyZonesRequest {
+    // Nodes to update
+    repeated NoFlyZone zones = 1;
+}
+
+// Update No Fly Zones Response object
+message UpdateNoFlyZonesResponse {
 
     // True if updated
     bool updated = 1;
