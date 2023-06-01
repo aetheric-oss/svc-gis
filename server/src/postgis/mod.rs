@@ -3,6 +3,7 @@
 #[macro_use]
 pub mod macros;
 pub mod node;
+pub mod nofly;
 pub mod pool;
 
 async fn execute_psql_cmd(cmd_str: String, pool: deadpool_postgres::Pool) -> Result<(), ()> {

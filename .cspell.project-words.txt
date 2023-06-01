@@ -52,3 +52,9 @@ Acreateserial
 DBNAME
 SSLMODE
 isready
+geospatial
+notam
+datetime
+protobuf
+VARCHAR
+timestamptz
