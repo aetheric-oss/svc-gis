@@ -14,6 +14,18 @@ pub struct ReadyResponse {
     #[prost(bool, tag = "1")]
     pub ready: bool,
 }
+/// Geospatial Coordinates
+#[derive(Copy)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Coordinates {
+    /// Latitude Coordinate
+    #[prost(float, tag = "1")]
+    pub latitude: f32,
+    /// Longitude Coordinate
+    #[prost(float, tag = "2")]
+    pub longitude: f32,
+}
 /// Points in space used for routing (waypoints, vertiports, etc.)
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -22,13 +34,10 @@ pub struct Node {
     #[prost(string, tag = "1")]
     pub uuid: ::prost::alloc::string::String,
     /// Latitude Coordinate
-    #[prost(double, tag = "2")]
-    pub latitude: f64,
-    /// Longitude Coordinate
-    #[prost(double, tag = "3")]
-    pub longitude: f64,
+    #[prost(message, optional, tag = "2")]
+    pub location: ::core::option::Option<Coordinates>,
     /// Node Type
-    #[prost(enumeration = "NodeType", tag = "4")]
+    #[prost(enumeration = "NodeType", tag = "3")]
     pub node_type: i32,
 }
 /// Update Nodes Request object
@@ -44,6 +53,44 @@ pub struct UpdateNodesRequest {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct UpdateNodesResponse {
+    /// True if updated
+    #[prost(bool, tag = "1")]
+    pub updated: bool,
+}
+/// Points in space used for routing (waypoints, vertiports, etc.)
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct NoFlyZone {
+    /// Unique label (NOTAM id, etc.)
+    #[prost(string, tag = "1")]
+    pub label: ::prost::alloc::string::String,
+    /// Vertices bounding the No-Fly Zone
+    /// The first vertex should match the end vertex (closed shape)
+    #[prost(message, repeated, tag = "2")]
+    pub vertices: ::prost::alloc::vec::Vec<Coordinates>,
+    /// Start datetime for this zone
+    #[prost(message, optional, tag = "3")]
+    pub time_start: ::core::option::Option<::prost_types::Timestamp>,
+    /// End datetime for this zone
+    #[prost(message, optional, tag = "4")]
+    pub time_end: ::core::option::Option<::prost_types::Timestamp>,
+    /// If this is a no-fly centered around a vertiport, provide UUID
+    #[prost(string, optional, tag = "5")]
+    pub vertiport_id: ::core::option::Option<::prost::alloc::string::String>,
+}
+/// Update No Fly Zones Request object
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct UpdateNoFlyZonesRequest {
+    /// Nodes to update
+    #[prost(message, repeated, tag = "1")]
+    pub zones: ::prost::alloc::vec::Vec<NoFlyZone>,
+}
+/// Update No Fly Zones Response object
+#[derive(Copy)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct UpdateNoFlyZonesResponse {
     /// True if updated
     #[prost(bool, tag = "1")]
     pub updated: bool,
@@ -181,6 +228,25 @@ pub mod rpc_service_client {
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/grpc.RpcService/updateNodes",
+            );
+            self.inner.unary(request.into_request(), path, codec).await
+        }
+        pub async fn update_no_fly_zones(
+            &mut self,
+            request: impl tonic::IntoRequest<super::UpdateNoFlyZonesRequest>,
+        ) -> Result<tonic::Response<super::UpdateNoFlyZonesResponse>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/grpc.RpcService/updateNoFlyZones",
             );
             self.inner.unary(request.into_request(), path, codec).await
         }

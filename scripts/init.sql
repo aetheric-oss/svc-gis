@@ -16,6 +16,22 @@ CREATE TABLE arrow.rnodes (
     geom GEOMETRY(Point) NOT NULL
 );
 
+CREATE TABLE arrow.nofly (
+    id SERIAL PRIMARY KEY,
+    label VARCHAR(255) UNIQUE NOT NULL,
+    geom GEOMETRY NOT NULL,
+    time_start TIMESTAMPTZ,
+    time_end TIMESTAMPTZ,
+    vertiport_id uuid,
+    CONSTRAINT fk_vertiport_id
+        FOREIGN KEY (vertiport_id)
+        REFERENCES arrow.rnodes(arrow_id)
+);
+
+CREATE INDEX nofly_idx
+    ON arrow.nofly
+    USING GIST (geom);
+
 -- These permissions must be declared last
 GRANT ALL ON SCHEMA arrow TO svc_gis;
 GRANT ALL
