@@ -7,7 +7,7 @@ use crate::postgis::node::Node as GisNode;
 use crate::postgis::node::NodeType as GisNodeType;
 use grpc_server::Node as RequestNode;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 /// The type of node (vertiport, waypoint, etc.)
 pub enum NodeType {
     /// Waypoints are nodes that aircraft can fly between
@@ -37,6 +37,9 @@ pub enum NodeError {
 
     /// No location provided
     NoLocation,
+
+    /// No Nodes
+    NoNodes,
 }
 
 impl std::fmt::Display for NodeError {
@@ -45,6 +48,7 @@ impl std::fmt::Display for NodeError {
             NodeError::UnrecognizedType => write!(f, "Invalid node type provided."),
             NodeError::BadUuid => write!(f, "Invalid node UUID provided."),
             NodeError::NoLocation => write!(f, "No location was provided."),
+            NodeError::NoNodes => write!(f, "No nodes were provided."),
         }
     }
 }
@@ -68,6 +72,10 @@ pub struct Node {
 /// Convert nodes from the GRPC request into nodes for the GIS database,
 ///  detecting invalid arguments and returning an error if necessary.
 pub fn nodes_grpc_to_gis(req_nodes: Vec<RequestNode>) -> Result<Vec<GisNode>, NodeError> {
+    if req_nodes.is_empty() {
+        return Err(NodeError::NoNodes);
+    }
+
     let mut nodes: Vec<GisNode> = vec![];
     for node in &req_nodes {
         let uuid = match uuid::Uuid::parse_str(&node.uuid) {
@@ -114,12 +122,12 @@ pub async fn update_nodes(nodes: Vec<Node>, pool: deadpool_postgres::Pool) -> Re
     postgis_debug!("(postgis update_node) entry.");
 
     // TODO(R4): prepared statement
-    for node in nodes {
+    for node in &nodes {
         // In SRID 4326, Point(X Y) is (longitude latitude)
         let cmd_str = format!(
             "
         INSERT INTO arrow.rnodes (arrow_id, node_type, geom)
-            VALUES ('{}', '{}', 'SRID=4326;POINT({} {})')
+            VALUES ('{}'::UUID, '{}', 'SRID=4326;POINT({} {})')
             ON CONFLICT(arrow_id)
                 DO UPDATE
                     SET geom = EXCLUDED.geom;",
@@ -129,7 +137,7 @@ pub async fn update_nodes(nodes: Vec<Node>, pool: deadpool_postgres::Pool) -> Re
         match super::execute_psql_cmd(cmd_str, pool.clone()).await {
             Ok(_) => (),
             Err(e) => {
-                println!("(postgis update_nodes) Error executing command: {:?}", e);
+                postgis_error!("(postgis update_nodes) Error executing command: {:?}", e);
                 return Err(());
             }
         }
@@ -195,6 +203,13 @@ mod tests {
 
         let result = nodes_grpc_to_gis(request_nodes).unwrap_err();
         assert_eq!(result, NodeError::BadUuid);
+    }
+
+    #[test]
+    fn ut_nodes_request_to_gis_invalid_no_nodes() {
+        let request_nodes: Vec<RequestNode> = vec![];
+        let result = nodes_grpc_to_gis(request_nodes).unwrap_err();
+        assert_eq!(result, NodeError::NoNodes);
     }
 
     #[test]

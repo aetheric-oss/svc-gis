@@ -1,6 +1,6 @@
 ![Arrow Banner](https://github.com/Arrow-air/.github/raw/main/profile/assets/arrow_v2_twitter-banner_neu.png)
 
-# MODULE_NAME Service
+# `svc-gis`
 
 ![GitHub stable release (latest by date)](https://img.shields.io/github/v/release/Arrow-air/svc-gis?sort=semver&color=green)
 ![GitHub release (latest by date including pre-releases)](https://img.shields.io/github/v/release/Arrow-air/svc-gis?include_prereleases)

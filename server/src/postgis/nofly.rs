@@ -50,6 +50,9 @@ pub enum NoFlyZoneError {
 
     /// The first and last vertices do not match (open polygon)
     OpenPolygon,
+
+    /// No No-Fly Zones
+    NoZones,
 }
 
 impl std::fmt::Display for NoFlyZoneError {
@@ -62,6 +65,7 @@ impl std::fmt::Display for NoFlyZoneError {
                 write!(f, "Not enough vertices to form a closed polygon.")
             }
             NoFlyZoneError::OpenPolygon => write!(f, "First and last vertices do not match."),
+            NoFlyZoneError::NoZones => write!(f, "No No-Fly Zones were provided."),
         }
     }
 }
@@ -70,6 +74,11 @@ impl std::fmt::Display for NoFlyZoneError {
 pub fn nofly_grpc_to_gis(
     req_zones: Vec<RequestNoFlyZone>,
 ) -> Result<Vec<GisNoFlyZone>, NoFlyZoneError> {
+    if req_zones.is_empty() {
+        postgis_error!("(nofly_grpc_to_gis) no no-fly zones provided.");
+        return Err(NoFlyZoneError::NoZones);
+    }
+
     let mut zones: Vec<GisNoFlyZone> = vec![];
     for zone in &req_zones {
         let vertiport_id = match &zone.vertiport_id {
@@ -265,6 +274,13 @@ mod tests {
 
         assert!(nofly_grpc_to_gis(zones.clone()).is_ok());
         zones.clear();
+    }
+
+    #[test]
+    fn ut_nofly_request_to_gis_invalid_no_zones() {
+        let zones: Vec<RequestNoFlyZone> = vec![];
+        let result = nofly_grpc_to_gis(zones).unwrap_err();
+        assert_eq!(result, NoFlyZoneError::NoZones);
     }
 
     #[test]

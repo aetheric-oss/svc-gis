@@ -58,3 +58,4 @@ datetime
 protobuf
 VARCHAR
 timestamptz
+plpgsql

@@ -36,13 +36,14 @@ The `arrow` schema defines the following tables:
 | ---- | ---- |
 | [`rnodes`](#pushpin-rnodes) | This table lists nodes through which aircraft can route.<br>Node types currently includes:<br>- Waypoints<br>- Vertiports |
 | [`nofly`](#no_entry-nofly) | This table lists no-fly zones. These can be temporary or permanent. They can be vertiports who shouldn't be flown over unless they are the destination or departure port. |
+| [`routes`](#twisted_rightwards_arrows-routes) | This table lists routes between all nodes. These routes are currently auto-populated at a hardcoded altitude.
 
 ### :pushpin: `rnodes`
 
 | Column | Type | Description |
 | ---- | ---- | --- | 
 | id | SERIAL | Unique integer identifier of the node, required for pgRouting. |
-| **arrow_id (PK)** | UUID UNIQUE | The Arrow UUID identifier of this waypoint or vertiport. |
+| arrow_id | UUID UNIQUE | The Arrow UUID identifier of this waypoint or vertiport. |
 | node_type | enum ('waypoint', 'vertiport') | The type of route node this represents. |
 | geom | GEOMETRY(Point) | The latitude and longitude of this node, altitude ignored. | 
 
@@ -56,3 +57,15 @@ The `arrow` schema defines the following tables:
 | time_start | TIMESTAMPTZ | The time that this no-fly zone becomes active. NULL if active by default, starting the moment it is created.
 | time_end | TIMESTAMPTZ | The time that this no-fly zone becomes inactive. NULL if no scheduled end date.
 | vertiport_id | UUID UNIQUE | The Arrow UUID identifier of this vertiport, if the no-fly is specifically for a vertiport. |
+
+## :twisted_rightwards_arrows: `routes`
+
+Routes are currently unidirectional. There will be two routes per pair of nodes, one traveling from A -> B and one from B -> A.
+
+| Column | Type | Description |
+| ---- | ---- | --- | 
+| id | SERIAL | Unique integer identifier of the route, required for pgRouting. |
+| id_source | INTEGER (FK rnodes.id) | The ID of of the first node.
+| id_target | INTEGER (FK rnodes.id) | The ID of the second node.
+| geom | GEOMETRY(LineString) | The line connecting the two nodes
+| distance_meters | f64 | The distance of this line segment.

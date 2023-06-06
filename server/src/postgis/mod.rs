@@ -5,6 +5,7 @@ pub mod macros;
 pub mod node;
 pub mod nofly;
 pub mod pool;
+pub mod routing;
 
 async fn execute_psql_cmd(cmd_str: String, pool: deadpool_postgres::Pool) -> Result<(), ()> {
     println!("{}", &cmd_str);
