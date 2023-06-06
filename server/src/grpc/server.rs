@@ -7,8 +7,10 @@ pub mod grpc_server {
 }
 use crate::postgis::node::{nodes_grpc_to_gis, update_nodes};
 use crate::postgis::nofly::{nofly_grpc_to_gis, update_nofly};
+use crate::postgis::routing::best_path;
 use grpc_server::rpc_service_server::{RpcService, RpcServiceServer};
 use grpc_server::{ReadyRequest, ReadyResponse};
+use lib_common::time::timestamp_to_datetime;
 
 use crate::config::Config;
 use crate::shutdown_signal;
@@ -83,6 +85,59 @@ impl RpcService for GRPCServerImpl {
             }
         }
     }
+
+    async fn best_path(
+        &self,
+        request: Request<grpc_server::BestPathRequest>,
+    ) -> Result<Response<grpc_server::BestPathResponse>, Status> {
+        grpc_debug!("(grpc best_path) entry.");
+        let request = request.into_inner();
+
+        // Sanitize inputs
+        let start_uuid = match uuid::Uuid::parse_str(&request.node_uuid_start) {
+            Ok(uuid) => uuid,
+            Err(_) => return Err(Status::invalid_argument("Invalid start node UUID.")),
+        };
+
+        let end_uuid = match uuid::Uuid::parse_str(&request.node_uuid_end) {
+            Ok(uuid) => uuid,
+            Err(_) => return Err(Status::invalid_argument("Invalid end node UUID.")),
+        };
+
+        let time_start = match request.time_start {
+            None => chrono::Utc::now(),
+            Some(time) => match timestamp_to_datetime(&time) {
+                Some(time) => time,
+                None => return Err(Status::invalid_argument("Invalid time_start.")),
+            },
+        };
+
+        let time_end = match request.time_end {
+            None => chrono::Utc::now() + chrono::Duration::days(1),
+            Some(time) => match timestamp_to_datetime(&time) {
+                Some(time) => time,
+                None => return Err(Status::invalid_argument("Invalid time_end.")),
+            },
+        };
+
+        let Ok(result) = best_path(start_uuid, end_uuid, time_start, time_end, self.pool.clone()).await else {
+            grpc_error!("(grpc best_path) error getting best path.");
+            return Err(Status::internal("Error getting best path."))
+        };
+
+        let mut response = grpc_server::BestPathResponse::default();
+        for segment in result {
+            response.segments.push(grpc_server::PathSegment {
+                index: segment.index,
+                node_uuid_start: segment.node_uuid_start.to_string(),
+                node_uuid_end: segment.node_uuid_end.to_string(),
+                distance_meters: segment.distance_meters,
+                altitude_meters: segment.altitude_meters,
+            });
+        }
+
+        Ok(Response::new(response))
+    }
 }
 
 /// Starts the grpc servers for this microservice using the provided configuration
@@ -132,4 +187,42 @@ pub async fn grpc_server(config: Config, pool: deadpool_postgres::Pool) {
             grpc_error!("could not start gRPC server: {}", e);
         }
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use deadpool_postgres::{tokio_postgres::NoTls, ManagerConfig, RecyclingMethod, Runtime};
+
+    #[tokio::test]
+    async fn ut_best_path_invalid_uuid() {
+        let mut cfg = deadpool_postgres::Config::new();
+        cfg.dbname = Some("deadpool".to_string());
+        cfg.manager = Some(ManagerConfig {
+            recycling_method: RecyclingMethod::Fast,
+        });
+
+        let pool = cfg.create_pool(Some(Runtime::Tokio1), NoTls).unwrap();
+        let server = GRPCServerImpl { pool };
+
+        let request = grpc_server::BestPathRequest {
+            node_uuid_start: "Invalid".to_string(),
+            node_uuid_end: uuid::Uuid::new_v4().to_string(),
+            time_start: None,
+            time_end: None,
+        };
+
+        let result = server.best_path(Request::new(request)).await;
+        assert!(result.is_err());
+
+        let request = grpc_server::BestPathRequest {
+            node_uuid_start: uuid::Uuid::new_v4().to_string(),
+            node_uuid_end: "Invalid".to_string(),
+            time_start: None,
+            time_end: None,
+        };
+
+        let result = server.best_path(Request::new(request)).await;
+        assert!(result.is_err());
+    }
 }

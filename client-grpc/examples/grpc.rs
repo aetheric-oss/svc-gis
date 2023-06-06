@@ -3,12 +3,15 @@
 use std::env;
 #[allow(unused_qualifications, missing_docs)]
 use svc_gis_client_grpc::client::{
-    rpc_service_client::RpcServiceClient, Coordinates, NoFlyZone, Node, NodeType, ReadyRequest,
-    UpdateNoFlyZonesRequest, UpdateNodesRequest,
+    rpc_service_client::RpcServiceClient, BestPathRequest, Coordinates, NoFlyZone, Node, NodeType,
+    ReadyRequest, UpdateNoFlyZonesRequest, UpdateNodesRequest,
 };
 
 use chrono::{Duration, Utc};
 use lib_common::time::datetime_to_timestamp;
+
+const VERTIPORT_1_UUID: &str = "00000000-0000-0000-0000-000000000000";
+const VERTIPORT_2_UUID: &str = "00000000-0000-0000-0000-000000000001";
 
 /// Provide endpoint url to use
 pub fn get_grpc_endpoint() -> String {
@@ -37,31 +40,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let mut client = RpcServiceClient::connect(grpc_endpoint).await?;
-    println!("Client created");
 
     // Update Nodes
     {
+        println!("\n\u{1F4CD} Add Nodes");
+
         let nodes = vec![
-            (52.3745905, 4.9160036, false),
-            (52.3749819, 4.9156925, false),
-            (52.3752144, 4.9153733, false),
-            (52.3753012, 4.9156845, false),
-            (52.3750703, 4.9161538, false),
-            (52.374740703179484, 4.916379271589524, true),
-            (52.375183975669685, 4.916365467571953, true),
+            (52.3745905, 4.9160036, None),
+            (52.3749819, 4.9156925, None),
+            (52.3752144, 4.9153733, None),
+            (52.3753012, 4.9156845, None),
+            (52.3750703, 4.9161538, None),
+            (
+                52.374740703179484,
+                4.916379271589524,
+                Some(VERTIPORT_1_UUID),
+            ),
+            (
+                52.375183975669685,
+                4.916365467571953,
+                Some(VERTIPORT_2_UUID),
+            ),
         ];
 
         let nodes = nodes
             .iter()
             .map(|(x, y, vertiport)| Node {
-                uuid: uuid::Uuid::new_v4().to_string(),
+                uuid: match vertiport {
+                    None => uuid::Uuid::new_v4().to_string(),
+                    Some(s) => s.to_string(),
+                },
                 location: Some(Coordinates {
                     latitude: *x,
                     longitude: *y,
                 }),
                 node_type: match vertiport {
-                    false => NodeType::Waypoint as i32,
-                    true => NodeType::Vertiport as i32,
+                    None => NodeType::Waypoint as i32,
+                    _ => NodeType::Vertiport as i32,
                 },
             })
             .collect();
@@ -72,8 +87,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("RESPONSE={:?}", response.into_inner());
     }
 
+    // Best Path Without No-Fly Zone
+    {
+        println!("\n\u{1F426} Best Path WITHOUT Temporary No-Fly Zone");
+        let request = tonic::Request::new(BestPathRequest {
+            node_uuid_start: VERTIPORT_1_UUID.to_string(),
+            node_uuid_end: VERTIPORT_2_UUID.to_string(),
+            time_start: datetime_to_timestamp(&Utc::now()),
+            time_end: datetime_to_timestamp(&(Utc::now() + Duration::hours(2))),
+        });
+
+        let response = client.best_path(request).await?.into_inner();
+
+        println!("RESPONSE={:?}", response);
+        println!(
+            "\x1b[33;3m{} segment(s) in path.\x1b[0m",
+            response.segments.len()
+        );
+    }
+
+    let no_fly_start_time = Utc::now();
+    let no_fly_end_time = Utc::now() + Duration::hours(2);
+
     // Update No-Fly Zones
     {
+        println!("\n\u{26D4} Add No-Fly Zones");
         let mut zones: Vec<NoFlyZone> = vec![];
 
         // No Fly 1
@@ -96,8 +134,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         zones.push(NoFlyZone {
             label: "NL-NFZ-01".to_string(),
             vertices,
-            time_start: None,
-            time_end: None,
+            time_start: datetime_to_timestamp(&no_fly_start_time),
+            time_end: datetime_to_timestamp(&no_fly_end_time),
             vertiport_id: None,
         });
 
@@ -129,8 +167,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         zones.push(NoFlyZone {
             label: "NL-NFZ-02".to_string(),
             vertices,
-            time_start: datetime_to_timestamp(&Utc::now()),
-            time_end: datetime_to_timestamp(&(Utc::now() + Duration::hours(2))),
+            time_start: None,
+            time_end: None,
             vertiport_id: None,
         });
 
@@ -141,12 +179,52 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("RESPONSE={:?}", response.into_inner());
     }
 
+    // Best Path During Temporary No-Fly Zone
     {
+        println!("\n\u{26D4}\u{1F681} Best Path DURING Temporary No-Fly Zone");
+        let request = tonic::Request::new(BestPathRequest {
+            node_uuid_start: VERTIPORT_1_UUID.to_string(),
+            node_uuid_end: VERTIPORT_2_UUID.to_string(),
+            time_start: datetime_to_timestamp(&no_fly_start_time),
+            time_end: datetime_to_timestamp(&(no_fly_start_time + Duration::hours(1))),
+        });
+
+        let response = client.best_path(request).await?.into_inner();
+
+        println!("RESPONSE={:?}", response);
+        println!(
+            "\x1b[33;3m{} segment(s) in path.\x1b[0m",
+            response.segments.len()
+        );
+    }
+
+    // Best Path After Temporary No-Fly Zone
+    {
+        println!("\n\u{1F681} Best Path AFTER Temporary No-Fly Zone Expires");
+        let request = tonic::Request::new(BestPathRequest {
+            node_uuid_start: VERTIPORT_1_UUID.to_string(),
+            node_uuid_end: VERTIPORT_2_UUID.to_string(),
+            time_start: datetime_to_timestamp(&(no_fly_end_time + Duration::seconds(1))),
+            time_end: datetime_to_timestamp(&(no_fly_end_time + Duration::hours(1))),
+        });
+
+        let response = client.best_path(request).await?.into_inner();
+
+        println!("RESPONSE={:?}", response);
+        println!(
+            "\x1b[33;3m{} segment(s) in path.\x1b[0m",
+            response.segments.len()
+        );
+    }
+
+    {
+        println!("\n\u{1F44D} Ready Check");
         let response = client
             .is_ready(tonic::Request::new(ReadyRequest {}))
-            .await?;
+            .await?
+            .into_inner();
 
-        println!("RESPONSE={:?}", response.into_inner());
+        println!("RESPONSE={:?}", response);
     }
 
     Ok(())

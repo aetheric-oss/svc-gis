@@ -9,6 +9,7 @@ service RpcService {
     rpc isReady (ReadyRequest) returns (ReadyResponse);
     rpc updateNodes (UpdateNodesRequest) returns (UpdateNodesResponse);
     rpc updateNoFlyZones (UpdateNoFlyZonesRequest) returns (UpdateNoFlyZonesResponse);
+    rpc bestPath (BestPathRequest) returns (BestPathResponse);
 }
 
 // Ready Request object
@@ -96,4 +97,43 @@ message UpdateNoFlyZonesResponse {
 
     // True if updated
     bool updated = 1;
+}
+
+// A path between nodes has >= 1 straight segments
+message PathSegment {
+    // Segment Index
+    int32 index = 1;
+
+    // Start Node UUID
+    string node_uuid_start = 2;
+
+    // End Node UUID
+    string node_uuid_end = 3;
+
+    // Distance
+    double distance_meters = 4;
+
+    // Altitude
+    double altitude_meters = 5;
+}
+
+// Best Path Request object
+message BestPathRequest {
+    // Start Node
+    string node_uuid_start = 1;
+
+    // End Node
+    string node_uuid_end = 2;
+
+    // Time of departure
+    google.protobuf.Timestamp time_start = 3;
+
+    // Time of arrival
+    google.protobuf.Timestamp time_end = 4;
+}
+
+// Best Path Response object
+message BestPathResponse {
+    // Nodes in the best path
+    repeated PathSegment segments = 1;
 }
