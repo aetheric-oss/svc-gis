@@ -95,6 +95,51 @@ pub struct UpdateNoFlyZonesResponse {
     #[prost(bool, tag = "1")]
     pub updated: bool,
 }
+/// A path between nodes has >= 1 straight segments
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct PathSegment {
+    /// Segment Index
+    #[prost(int32, tag = "1")]
+    pub index: i32,
+    /// Start Node UUID
+    #[prost(string, tag = "2")]
+    pub node_uuid_start: ::prost::alloc::string::String,
+    /// End Node UUID
+    #[prost(string, tag = "3")]
+    pub node_uuid_end: ::prost::alloc::string::String,
+    /// Distance
+    #[prost(double, tag = "4")]
+    pub distance_meters: f64,
+    /// Altitude
+    #[prost(double, tag = "5")]
+    pub altitude_meters: f64,
+}
+/// Best Path Request object
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct BestPathRequest {
+    /// Start Node
+    #[prost(string, tag = "1")]
+    pub node_uuid_start: ::prost::alloc::string::String,
+    /// End Node
+    #[prost(string, tag = "2")]
+    pub node_uuid_end: ::prost::alloc::string::String,
+    /// Time of departure
+    #[prost(message, optional, tag = "3")]
+    pub time_start: ::core::option::Option<::prost_types::Timestamp>,
+    /// Time of arrival
+    #[prost(message, optional, tag = "4")]
+    pub time_end: ::core::option::Option<::prost_types::Timestamp>,
+}
+/// Best Path Response object
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct BestPathResponse {
+    /// Nodes in the best path
+    #[prost(message, repeated, tag = "1")]
+    pub segments: ::prost::alloc::vec::Vec<PathSegment>,
+}
 /// Node Type
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
@@ -248,6 +293,23 @@ pub mod rpc_service_client {
             let path = http::uri::PathAndQuery::from_static(
                 "/grpc.RpcService/updateNoFlyZones",
             );
+            self.inner.unary(request.into_request(), path, codec).await
+        }
+        pub async fn best_path(
+            &mut self,
+            request: impl tonic::IntoRequest<super::BestPathRequest>,
+        ) -> Result<tonic::Response<super::BestPathResponse>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static("/grpc.RpcService/bestPath");
             self.inner.unary(request.into_request(), path, codec).await
         }
     }
