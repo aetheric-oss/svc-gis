@@ -1835,7 +1835,7 @@ checksum = "6bdef32e8150c2a081110b42772ffe7d7c9032b606bc226c8260fd97e0976601"
 
 [[package]]
 name = "svc-gis"
-version = "0.2.0-develop.2"
+version = "0.0.1-develop.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -1870,7 +1870,7 @@ dependencies = [
 
 [[package]]
 name = "svc-gis-client-grpc"
-version = "0.2.0-develop.2"
+version = "0.0.1-develop.0"
 dependencies = [
  "chrono",
  "lib-common",
