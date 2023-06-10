@@ -5,12 +5,14 @@ pub mod grpc_server {
     #![allow(unused_qualifications, missing_docs)]
     tonic::include_proto!("grpc");
 }
-use crate::postgis::node::{nodes_grpc_to_gis, update_nodes};
-use crate::postgis::nofly::{nofly_grpc_to_gis, update_nofly};
-use crate::postgis::routing::best_path;
+use crate::postgis::aircraft::update_aircraft;
+use crate::postgis::nofly::update_nofly;
+use crate::postgis::routing::{best_path, PathType};
+use crate::postgis::vertiport::update_vertiports;
+use crate::postgis::waypoint::update_waypoints;
 use grpc_server::rpc_service_server::{RpcService, RpcServiceServer};
+pub use grpc_server::NodeType;
 use grpc_server::{ReadyRequest, ReadyResponse};
-use lib_common::time::timestamp_to_datetime;
 
 use crate::config::Config;
 use crate::shutdown_signal;
@@ -29,6 +31,7 @@ pub struct GRPCServerImpl {
 #[tonic::async_trait]
 impl RpcService for GRPCServerImpl {
     /// Returns ready:true when service is available
+    #[cfg(not(tarpaulin_include))]
     async fn is_ready(
         &self,
         _request: Request<ReadyRequest>,
@@ -38,54 +41,74 @@ impl RpcService for GRPCServerImpl {
         Ok(Response::new(response))
     }
 
-    async fn update_nodes(
+    #[cfg(not(tarpaulin_include))]
+    async fn update_vertiports(
         &self,
-        request: Request<grpc_server::UpdateNodesRequest>,
-    ) -> Result<Response<grpc_server::UpdateNodesResponse>, Status> {
-        grpc_debug!("(grpc update_node) entry.");
-
-        // Sanitize inputs
-        let nodes = match nodes_grpc_to_gis(request.into_inner().nodes) {
-            Ok(nodes) => nodes,
-            Err(e) => return Err(Status::invalid_argument(e.to_string())),
-        };
+        request: Request<grpc_server::UpdateVertiportsRequest>,
+    ) -> Result<Response<grpc_server::UpdateResponse>, Status> {
+        grpc_debug!("(grpc update_vertiports) entry.");
 
         // Update nodes in PostGIS
-        match update_nodes(nodes, self.pool.clone()).await {
-            Ok(_) => Ok(Response::new(grpc_server::UpdateNodesResponse {
-                updated: true,
-            })),
-            Err(_) => {
-                grpc_error!("(grpc update_node) error updating nodes.");
-                Err(Status::internal("Error updating nodes."))
+        match update_vertiports(request.into_inner().vertiports, self.pool.clone()).await {
+            Ok(_) => Ok(Response::new(grpc_server::UpdateResponse { updated: true })),
+            Err(e) => {
+                grpc_error!("(grpc update_vertiports) error updating vertiports.");
+                Err(Status::internal(e.to_string()))
             }
         }
     }
 
+    #[cfg(not(tarpaulin_include))]
+    async fn update_waypoints(
+        &self,
+        request: Request<grpc_server::UpdateWaypointsRequest>,
+    ) -> Result<Response<grpc_server::UpdateResponse>, Status> {
+        grpc_debug!("(grpc update_waypoints) entry.");
+
+        // Update nodes in PostGIS
+        match update_waypoints(request.into_inner().waypoints, self.pool.clone()).await {
+            Ok(_) => Ok(Response::new(grpc_server::UpdateResponse { updated: true })),
+            Err(e) => {
+                grpc_error!("(grpc update_waypoints) error updating nodes.");
+                Err(Status::internal(e.to_string()))
+            }
+        }
+    }
+
+    #[cfg(not(tarpaulin_include))]
     async fn update_no_fly_zones(
         &self,
         request: Request<grpc_server::UpdateNoFlyZonesRequest>,
-    ) -> Result<Response<grpc_server::UpdateNoFlyZonesResponse>, Status> {
+    ) -> Result<Response<grpc_server::UpdateResponse>, Status> {
         grpc_debug!("(grpc update_no_fly_zones) entry.");
 
-        // Sanitize inputs
-        let zones = match nofly_grpc_to_gis(request.into_inner().zones) {
-            Ok(zones) => zones,
-            Err(e) => return Err(Status::invalid_argument(e.to_string())),
-        };
-
         // Update nodes in PostGIS
-        match update_nofly(zones, self.pool.clone()).await {
-            Ok(_) => Ok(Response::new(grpc_server::UpdateNoFlyZonesResponse {
-                updated: true,
-            })),
-            Err(_) => {
+        match update_nofly(request.into_inner().zones, self.pool.clone()).await {
+            Ok(_) => Ok(Response::new(grpc_server::UpdateResponse { updated: true })),
+            Err(e) => {
                 grpc_error!("(grpc update_no_fly_zones) error updating zones.");
-                Err(Status::internal("Error updating zones."))
+                Err(Status::invalid_argument(e.to_string()))
             }
         }
     }
 
+    #[cfg(not(tarpaulin_include))]
+    async fn update_aircraft(
+        &self,
+        request: Request<grpc_server::UpdateAircraftRequest>,
+    ) -> Result<Response<grpc_server::UpdateResponse>, Status> {
+        grpc_debug!("(grpc update_aircraft) entry.");
+        // Update aircraft in PostGIS
+        match update_aircraft(request.into_inner().aircraft, self.pool.clone()).await {
+            Ok(_) => Ok(Response::new(grpc_server::UpdateResponse { updated: true })),
+            Err(e) => {
+                grpc_error!("(grpc update_aircraft) error updating aircraft.");
+                Err(Status::internal(e.to_string()))
+            }
+        }
+    }
+
+    #[cfg(not(tarpaulin_include))]
     async fn best_path(
         &self,
         request: Request<grpc_server::BestPathRequest>,
@@ -93,50 +116,32 @@ impl RpcService for GRPCServerImpl {
         grpc_debug!("(grpc best_path) entry.");
         let request = request.into_inner();
 
-        // Sanitize inputs
-        let start_uuid = match uuid::Uuid::parse_str(&request.node_uuid_start) {
-            Ok(uuid) => uuid,
-            Err(_) => return Err(Status::invalid_argument("Invalid start node UUID.")),
+        let path_type = match num::FromPrimitive::from_i32(request.start_type) {
+            Some(NodeType::Vertiport) => PathType::PortToPort,
+            Some(NodeType::Aircraft) => {
+                grpc_error!("(grpc best_path) attempt to route from aircraft.");
+                return Err(Status::unimplemented(
+                    "Aircraft to vertiport routing is not yet supported.",
+                ));
+            }
+            _ => {
+                grpc_error!("(grpc best_path) invalid start node type.");
+                return Err(Status::invalid_argument(
+                    "Invalid start node type. Must be vertiport or aircraft.",
+                ));
+            }
         };
 
-        let end_uuid = match uuid::Uuid::parse_str(&request.node_uuid_end) {
-            Ok(uuid) => uuid,
-            Err(_) => return Err(Status::invalid_argument("Invalid end node UUID.")),
-        };
-
-        let time_start = match request.time_start {
-            None => chrono::Utc::now(),
-            Some(time) => match timestamp_to_datetime(&time) {
-                Some(time) => time,
-                None => return Err(Status::invalid_argument("Invalid time_start.")),
-            },
-        };
-
-        let time_end = match request.time_end {
-            None => chrono::Utc::now() + chrono::Duration::days(1),
-            Some(time) => match timestamp_to_datetime(&time) {
-                Some(time) => time,
-                None => return Err(Status::invalid_argument("Invalid time_end.")),
-            },
-        };
-
-        let Ok(result) = best_path(start_uuid, end_uuid, time_start, time_end, self.pool.clone()).await else {
-            grpc_error!("(grpc best_path) error getting best path.");
-            return Err(Status::internal("Error getting best path."))
-        };
-
-        let mut response = grpc_server::BestPathResponse::default();
-        for segment in result {
-            response.segments.push(grpc_server::PathSegment {
-                index: segment.index,
-                node_uuid_start: segment.node_uuid_start.to_string(),
-                node_uuid_end: segment.node_uuid_end.to_string(),
-                distance_meters: segment.distance_meters,
-                altitude_meters: segment.altitude_meters,
-            });
+        match best_path(path_type, request, self.pool.clone()).await {
+            Ok(segments) => {
+                let response = grpc_server::BestPathResponse { segments };
+                Ok(Response::new(response))
+            }
+            Err(e) => {
+                grpc_error!("(grpc best_path) error getting best path.");
+                Err(Status::internal(e.to_string()))
+            }
         }
-
-        Ok(Response::new(response))
     }
 }
 
@@ -187,42 +192,4 @@ pub async fn grpc_server(config: Config, pool: deadpool_postgres::Pool) {
             grpc_error!("could not start gRPC server: {}", e);
         }
     };
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use deadpool_postgres::{tokio_postgres::NoTls, ManagerConfig, RecyclingMethod, Runtime};
-
-    #[tokio::test]
-    async fn ut_best_path_invalid_uuid() {
-        let mut cfg = deadpool_postgres::Config::new();
-        cfg.dbname = Some("deadpool".to_string());
-        cfg.manager = Some(ManagerConfig {
-            recycling_method: RecyclingMethod::Fast,
-        });
-
-        let pool = cfg.create_pool(Some(Runtime::Tokio1), NoTls).unwrap();
-        let server = GRPCServerImpl { pool };
-
-        let request = grpc_server::BestPathRequest {
-            node_uuid_start: "Invalid".to_string(),
-            node_uuid_end: uuid::Uuid::new_v4().to_string(),
-            time_start: None,
-            time_end: None,
-        };
-
-        let result = server.best_path(Request::new(request)).await;
-        assert!(result.is_err());
-
-        let request = grpc_server::BestPathRequest {
-            node_uuid_start: uuid::Uuid::new_v4().to_string(),
-            node_uuid_end: "Invalid".to_string(),
-            time_start: None,
-            time_end: None,
-        };
-
-        let result = server.best_path(Request::new(request)).await;
-        assert!(result.is_err());
-    }
 }

@@ -1,91 +1,184 @@
 //! gRPC client implementation
-
-use std::env;
-#[allow(unused_qualifications, missing_docs)]
-use svc_gis_client_grpc::client::{
-    rpc_service_client::RpcServiceClient, BestPathRequest, Coordinates, NoFlyZone, Node, NodeType,
-    ReadyRequest, UpdateNoFlyZonesRequest, UpdateNodesRequest,
-};
+//! Helps to use https://www.keene.edu/campus/maps/tool/ to create polygons on a map
 
 use chrono::{Duration, Utc};
+use lib_common::grpc::get_endpoint_from_env;
 use lib_common::time::datetime_to_timestamp;
+use rand::{thread_rng, Rng};
+use svc_gis_client_grpc::client::BestPathRequest;
+use svc_gis_client_grpc::client::NodeType;
+#[allow(unused_qualifications, missing_docs)]
+use svc_gis_client_grpc::client::{
+    rpc_service_client::RpcServiceClient, Coordinates, ReadyRequest,
+};
+use svc_gis_client_grpc::client::{Aircraft, UpdateAircraftRequest};
+use svc_gis_client_grpc::client::{NoFlyZone, UpdateNoFlyZonesRequest};
+use svc_gis_client_grpc::client::{UpdateVertiportsRequest, Vertiport};
+use svc_gis_client_grpc::client::{UpdateWaypointsRequest, Waypoint};
+use uuid::Uuid;
 
 const VERTIPORT_1_UUID: &str = "00000000-0000-0000-0000-000000000000";
 const VERTIPORT_2_UUID: &str = "00000000-0000-0000-0000-000000000001";
+const AIRCRAFT_1_UUID: &str = "00000000-0000-0000-0000-000000000002";
 
 /// Provide endpoint url to use
-pub fn get_grpc_endpoint() -> String {
-    //parse socket address from env variable or take default value
-    let address = match env::var("SERVER_HOSTNAME") {
-        Ok(val) => val,
-        Err(_) => "localhost".to_string(), // default value
-    };
+pub fn get_endpoint() -> String {
+    let (host, port) = get_endpoint_from_env("SERVER_HOSTNAME", "SERVER_PORT_GRPC");
+    format!("http://{host}:{port}")
+}
 
-    let port = match env::var("SERVER_PORT_GRPC") {
-        Ok(val) => val,
-        Err(_) => "50008".to_string(), // default value
-    };
+async fn add_vertiports(endpoint: String) -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = RpcServiceClient::connect(endpoint).await?;
+    println!("\n\u{1F6EB} Add Vertiports");
+    let vertiports = vec![
+        Vertiport {
+            uuid: VERTIPORT_1_UUID.to_string(),
+            vertices: vec![
+                (52.3746368, 4.9163718),
+                (52.3747387, 4.9162102),
+                (52.3748374, 4.9163691),
+                (52.3747375, 4.9165381),
+                (52.3746368, 4.9163718),
+            ]
+            .iter()
+            .map(|(x, y)| Coordinates {
+                latitude: *x,
+                longitude: *y,
+            })
+            .collect(),
+            label: Some("VertiportA".to_string()),
+        },
+        Vertiport {
+            uuid: VERTIPORT_2_UUID.to_string(),
+            vertices: vec![
+                (52.3751407, 4.916294),
+                (52.3752201, 4.9162611),
+                (52.3752627, 4.9163657),
+                (52.3752107, 4.9164683),
+                (52.3751436, 4.9164355),
+                (52.3751407, 4.916294),
+            ]
+            .iter()
+            .map(|(x, y)| Coordinates {
+                latitude: *x,
+                longitude: *y,
+            })
+            .collect(),
+            label: Some("VertiportB".to_string()),
+        },
+        Vertiport {
+            uuid: Uuid::new_v4().to_string(),
+            vertices: vec![
+                (52.3753536, 4.9157569),
+                (52.3752766, 4.9157193),
+                (52.375252, 4.9158829),
+                (52.3753306, 4.9159232),
+                (52.3753536, 4.9157569),
+            ]
+            .iter()
+            .map(|(x, y)| Coordinates {
+                latitude: *x,
+                longitude: *y,
+            })
+            .collect(),
+            label: Some("Blocker Port".to_string()),
+        },
+    ];
 
-    format!("http://{}:{}", address, port)
+    let request = tonic::Request::new(UpdateVertiportsRequest { vertiports });
+    let response = client.update_vertiports(request).await?;
+
+    println!("RESPONSE={:?}", response.into_inner());
+
+    Ok(())
+}
+
+async fn add_waypoints(endpoint: String) -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = RpcServiceClient::connect(endpoint).await?;
+    println!("\n\u{1F4CD} Add Waypoints");
+    let nodes = vec![
+        ("ORANGE", 52.3745905, 4.9160036),
+        ("STRAWBERRY", 52.3749819, 4.9156925),
+        ("BANANA", 52.3752144, 4.9153733),
+        ("LEMON", 52.3753012, 4.9156845),
+        ("RASPBERRY", 52.3750703, 4.9161538),
+    ];
+
+    let waypoints = nodes
+        .iter()
+        .map(|(label, latitude, longitude)| Waypoint {
+            label: label.to_string(),
+            location: Some(Coordinates {
+                latitude: *latitude,
+                longitude: *longitude,
+            }),
+        })
+        .collect();
+
+    let request = tonic::Request::new(UpdateWaypointsRequest { waypoints });
+    let response = client.update_waypoints(request).await?;
+
+    println!("RESPONSE={:?}", response.into_inner());
+
+    Ok(())
+}
+
+async fn add_aircraft(endpoint: String) -> Result<(), Box<dyn std::error::Error>> {
+    println!("\n\u{1F681} Add Aircraft");
+
+    let mut client = RpcServiceClient::connect(endpoint).await?;
+
+    let aircraft: Vec<(String, &str, f32, f32)> = vec![
+        (AIRCRAFT_1_UUID.to_string(), "Marauder", 52.3746, 4.9160036),
+        (Uuid::new_v4().to_string(), "Mantis", 52.3749819, 4.9157),
+        (Uuid::new_v4().to_string(), "Ghost", 52.37523, 4.9153733),
+        (Uuid::new_v4().to_string(), "Phantom", 52.3754, 4.9156845),
+        (Uuid::new_v4().to_string(), "Falcon", 52.3750703, 4.9162),
+    ];
+
+    let mut rng = thread_rng();
+
+    let aircraft: Vec<Aircraft> = aircraft
+        .iter()
+        .map(|(id, callsign, latitude, longitude)| Aircraft {
+            uuid: id.to_owned(),
+            callsign: Some(callsign.to_string()),
+            altitude_meters: 1000.0,
+            heading_radians: rng.gen_range(0.0..std::f32::consts::PI * 2.0),
+            pitch_radians: 0.0,
+            velocity_mps: rng.gen_range(-5.0..20.0),
+            location: Some(Coordinates {
+                latitude: *latitude,
+                longitude: *longitude,
+            }),
+            time: datetime_to_timestamp(&Utc::now()),
+        })
+        .collect();
+
+    let request = tonic::Request::new(UpdateAircraftRequest { aircraft });
+    let response = client.update_aircraft(request).await?;
+
+    println!("RESPONSE={:?}", response.into_inner());
+
+    Ok(())
 }
 
 /// Example svc-gis-client-grpc
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let grpc_endpoint = get_grpc_endpoint();
+    let endpoint = get_endpoint();
+    println!("Using endpoint: {}", endpoint);
 
     println!(
         "NOTE: Ensure the server is running on {} or this example will fail.",
-        grpc_endpoint
+        endpoint
     );
 
-    let mut client = RpcServiceClient::connect(grpc_endpoint).await?;
+    add_aircraft(endpoint.clone()).await?;
+    add_vertiports(endpoint.clone()).await?;
+    add_waypoints(endpoint.clone()).await?;
 
-    // Update Nodes
-    {
-        println!("\n\u{1F4CD} Add Nodes");
-
-        let nodes = vec![
-            (52.3745905, 4.9160036, None),
-            (52.3749819, 4.9156925, None),
-            (52.3752144, 4.9153733, None),
-            (52.3753012, 4.9156845, None),
-            (52.3750703, 4.9161538, None),
-            (
-                52.374740703179484,
-                4.916379271589524,
-                Some(VERTIPORT_1_UUID),
-            ),
-            (
-                52.375183975669685,
-                4.916365467571953,
-                Some(VERTIPORT_2_UUID),
-            ),
-        ];
-
-        let nodes = nodes
-            .iter()
-            .map(|(x, y, vertiport)| Node {
-                uuid: match vertiport {
-                    None => uuid::Uuid::new_v4().to_string(),
-                    Some(s) => s.to_string(),
-                },
-                location: Some(Coordinates {
-                    latitude: *x,
-                    longitude: *y,
-                }),
-                node_type: match vertiport {
-                    None => NodeType::Waypoint as i32,
-                    _ => NodeType::Vertiport as i32,
-                },
-            })
-            .collect();
-
-        let request = tonic::Request::new(UpdateNodesRequest { nodes });
-        let response = client.update_nodes(request).await?;
-
-        println!("RESPONSE={:?}", response.into_inner());
-    }
+    let mut client = RpcServiceClient::connect(endpoint).await?;
 
     // Best Path Without No-Fly Zone
     {
@@ -93,6 +186,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let request = tonic::Request::new(BestPathRequest {
             node_uuid_start: VERTIPORT_1_UUID.to_string(),
             node_uuid_end: VERTIPORT_2_UUID.to_string(),
+            start_type: NodeType::Vertiport as i32,
             time_start: datetime_to_timestamp(&Utc::now()),
             time_end: datetime_to_timestamp(&(Utc::now() + Duration::hours(2))),
         });
@@ -136,7 +230,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             vertices,
             time_start: datetime_to_timestamp(&no_fly_start_time),
             time_end: datetime_to_timestamp(&no_fly_end_time),
-            vertiport_id: None,
         });
 
         // No Fly 2
@@ -169,7 +262,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             vertices,
             time_start: None,
             time_end: None,
-            vertiport_id: None,
         });
 
         let request = tonic::Request::new(UpdateNoFlyZonesRequest { zones });
@@ -185,6 +277,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let request = tonic::Request::new(BestPathRequest {
             node_uuid_start: VERTIPORT_1_UUID.to_string(),
             node_uuid_end: VERTIPORT_2_UUID.to_string(),
+            start_type: NodeType::Vertiport as i32,
             time_start: datetime_to_timestamp(&no_fly_start_time),
             time_end: datetime_to_timestamp(&(no_fly_start_time + Duration::hours(1))),
         });
@@ -204,6 +297,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let request = tonic::Request::new(BestPathRequest {
             node_uuid_start: VERTIPORT_1_UUID.to_string(),
             node_uuid_end: VERTIPORT_2_UUID.to_string(),
+            start_type: NodeType::Vertiport as i32,
             time_start: datetime_to_timestamp(&(no_fly_end_time + Duration::seconds(1))),
             time_end: datetime_to_timestamp(&(no_fly_end_time + Duration::hours(1))),
         });

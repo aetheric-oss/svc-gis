@@ -2,15 +2,17 @@
 //! No-Fly Zones are permanent or temporary.
 
 use crate::grpc::server::grpc_server;
+use crate::postgis::execute_transaction;
 use crate::postgis::nofly::NoFlyZone as GisNoFlyZone;
 use chrono::{DateTime, Utc};
 use grpc_server::NoFlyZone as RequestNoFlyZone;
 use lib_common::time::timestamp_to_datetime;
 
-/// A no-fly zone polygon must have at least three vertices (a triangle)
-/// A closed polygon has the first and last vertex equal
-/// Four vertices needed to indicate a closed triangular region
-pub const MIN_NUM_NO_FLY_VERTICES: usize = 4;
+/// Maximum length of a label
+const LABEL_MAX_LENGTH: usize = 100;
+
+/// Allowed characters in a label
+const LABEL_REGEX: &str = r"^[a-zA-Z0-9_\s-]+$";
 
 #[derive(Debug, Clone)]
 /// Nodes that aircraft can fly between
@@ -18,86 +20,71 @@ pub struct NoFlyZone {
     /// A unique identifier for the No-Fly Zone (NOTAM id, etc.)
     pub label: String,
 
-    /// The vertices of the no-fly zone, in order
-    /// The start vertex should match the end vertex (closed polygon)
-    /// The (f32, f32) is (latitude, longitude)
-    pub vertices: Vec<(f32, f32)>,
+    /// The geometry string to feed into PSQL
+    pub geom: String,
 
     /// The start time of the no-fly zone, if applicable
     pub time_start: Option<DateTime<Utc>>,
 
     /// The end time of the no-fly zone, if applicable
     pub time_end: Option<DateTime<Utc>>,
-
-    /// The UUID of the vertiport, if applicable
-    pub vertiport_id: Option<uuid::Uuid>,
 }
 
 /// Possible conversion errors from the GRPC type to GIS type
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum NoFlyZoneError {
-    /// Invalid Vertiport ID
-    VertiportId,
-
     /// Invalid timestamp format
-    Timestamp,
+    Time,
 
     /// End time earlier than start time
     TimeOrder,
 
-    /// Less than [`MIN_NUM_NO_FLY_VERTICES`] vertices
-    VertexCount,
+    /// One or more vertices have an invalid location
+    Location,
 
-    /// The first and last vertices do not match (open polygon)
-    OpenPolygon,
+    /// Invalid Label
+    Label,
 
     /// No No-Fly Zones
     NoZones,
+
+    /// Unknown error
+    Unknown,
 }
 
 impl std::fmt::Display for NoFlyZoneError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            NoFlyZoneError::VertiportId => write!(f, "Invalid vertiport UUID provided."),
-            NoFlyZoneError::Timestamp => write!(f, "Invalid timestamp provided."),
+            NoFlyZoneError::Time => write!(f, "Invalid timestamp provided."),
             NoFlyZoneError::TimeOrder => write!(f, "Start time is later than end time."),
-            NoFlyZoneError::VertexCount => {
-                write!(f, "Not enough vertices to form a closed polygon.")
-            }
-            NoFlyZoneError::OpenPolygon => write!(f, "First and last vertices do not match."),
             NoFlyZoneError::NoZones => write!(f, "No No-Fly Zones were provided."),
+            NoFlyZoneError::Location => write!(f, "Invalid location provided."),
+            NoFlyZoneError::Unknown => write!(f, "Unknown error."),
+            NoFlyZoneError::Label => write!(f, "Invalid label provided."),
         }
     }
 }
 
 /// Convert GRPC request no-fly zone type into GIS no-fly type
-pub fn nofly_grpc_to_gis(
-    req_zones: Vec<RequestNoFlyZone>,
-) -> Result<Vec<GisNoFlyZone>, NoFlyZoneError> {
+fn sanitize(req_zones: Vec<RequestNoFlyZone>) -> Result<Vec<GisNoFlyZone>, NoFlyZoneError> {
     if req_zones.is_empty() {
-        postgis_error!("(nofly_grpc_to_gis) no no-fly zones provided.");
+        postgis_error!("(nofly sanitize) no no-fly zones provided.");
         return Err(NoFlyZoneError::NoZones);
     }
 
     let mut zones: Vec<GisNoFlyZone> = vec![];
-    for zone in &req_zones {
-        let vertiport_id = match &zone.vertiport_id {
-            Some(vid) => match uuid::Uuid::parse_str(vid) {
-                Ok(id) => Some(id),
-                Err(e) => {
-                    postgis_error!("(nofly_grpc_to_gis) failed to parse vertiport uuid: {}", e);
-                    return Err(NoFlyZoneError::VertiportId);
-                }
-            },
-            _ => None,
-        };
+    for zone in req_zones {
+        if !super::utils::check_string(&zone.label, LABEL_REGEX, LABEL_MAX_LENGTH) {
+            postgis_error!("(sanitize nofly) Invalid no-fly zone label: {}", zone.label);
+            return Err(NoFlyZoneError::Label);
+        }
 
         let time_start = match &zone.time_start {
             Some(ts) => match timestamp_to_datetime(ts) {
                 Some(dt) => Some(dt),
                 _ => {
-                    postgis_error!("(nofly_grpc_to_gis) failed to parse timestamp: {:?}", ts);
-                    return Err(NoFlyZoneError::Timestamp);
+                    postgis_error!("(nofly sanitize) failed to parse timestamp: {:?}", ts);
+                    return Err(NoFlyZoneError::Time);
                 }
             },
             _ => None,
@@ -107,8 +94,8 @@ pub fn nofly_grpc_to_gis(
             Some(ts) => match timestamp_to_datetime(ts) {
                 Some(dt) => Some(dt),
                 _ => {
-                    postgis_error!("(nofly_grpc_to_gis) failed to parse timestamp: {:?}", ts);
-                    return Err(NoFlyZoneError::Timestamp);
+                    postgis_error!("(nofly sanitize) failed to parse timestamp: {:?}", ts);
+                    return Err(NoFlyZoneError::Time);
                 }
             },
             _ => None,
@@ -118,46 +105,28 @@ pub fn nofly_grpc_to_gis(
         if let Some(ts) = time_start {
             if let Some(te) = time_end {
                 if te < ts {
-                    postgis_error!("(nofly_grpc_to_gis) end time is earlier than start time.");
+                    postgis_error!("(nofly sanitize) end time is earlier than start time.");
                     return Err(NoFlyZoneError::TimeOrder);
                 }
             }
         }
 
-        // Gather vertices
-        let vertices: Vec<(f32, f32)> = zone
-            .vertices
-            .iter()
-            .map(|v| (v.latitude, v.longitude))
-            .collect();
-
-        // Must have at least 3 points to form a triangle
-        let size = vertices.len();
-        if size < MIN_NUM_NO_FLY_VERTICES {
-            postgis_error!(
-                "(nofly_grpc_to_gis) request vertex count ({}) was less than floor threshold ({})",
-                size,
-                MIN_NUM_NO_FLY_VERTICES
-            );
-
-            return Err(NoFlyZoneError::VertexCount);
-        }
-
-        // The beginning and ending vertex must be equal
-        if vertices.first() != vertices.last() {
-            postgis_error!(
-                "(nofly_grpc_to_gis) request first and last vertex not equal (open polygon)."
-            );
-
-            return Err(NoFlyZoneError::OpenPolygon);
-        }
+        let geom = match super::utils::polygon_from_vertices(&zone.vertices) {
+            Ok(geom) => geom,
+            Err(e) => {
+                postgis_error!(
+                    "(sanitize nofly) Error converting nofly polygon: {}",
+                    e.to_string()
+                );
+                return Err(NoFlyZoneError::Location);
+            }
+        };
 
         let zone = GisNoFlyZone {
             label: zone.label.clone(),
-            vertices,
+            geom,
             time_start,
             time_end,
-            vertiport_id,
         };
 
         zones.push(zone);
@@ -167,222 +136,220 @@ pub fn nofly_grpc_to_gis(
 }
 
 /// Updates no-fly zones in the PostGIS database.
-pub async fn update_nofly(zones: Vec<NoFlyZone>, pool: deadpool_postgres::Pool) -> Result<(), ()> {
+pub async fn update_nofly(
+    zones: Vec<RequestNoFlyZone>,
+    pool: deadpool_postgres::Pool,
+) -> Result<(), NoFlyZoneError> {
     postgis_debug!("(postgis update_nofly) entry.");
+    let zones = sanitize(zones)?;
+    let commands = zones
+        .iter()
+        .map(|zone| {
+            format!(
+                "SELECT arrow.update_nofly(
+                    '{}'::VARCHAR,
+                    '{}',
+                    {},
+                    {}
+                )",
+                zone.label,
+                zone.geom,
+                match zone.time_start {
+                    Some(t) => format!("'{}'::TIMESTAMPTZ", t),
+                    None => "NULL".to_string(),
+                },
+                match zone.time_end {
+                    Some(t) => format!("'{}'::TIMESTAMPTZ", t),
+                    None => "NULL".to_string(),
+                }
+            )
+        })
+        .collect();
 
-    // TODO(R4): prepared statement
-    for zone in zones {
-        let time_start = match zone.time_start {
-            Some(t) => format!("'{:?}'", t),
-            None => "NULL".to_string(),
-        };
-
-        let time_end = match zone.time_end {
-            Some(t) => format!("'{:?}'", t),
-            None => "NULL".to_string(),
-        };
-
-        let vertiport_id = match zone.vertiport_id {
-            Some(vid) => vid.to_string(),
-            None => "NULL".to_string(),
-        };
-
-        // In SRID 4326, Point(X Y) is (longitude latitude)
-        let cmd_str = format!(
-            "
-        INSERT INTO arrow.nofly (label, geom, time_start, time_end, vertiport_id)
-            VALUES ('{}', 'SRID=4326;POLYGON(({}))', {}, {}, {})
-            ON CONFLICT(label)
-                DO UPDATE
-                    SET geom = EXCLUDED.geom,
-                        time_start = EXCLUDED.time_start,
-                        time_end = EXCLUDED.time_end,
-                        vertiport_id = EXCLUDED.vertiport_id;",
-            zone.label,
-            zone.vertices
-                .iter()
-                .map(|v: &(f32, f32)| format!("{} {}", v.1, v.0))
-                .collect::<Vec<String>>()
-                .join(","),
-            time_start,
-            time_end,
-            vertiport_id
-        );
-
-        match super::execute_psql_cmd(cmd_str, pool.clone()).await {
-            Ok(_) => (),
-            Err(e) => {
-                println!("(postgis update_nofly) error executing command: {:?}", e);
-                return Err(());
-            }
+    match execute_transaction(commands, pool).await {
+        Ok(_) => Ok(()),
+        Err(_) => {
+            postgis_error!("(postgis update_nofly) Error executing transaction.");
+            Err(NoFlyZoneError::Unknown)
         }
     }
-
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::grpc::server::grpc_server::Coordinates;
-    use chrono::Utc;
-    use lib_common::time::datetime_to_timestamp;
+    use crate::postgis::utils;
+    use deadpool_postgres::{Config, ManagerConfig, Pool, RecyclingMethod, Runtime};
+    use tokio_postgres::NoTls;
 
-    #[test]
-    fn ut_nofly_request_to_gis_valid() {
-        let mut zones: Vec<RequestNoFlyZone> = vec![];
-
-        let vertices: Vec<Coordinates> = vec![(0.0, 0.1), (0.0, 0.2), (0.0, 0.3), (0.0, 0.1)]
-            .iter()
-            .map(|(x, y)| Coordinates {
-                latitude: *x,
-                longitude: *y,
-            })
-            .collect();
-
-        // Most arguments None
-        zones.push(RequestNoFlyZone {
-            label: "".into(),
-            vertices,
-            time_start: None,
-            time_end: None,
-            vertiport_id: None,
+    fn get_pool() -> Pool {
+        let mut cfg = Config::default();
+        cfg.dbname = Some("deadpool".to_string());
+        cfg.manager = Some(ManagerConfig {
+            recycling_method: RecyclingMethod::Fast,
         });
-        assert!(nofly_grpc_to_gis(zones.clone()).is_ok());
-        zones.clear();
+        cfg.create_pool(Some(Runtime::Tokio1), NoTls).unwrap()
+    }
 
-        // Most arguments with a value
-        let Some(start) = datetime_to_timestamp(&Utc::now()) else {
-            panic!();
-        };
-
-        let vertices = vec![(0.0, 0.1), (0.0, 0.2), (0.0, 0.3), (0.0, 0.1)]
-            .iter()
-            .map(|(x, y)| Coordinates {
-                latitude: *x,
-                longitude: *y,
-            })
-            .collect();
-
-        zones.push(RequestNoFlyZone {
-            label: "".into(),
-            vertices,
-            time_start: Some(start.clone()),
-            time_end: Some(start),
-            vertiport_id: Some(uuid::Uuid::new_v4().to_string()),
-        });
-
-        assert!(nofly_grpc_to_gis(zones.clone()).is_ok());
-        zones.clear();
+    fn square(latitude: f32, longitude: f32) -> Vec<(f32, f32)> {
+        vec![
+            (latitude - 0.0001, longitude - 0.0001),
+            (latitude + 0.0001, longitude - 0.0001),
+            (latitude + 0.0001, longitude + 0.0001),
+            (latitude - 0.0001, longitude + 0.0001),
+            (latitude - 0.0001, longitude - 0.0001),
+        ]
     }
 
     #[test]
-    fn ut_nofly_request_to_gis_invalid_no_zones() {
-        let zones: Vec<RequestNoFlyZone> = vec![];
-        let result = nofly_grpc_to_gis(zones).unwrap_err();
+    fn ut_sanitize_valid() {
+        let nodes = vec![
+            ("NFZ A", square(52.3745905, 4.9160036)),
+            ("NFZ B", square(52.3749819, 4.9156925)),
+            ("NFZ C", square(52.3752144, 4.9153733)),
+        ];
+
+        let nofly_zone: Vec<RequestNoFlyZone> = nodes
+            .iter()
+            .map(|(label, points)| RequestNoFlyZone {
+                label: label.to_string(),
+                vertices: points
+                    .iter()
+                    .map(|(latitude, longitude)| Coordinates {
+                        latitude: *latitude,
+                        longitude: *longitude,
+                    })
+                    .collect(),
+                ..Default::default()
+            })
+            .collect();
+
+        let Ok(sanitized) = sanitize(nofly_zone.clone()) else {
+            panic!();
+        };
+
+        assert_eq!(nofly_zone.len(), sanitized.len());
+
+        for (i, nfz) in nofly_zone.iter().enumerate() {
+            assert_eq!(nfz.label, sanitized[i].label);
+            assert_eq!(
+                utils::polygon_from_vertices(&nfz.vertices).unwrap(),
+                sanitized[i].geom
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn ut_client_failure() {
+        let nodes: Vec<(&str, Vec<(f32, f32)>)> = vec![("NFZ", square(52.3745905, 4.9160036))];
+        let nofly_zone: Vec<RequestNoFlyZone> = nodes
+            .iter()
+            .map(|(label, points)| RequestNoFlyZone {
+                label: label.to_string(),
+                vertices: points
+                    .iter()
+                    .map(|(latitude, longitude)| Coordinates {
+                        latitude: *latitude,
+                        longitude: *longitude,
+                    })
+                    .collect(),
+                ..Default::default()
+            })
+            .collect();
+
+        let result = update_nofly(nofly_zone, get_pool()).await.unwrap_err();
+        assert_eq!(result, NoFlyZoneError::Unknown);
+    }
+
+    #[tokio::test]
+    async fn ut_nofly_request_to_gis_invalid_label() {
+        for label in &[
+            "NULL",
+            "Nofly_zone;",
+            "'Nofly_zone'",
+            "Nofly_zone \'",
+            &"X".repeat(LABEL_MAX_LENGTH + 1),
+        ] {
+            let nofly_zones: Vec<RequestNoFlyZone> = vec![RequestNoFlyZone {
+                label: label.to_string(),
+                vertices: square(52.3745905, 4.9160036)
+                    .iter()
+                    .map(|(latitude, longitude)| Coordinates {
+                        latitude: *latitude,
+                        longitude: *longitude,
+                    })
+                    .collect(),
+                ..Default::default()
+            }];
+
+            let result = update_nofly(nofly_zones, get_pool()).await.unwrap_err();
+            assert_eq!(result, NoFlyZoneError::Label);
+        }
+    }
+
+    #[tokio::test]
+    async fn ut_nofly_request_to_gis_invalid_no_nodes() {
+        let nofly_zones: Vec<RequestNoFlyZone> = vec![];
+        let result = update_nofly(nofly_zones, get_pool()).await.unwrap_err();
         assert_eq!(result, NoFlyZoneError::NoZones);
     }
 
-    #[test]
-    fn ut_nofly_request_to_gis_invalid_time_order() {
-        let mut zones: Vec<RequestNoFlyZone> = vec![];
+    #[tokio::test]
+    async fn ut_nofly_request_to_gis_invalid_location() {
+        let polygons = vec![
+            square(-90., 0.),
+            square(90., 0.),
+            square(0., -180.),
+            square(0., 180.),
+        ]; // each of these will crate a square outside of the allowable range of lat, lon
 
-        let start_dt = Utc::now();
+        for polygon in polygons {
+            let nofly_zones: Vec<RequestNoFlyZone> = vec![RequestNoFlyZone {
+                label: "Nofly_zone".to_string(),
+                vertices: polygon
+                    .iter()
+                    .map(|(latitude, longitude)| Coordinates {
+                        latitude: *latitude,
+                        longitude: *longitude,
+                    })
+                    .collect(),
+                ..Default::default()
+            }];
 
-        // End time is earlier than start time
-        let end_dt = start_dt - chrono::Duration::nanoseconds(1);
+            let result = update_nofly(nofly_zones, get_pool()).await.unwrap_err();
+            assert_eq!(result, NoFlyZoneError::Location);
+        }
 
-        let Some(start) = datetime_to_timestamp(&start_dt) else {
-            panic!();
-        };
+        let polygons = vec![
+            vec![
+                (52.3745905, 4.9160036),
+                (52.3749819, 4.9156925),
+                (52.3752144, 4.9153733),
+            ], // not enough vertices
+            vec![
+                (52.3745905, 4.9160036),
+                (52.3749819, 4.9156925),
+                (52.3752144, 4.9153733),
+                (52.3752144, 4.9153733),
+            ], // open polygon
+        ];
 
-        let Some(end) = datetime_to_timestamp(&end_dt) else {
-            panic!();
-        };
+        for polygon in polygons {
+            let nofly_zones: Vec<RequestNoFlyZone> = vec![RequestNoFlyZone {
+                label: "Nofly_zone".to_string(),
+                vertices: polygon
+                    .iter()
+                    .map(|(latitude, longitude)| Coordinates {
+                        latitude: *latitude,
+                        longitude: *longitude,
+                    })
+                    .collect(),
+                ..Default::default()
+            }];
 
-        let vertices = vec![(0.0, 0.1), (0.0, 0.2), (0.0, 0.3), (0.0, 0.1)]
-            .iter()
-            .map(|(x, y)| Coordinates {
-                latitude: *x,
-                longitude: *y,
-            })
-            .collect();
-
-        zones.push(RequestNoFlyZone {
-            label: "".into(),
-            vertices,
-            time_start: Some(start),
-            time_end: Some(end),
-            vertiport_id: None,
-        });
-
-        let result = nofly_grpc_to_gis(zones.clone()).unwrap_err();
-        assert_eq!(result, NoFlyZoneError::TimeOrder);
-        zones.clear();
-    }
-
-    #[test]
-    fn ut_nofly_request_to_gis_invalid_vertices() {
-        let mut zones: Vec<RequestNoFlyZone> = vec![];
-
-        // Not enough coordinates
-        zones.push(RequestNoFlyZone {
-            label: "".into(),
-            vertices: vec![Coordinates {
-                latitude: 0.0,
-                longitude: 0.1,
-            }],
-            time_start: None,
-            time_end: None,
-            vertiport_id: None,
-        });
-        let result = nofly_grpc_to_gis(zones.clone()).unwrap_err();
-        assert_eq!(result, NoFlyZoneError::VertexCount);
-        zones.clear();
-
-        // First and last coordinate do not match
-        let vertices = vec![(0.0, 0.1), (0.0, 0.2), (0.0, 0.3), (0.0, 0.4)]
-            .iter()
-            .map(|(x, y)| Coordinates {
-                latitude: *x,
-                longitude: *y,
-            })
-            .collect();
-
-        zones.push(RequestNoFlyZone {
-            label: "".into(),
-            vertices,
-            time_start: None,
-            time_end: None,
-            vertiport_id: None,
-        });
-
-        let result = nofly_grpc_to_gis(zones.clone()).unwrap_err();
-        assert_eq!(result, NoFlyZoneError::OpenPolygon);
-    }
-
-    #[test]
-    fn ut_nofly_request_to_gis_invalid_vertiport_id() {
-        let mut zones: Vec<RequestNoFlyZone> = vec![];
-
-        let vertices: Vec<Coordinates> = vec![(0.0, 0.1), (0.0, 0.2), (0.0, 0.3), (0.0, 0.1)]
-            .iter()
-            .map(|(x, y)| Coordinates {
-                latitude: *x,
-                longitude: *y,
-            })
-            .collect();
-
-        // Not enough coordinates
-        zones.push(RequestNoFlyZone {
-            label: "".into(),
-            vertices,
-            time_start: None,
-            time_end: None,
-            vertiport_id: Some("invalid uuid".to_string()),
-        });
-
-        let result = nofly_grpc_to_gis(zones.clone()).unwrap_err();
-        assert_eq!(result, NoFlyZoneError::VertiportId);
+            let result = update_nofly(nofly_zones, get_pool()).await.unwrap_err();
+            assert_eq!(result, NoFlyZoneError::Location);
+        }
     }
 }
