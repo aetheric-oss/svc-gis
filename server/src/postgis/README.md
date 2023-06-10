@@ -26,26 +26,59 @@ The `scripts/init.sql` script is launched automatically when the `postgis` conta
 
 Use `docker compose down --volumes` to delete the local `postgis-ssl` and `postgis-data` volumes if changes have been made to either of these scripts.
 
-## :elephant: PostgreSQL Database
-
-### :telescope: Overview
+## :elephant: PostgreSQL Tables
 
 The `arrow` schema defines the following tables:
 
 | Table | Description | 
 | ---- | ---- |
-| [`rnodes`](#pushpin-rnodes) | This table lists nodes through which aircraft can route.<br>Node types currently includes:<br>- Waypoints<br>- Vertiports |
+| [`nodes`](#round_pushpin-nodes) | Nodes for shortest path algorithms.
+| [`waypoints`](#fast_forward-waypoints) | This table lists waypoints through which aircraft can route.
+| [`vertiports`](#checkered_flag-vertiports) | This table lists waypoints through which aircraft can route.
+| [`aircraft`](#helicopter-aircraft) | This table tracks aircraft locations.
 | [`nofly`](#no_entry-nofly) | This table lists no-fly zones. These can be temporary or permanent. They can be vertiports who shouldn't be flown over unless they are the destination or departure port. |
 | [`routes`](#twisted_rightwards_arrows-routes) | This table lists routes between all nodes. These routes are currently auto-populated at a hardcoded altitude.
 
-### :pushpin: `rnodes`
+### :round_pushpin: `nodes`
 
 | Column | Type | Description |
 | ---- | ---- | --- | 
 | id | SERIAL | Unique integer identifier of the node, required for pgRouting. |
-| arrow_id | UUID UNIQUE | The Arrow UUID identifier of this waypoint or vertiport. |
-| node_type | enum ('waypoint', 'vertiport') | The type of route node this represents. |
-| geom | GEOMETRY(Point) | The latitude and longitude of this node, altitude ignored. | 
+| geom | GEOMETRY(Point) | The latitude and longitude of this node, altitude ignored. |
+| node_type | Enum NodeType | 'vertiport', 'aircraft', 'waypoint'
+
+### :fast_forward: `waypoints`
+
+| Column | Type | Description |
+| ---- | ---- | --- | 
+| id | SERIAL | Unique integer identifier of the node, required for pgRouting. |
+| label | VARCHAR UNIQUE | A unique identifier for this waypoint (e.g. 'BANANA') |
+| node_id | INTEGER FK(arrow.nodes) | The ID of the entry in the node table associated with this waypoints. | 
+| min_altitude_meters | INTEGER | The starting altitude of this waypoint, in meters.
+
+### :checkered_flag: `vertiports`
+
+| Column | Type | Description |
+| ---- | ---- | --- | 
+| id | SERIAL | Unique integer identifier of the node, required for pgRouting. |
+| label | VARCHAR UNIQUE | A unique identifier for this vertiport. |
+| node_id | INTEGER FK(arrow.nodes) | The ID of the entry in the node table associated with this vertiport. | 
+| nofly_id | INTEGER FK(arrow.nofly)  | The ID of the entry in the nofly table associated with this vertiport.
+| arrow_id | UUID UNIQUE | The Arrow UUID for this vertiport.
+
+### :helicopter: `aircraft`
+
+| Column | Type | Description |
+| ---- | ---- | --- | 
+| id | SERIAL | Unique integer identifier of the node, required for pgRouting. |
+| callsign | VARCHAR UNIQUE | A unique identifier for this aircraft. |
+| node_id | INTEGER FK(arrow.nodes) | The ID of the entry in the node table associated with this aircraft. | 
+| arrow_id | UUID UNIQUE | The Arrow UUID for this aircraft. 
+| altitude_meters | FLOAT | The altitude of this aircraft.
+| heading_radians | FLOAT | The heading/yaw of this aircraft.
+| pitch_radians | FLOAT | The pitch of this aircraft.
+| velocity_mps | FLOAT | The speed of this aircraft.
+| last_report | TIMESTAMPTZ | The time of the last telemetry report.
 
 ## :no_entry: `nofly`
 
@@ -53,10 +86,10 @@ The `arrow` schema defines the following tables:
 | ---- | ---- | --- | 
 | id | SERIAL | Unique integer identifier of the node, required for pgRouting. |
 | label | VARCHAR | The NOTAM identifier or other label unique to this no-fly zone.
-| geom | GEOMETRY | The polygon defining the bounds of this no-fly zone
+| geom | GEOMETRY(Polygon) | The polygon defining the bounds of this no-fly zone
 | time_start | TIMESTAMPTZ | The time that this no-fly zone becomes active. NULL if active by default, starting the moment it is created.
 | time_end | TIMESTAMPTZ | The time that this no-fly zone becomes inactive. NULL if no scheduled end date.
-| vertiport_id | UUID UNIQUE | The Arrow UUID identifier of this vertiport, if the no-fly is specifically for a vertiport. |
+| nofly_type | Enum NoFlyType | 'nofly', 'vertiport'
 
 ## :twisted_rightwards_arrows: `routes`
 
@@ -65,7 +98,17 @@ Routes are currently unidirectional. There will be two routes per pair of nodes,
 | Column | Type | Description |
 | ---- | ---- | --- | 
 | id | SERIAL | Unique integer identifier of the route, required for pgRouting. |
-| id_source | INTEGER (FK rnodes.id) | The ID of of the first node.
-| id_target | INTEGER (FK rnodes.id) | The ID of the second node.
+| id_source | INTEGER (FK nodes.id) | The ID of of the first node.
+| id_target | INTEGER (FK nodes.id) | The ID of the second node.
 | geom | GEOMETRY(LineString) | The line connecting the two nodes
 | distance_meters | f64 | The distance of this line segment.
+
+## :gun: PostgreSQL Triggers
+
+Trigger | Action | Description
+--- | --- | ---
+node_delete | BEFORE DELETE arrow.nodes | `routes.id_source` and `routes.id_target` have foreign constraints on the `nodes.id` field. Removes a route if the id_source or id_target matches the node being deleted.
+route_update | AFTER INSERT OR UPDATE arrow.nodes | When a 'vertiport' or 'waypoint' type node is added, there should be a route added between that node and all other nodes nearby.
+vertiport_delete | AFTER DELETE arrow.vertiports | After deleting a vertiport, its associated `node` used for routing is no longer needed. Likewise, its associated `nofly` zone won't exist.
+waypoint_delete | AFTER DELETE arrow.waypoints | After deleting a waypoint, its associated `node` used for routing is no longer needed.
+aircraft_delete | AFTER DELETE arrow.aircraft | After deleting an aircraft, its associated `node` used for routing is no longer needed.

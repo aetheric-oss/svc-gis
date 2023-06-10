@@ -8,8 +8,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let server_config = tonic_build::configure()
         .type_attribute("ReadyRequest", "#[derive(Eq, Copy)]")
         .type_attribute("ReadyResponse", "#[derive(Eq, Copy)]")
-        .type_attribute("UpdateNodesResponse", "#[derive(Eq, Copy)]")
-        .type_attribute("UpdateNoFlyZonesResponse", "#[derive(Copy)]")
+        .type_attribute("UpdateResponse", "#[derive(Eq, Copy)]")
+        .type_attribute("PathSegment", "#[derive(Copy)]")
+        .type_attribute("NodeType", "#[derive(num_derive::FromPrimitive)]")
         .type_attribute("Coordinates", "#[derive(Copy)]");
 
     let client_config = server_config.clone();

@@ -14,6 +14,15 @@ pub struct ReadyResponse {
     #[prost(bool, tag = "1")]
     pub ready: bool,
 }
+/// General update response object
+#[derive(Eq, Copy)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct UpdateResponse {
+    /// True if updated
+    #[prost(bool, tag = "1")]
+    pub updated: bool,
+}
 /// Geospatial Coordinates
 #[derive(Copy)]
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -26,36 +35,75 @@ pub struct Coordinates {
     #[prost(float, tag = "2")]
     pub longitude: f32,
 }
-/// Points in space used for routing (waypoints, vertiports, etc.)
+/// Vertiport Type
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct Node {
+pub struct Vertiport {
     /// Unique Arrow ID
     #[prost(string, tag = "1")]
     pub uuid: ::prost::alloc::string::String,
+    /// Vertiport Polygon
+    #[prost(message, repeated, tag = "2")]
+    pub vertices: ::prost::alloc::vec::Vec<Coordinates>,
+    /// Vertiport Label
+    #[prost(string, optional, tag = "3")]
+    pub label: ::core::option::Option<::prost::alloc::string::String>,
+}
+/// Waypoint Type
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Waypoint {
+    /// Unique label
+    #[prost(string, tag = "1")]
+    pub label: ::prost::alloc::string::String,
     /// Latitude Coordinate
     #[prost(message, optional, tag = "2")]
     pub location: ::core::option::Option<Coordinates>,
-    /// Node Type
-    #[prost(enumeration = "NodeType", tag = "3")]
-    pub node_type: i32,
 }
-/// Update Nodes Request object
+/// Aircraft Type
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct UpdateNodesRequest {
+pub struct Aircraft {
+    /// Aircraft UUID
+    #[prost(string, tag = "1")]
+    pub uuid: ::prost::alloc::string::String,
+    /// Aircraft Location
+    #[prost(message, optional, tag = "2")]
+    pub location: ::core::option::Option<Coordinates>,
+    /// Aircraft Altitude
+    #[prost(float, tag = "3")]
+    pub altitude_meters: f32,
+    /// Aircraft Heading
+    #[prost(float, tag = "4")]
+    pub heading_radians: f32,
+    /// Aircraft Pitch
+    #[prost(float, tag = "5")]
+    pub pitch_radians: f32,
+    /// Aircraft Speed in Meters/Second
+    #[prost(float, tag = "6")]
+    pub velocity_mps: f32,
+    /// Telemetry Report Time
+    #[prost(message, optional, tag = "7")]
+    pub time: ::core::option::Option<::prost_types::Timestamp>,
+    /// Aircraft callsign
+    #[prost(string, optional, tag = "8")]
+    pub callsign: ::core::option::Option<::prost::alloc::string::String>,
+}
+/// Update Vertiports Request object
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct UpdateVertiportsRequest {
     /// Nodes to update
     #[prost(message, repeated, tag = "1")]
-    pub nodes: ::prost::alloc::vec::Vec<Node>,
+    pub vertiports: ::prost::alloc::vec::Vec<Vertiport>,
 }
-/// Update Nodes Response object
-#[derive(Eq, Copy)]
+/// Update Waypoints Request object
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct UpdateNodesResponse {
-    /// True if updated
-    #[prost(bool, tag = "1")]
-    pub updated: bool,
+pub struct UpdateWaypointsRequest {
+    /// Nodes to update
+    #[prost(message, repeated, tag = "1")]
+    pub waypoints: ::prost::alloc::vec::Vec<Waypoint>,
 }
 /// Points in space used for routing (waypoints, vertiports, etc.)
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -74,9 +122,6 @@ pub struct NoFlyZone {
     /// End datetime for this zone
     #[prost(message, optional, tag = "4")]
     pub time_end: ::core::option::Option<::prost_types::Timestamp>,
-    /// If this is a no-fly centered around a vertiport, provide UUID
-    #[prost(string, optional, tag = "5")]
-    pub vertiport_id: ::core::option::Option<::prost::alloc::string::String>,
 }
 /// Update No Fly Zones Request object
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -86,50 +131,65 @@ pub struct UpdateNoFlyZonesRequest {
     #[prost(message, repeated, tag = "1")]
     pub zones: ::prost::alloc::vec::Vec<NoFlyZone>,
 }
-/// Update No Fly Zones Response object
-#[derive(Copy)]
+/// Update Aircraft Request Object
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct UpdateNoFlyZonesResponse {
-    /// True if updated
-    #[prost(bool, tag = "1")]
-    pub updated: bool,
+pub struct UpdateAircraftRequest {
+    /// List of aircraft to update
+    #[prost(message, repeated, tag = "1")]
+    pub aircraft: ::prost::alloc::vec::Vec<Aircraft>,
 }
 /// A path between nodes has >= 1 straight segments
+#[derive(Copy)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PathSegment {
     /// Segment Index
     #[prost(int32, tag = "1")]
     pub index: i32,
-    /// Start Node UUID
-    #[prost(string, tag = "2")]
-    pub node_uuid_start: ::prost::alloc::string::String,
-    /// End Node UUID
-    #[prost(string, tag = "3")]
-    pub node_uuid_end: ::prost::alloc::string::String,
+    /// Start Node Type (Waypoint, Aircraft, or Vertiport)
+    #[prost(enumeration = "NodeType", tag = "2")]
+    pub start_type: i32,
+    /// Latitude
+    #[prost(float, tag = "3")]
+    pub start_latitude: f32,
+    /// Longitude
+    #[prost(float, tag = "4")]
+    pub start_longitude: f32,
+    /// End Node Type (Vertiport or Waypoint)
+    #[prost(enumeration = "NodeType", tag = "5")]
+    pub end_type: i32,
+    /// Latitude
+    #[prost(float, tag = "6")]
+    pub end_latitude: f32,
+    /// Longitude
+    #[prost(float, tag = "7")]
+    pub end_longitude: f32,
     /// Distance
-    #[prost(double, tag = "4")]
-    pub distance_meters: f64,
+    #[prost(float, tag = "8")]
+    pub distance_meters: f32,
     /// Altitude
-    #[prost(double, tag = "5")]
-    pub altitude_meters: f64,
+    #[prost(float, tag = "9")]
+    pub altitude_meters: f32,
 }
 /// Best Path Request object
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct BestPathRequest {
-    /// Start Node
+    /// Start Node (Vertiport or Aircraft)
     #[prost(string, tag = "1")]
     pub node_uuid_start: ::prost::alloc::string::String,
-    /// End Node
+    /// End Node (Vertiport)
     #[prost(string, tag = "2")]
     pub node_uuid_end: ::prost::alloc::string::String,
+    /// Start Node Type (Vertiport or Aircraft Allowed)
+    #[prost(enumeration = "NodeType", tag = "3")]
+    pub start_type: i32,
     /// Time of departure
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag = "4")]
     pub time_start: ::core::option::Option<::prost_types::Timestamp>,
     /// Time of arrival
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag = "5")]
     pub time_end: ::core::option::Option<::prost_types::Timestamp>,
 }
 /// Best Path Response object
@@ -140,14 +200,17 @@ pub struct BestPathResponse {
     #[prost(message, repeated, tag = "1")]
     pub segments: ::prost::alloc::vec::Vec<PathSegment>,
 }
-/// Node Type
+/// Types of nodes in itinerary
+#[derive(num_derive::FromPrimitive)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum NodeType {
-    /// Waypoint
-    Waypoint = 0,
-    /// Vertiport
-    Vertiport = 1,
+    /// Vertiport node
+    Vertiport = 0,
+    /// Waypoint node
+    Waypoint = 1,
+    /// Aircraft node
+    Aircraft = 2,
 }
 impl NodeType {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -156,15 +219,17 @@ impl NodeType {
     /// (if the ProtoBuf definition does not change) and safe for programmatic use.
     pub fn as_str_name(&self) -> &'static str {
         match self {
-            NodeType::Waypoint => "WAYPOINT",
             NodeType::Vertiport => "VERTIPORT",
+            NodeType::Waypoint => "WAYPOINT",
+            NodeType::Aircraft => "AIRCRAFT",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
     pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
         match value {
-            "WAYPOINT" => Some(Self::Waypoint),
             "VERTIPORT" => Some(Self::Vertiport),
+            "WAYPOINT" => Some(Self::Waypoint),
+            "AIRCRAFT" => Some(Self::Aircraft),
             _ => None,
         }
     }
@@ -257,10 +322,10 @@ pub mod rpc_service_client {
             let path = http::uri::PathAndQuery::from_static("/grpc.RpcService/isReady");
             self.inner.unary(request.into_request(), path, codec).await
         }
-        pub async fn update_nodes(
+        pub async fn update_vertiports(
             &mut self,
-            request: impl tonic::IntoRequest<super::UpdateNodesRequest>,
-        ) -> Result<tonic::Response<super::UpdateNodesResponse>, tonic::Status> {
+            request: impl tonic::IntoRequest<super::UpdateVertiportsRequest>,
+        ) -> Result<tonic::Response<super::UpdateResponse>, tonic::Status> {
             self.inner
                 .ready()
                 .await
@@ -272,14 +337,33 @@ pub mod rpc_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/grpc.RpcService/updateNodes",
+                "/grpc.RpcService/updateVertiports",
+            );
+            self.inner.unary(request.into_request(), path, codec).await
+        }
+        pub async fn update_waypoints(
+            &mut self,
+            request: impl tonic::IntoRequest<super::UpdateWaypointsRequest>,
+        ) -> Result<tonic::Response<super::UpdateResponse>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/grpc.RpcService/updateWaypoints",
             );
             self.inner.unary(request.into_request(), path, codec).await
         }
         pub async fn update_no_fly_zones(
             &mut self,
             request: impl tonic::IntoRequest<super::UpdateNoFlyZonesRequest>,
-        ) -> Result<tonic::Response<super::UpdateNoFlyZonesResponse>, tonic::Status> {
+        ) -> Result<tonic::Response<super::UpdateResponse>, tonic::Status> {
             self.inner
                 .ready()
                 .await
@@ -292,6 +376,25 @@ pub mod rpc_service_client {
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/grpc.RpcService/updateNoFlyZones",
+            );
+            self.inner.unary(request.into_request(), path, codec).await
+        }
+        pub async fn update_aircraft(
+            &mut self,
+            request: impl tonic::IntoRequest<super::UpdateAircraftRequest>,
+        ) -> Result<tonic::Response<super::UpdateResponse>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/grpc.RpcService/updateAircraft",
             );
             self.inner.unary(request.into_request(), path, codec).await
         }

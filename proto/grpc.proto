@@ -7,8 +7,10 @@ package grpc;
 service RpcService {
     // Common Interfaces
     rpc isReady (ReadyRequest) returns (ReadyResponse);
-    rpc updateNodes (UpdateNodesRequest) returns (UpdateNodesResponse);
-    rpc updateNoFlyZones (UpdateNoFlyZonesRequest) returns (UpdateNoFlyZonesResponse);
+    rpc updateVertiports (updateVertiportsRequest) returns (UpdateResponse);
+    rpc updateWaypoints (updateWaypointsRequest) returns (UpdateResponse);
+    rpc updateNoFlyZones (UpdateNoFlyZonesRequest) returns (UpdateResponse);
+    rpc updateAircraft (UpdateAircraftRequest) returns (UpdateResponse);
     rpc bestPath (BestPathRequest) returns (BestPathResponse);
 }
 
@@ -24,6 +26,12 @@ message ReadyResponse {
     bool ready = 1;
 }
 
+// General update response object
+message UpdateResponse {
+    // True if updated
+    bool updated = 1;
+}
+
 // Geospatial Coordinates
 message Coordinates {
     // Latitude Coordinate
@@ -33,38 +41,65 @@ message Coordinates {
     float longitude = 2;
 }
 
-// Node Type
-enum NodeType {
-    // Waypoint
-    WAYPOINT = 0;
-
-    // Vertiport
-    VERTIPORT = 1;
-}
-
-// Points in space used for routing (waypoints, vertiports, etc.)
-message Node {
+// Vertiport Type
+message Vertiport {
     // Unique Arrow ID
     string uuid = 1;
 
+    // Vertiport Polygon
+    repeated Coordinates vertices = 2;
+
+    // Vertiport Label
+    optional string label = 3;
+}
+
+// Waypoint Type
+message Waypoint {
+    // Unique label
+    string label = 1;
+
     // Latitude Coordinate
     Coordinates location = 2;
-
-    // Node Type
-    NodeType node_type = 3;
 }
 
-// Update Nodes Request object
-message UpdateNodesRequest {
+// Aircraft Type
+message Aircraft {
+
+    // Aircraft UUID
+    string uuid = 1;
+
+    // Aircraft Location
+    Coordinates location = 2;
+
+    // Aircraft Altitude
+    float altitude_meters = 3;
+
+    // Aircraft Heading
+    float heading_radians = 4;
+
+    // Aircraft Pitch
+    float pitch_radians = 5;
+
+    // Aircraft Speed in Meters/Second
+    float velocity_mps = 6;
+
+    // Telemetry Report Time
+    google.protobuf.Timestamp time = 7;
+
+    // Aircraft callsign
+    optional string callsign = 8;
+}
+
+// Update Vertiports Request object
+message updateVertiportsRequest {
     // Nodes to update
-    repeated Node nodes = 1;
+    repeated Vertiport vertiports = 1;
 }
 
-// Update Nodes Response object
-message UpdateNodesResponse {
-
-    // True if updated
-    bool updated = 1;
+// Update Waypoints Request object
+message updateWaypointsRequest {
+    // Nodes to update
+    repeated Waypoint waypoints = 1;
 }
 
 // Points in space used for routing (waypoints, vertiports, etc.)
@@ -81,9 +116,6 @@ message NoFlyZone {
 
     // End datetime for this zone
     google.protobuf.Timestamp time_end = 4;
-
-    // If this is a no-fly centered around a vertiport, provide UUID
-    optional string vertiport_id = 5;
 }
 
 // Update No Fly Zones Request object
@@ -92,11 +124,23 @@ message UpdateNoFlyZonesRequest {
     repeated NoFlyZone zones = 1;
 }
 
-// Update No Fly Zones Response object
-message UpdateNoFlyZonesResponse {
+// Update Aircraft Request Object
+message UpdateAircraftRequest {
 
-    // True if updated
-    bool updated = 1;
+    // List of aircraft to update
+    repeated Aircraft aircraft = 1;
+}
+
+// Types of nodes in itinerary
+enum NodeType {
+    // Vertiport node
+    VERTIPORT = 0;
+
+    // Waypoint node
+    WAYPOINT = 1;
+
+    // Aircraft node
+    AIRCRAFT = 2;
 }
 
 // A path between nodes has >= 1 straight segments
@@ -104,32 +148,47 @@ message PathSegment {
     // Segment Index
     int32 index = 1;
 
-    // Start Node UUID
-    string node_uuid_start = 2;
+    // Start Node Type (Waypoint, Aircraft, or Vertiport)
+    NodeType start_type = 2;
 
-    // End Node UUID
-    string node_uuid_end = 3;
+    // Latitude
+    float start_latitude = 3;
+
+    // Longitude
+    float start_longitude = 4;
+
+    // End Node Type (Vertiport or Waypoint)
+    NodeType end_type = 5;
+
+    // Latitude
+    float end_latitude = 6;
+
+    // Longitude
+    float end_longitude = 7;
 
     // Distance
-    double distance_meters = 4;
+    float distance_meters = 8;
 
     // Altitude
-    double altitude_meters = 5;
+    float altitude_meters = 9;
 }
 
 // Best Path Request object
 message BestPathRequest {
-    // Start Node
+    // Start Node (Vertiport or Aircraft)
     string node_uuid_start = 1;
 
-    // End Node
+    // End Node (Vertiport)
     string node_uuid_end = 2;
 
+    // Start Node Type (Vertiport or Aircraft Allowed)
+    NodeType start_type = 3;
+
     // Time of departure
-    google.protobuf.Timestamp time_start = 3;
+    google.protobuf.Timestamp time_start = 4;
 
     // Time of arrival
-    google.protobuf.Timestamp time_end = 4;
+    google.protobuf.Timestamp time_end = 5;
 }
 
 // Best Path Response object
