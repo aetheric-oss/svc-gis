@@ -2,7 +2,7 @@
 
 use crate::{grpc::server::grpc_server, postgis::execute_transaction};
 use chrono::{DateTime, Utc};
-use grpc_server::Aircraft as RequestAircraft;
+use grpc_server::AircraftPosition as ReqAircraftPos;
 use lib_common::time::timestamp_to_datetime;
 use uuid::Uuid;
 
@@ -47,19 +47,16 @@ impl std::fmt::Display for AircraftError {
     }
 }
 
-struct Aircraft {
+struct AircraftPosition {
     uuid: Option<Uuid>,
     callsign: String,
     geom: String,
-    velocity_mps: f32,
     altitude_meters: f32,
-    heading_radians: f32,
-    pitch_radians: f32,
     time: DateTime<Utc>,
 }
 
-fn sanitize(aircraft: Vec<RequestAircraft>) -> Result<Vec<Aircraft>, AircraftError> {
-    let mut sanitized_aircraft: Vec<Aircraft> = vec![];
+fn sanitize(aircraft: Vec<ReqAircraftPos>) -> Result<Vec<AircraftPosition>, AircraftError> {
+    let mut sanitized_aircraft: Vec<AircraftPosition> = vec![];
     if aircraft.is_empty() {
         return Err(AircraftError::NoAircraft);
     }
@@ -116,14 +113,11 @@ fn sanitize(aircraft: Vec<RequestAircraft>) -> Result<Vec<Aircraft>, AircraftErr
             return Err(AircraftError::Time);
         };
 
-        sanitized_aircraft.push(Aircraft {
+        sanitized_aircraft.push(AircraftPosition {
             uuid,
             callsign: craft.callsign,
             geom,
-            velocity_mps: craft.velocity_mps,
             altitude_meters: craft.altitude_meters,
-            heading_radians: craft.heading_radians,
-            pitch_radians: craft.pitch_radians,
             time,
         });
     }
@@ -132,8 +126,8 @@ fn sanitize(aircraft: Vec<RequestAircraft>) -> Result<Vec<Aircraft>, AircraftErr
 }
 
 /// Updates aircraft in the PostGIS database.
-pub async fn update_aircraft(
-    aircraft: Vec<RequestAircraft>,
+pub async fn update_aircraft_position(
+    aircraft: Vec<ReqAircraftPos>,
     pool: deadpool_postgres::Pool,
 ) -> Result<(), AircraftError> {
     postgis_debug!("(postgis update_node) entry.");
@@ -142,12 +136,9 @@ pub async fn update_aircraft(
         .iter()
         .map(|craft| {
             format!(
-                "SELECT arrow.update_aircraft(
+                "SELECT arrow.update_aircraft_position(
                     '{}'::UUID,
                     '{}',
-                    {},
-                    {},
-                    {},
                     {},
                     {},
                     '{}'::TIMESTAMPTZ
@@ -157,9 +148,6 @@ pub async fn update_aircraft(
                     None => "NULL".to_string(),
                 },
                 craft.geom,
-                craft.velocity_mps,
-                craft.heading_radians,
-                craft.pitch_radians,
                 craft.altitude_meters,
                 craft.callsign,
                 craft.time
@@ -189,8 +177,6 @@ mod tests {
     use rand::{thread_rng, Rng};
     use tokio_postgres::NoTls;
 
-    const RADIANS_MAX: f32 = 2.0 * std::f32::consts::PI;
-
     fn get_pool() -> Pool {
         let mut cfg = Config::default();
         cfg.dbname = Some("deadpool".to_string());
@@ -211,17 +197,14 @@ mod tests {
             ("Mantis", 52.3750703, 4.9161538),
         ];
 
-        let aircraft: Vec<RequestAircraft> = nodes
+        let aircraft: Vec<ReqAircraftPos> = nodes
             .iter()
-            .map(|(label, latitude, longitude)| RequestAircraft {
+            .map(|(label, latitude, longitude)| ReqAircraftPos {
                 callsign: label.to_string(),
                 location: Some(Coordinates {
                     latitude: *latitude,
                     longitude: *longitude,
                 }),
-                heading_radians: rng.gen_range(0.0..RADIANS_MAX),
-                pitch_radians: rng.gen_range(0.0..RADIANS_MAX),
-                velocity_mps: rng.gen_range(-10.0..10.),
                 altitude_meters: rng.gen_range(0.0..2000.),
                 uuid: Some(Uuid::new_v4().to_string()),
                 time: datetime_to_timestamp(&Utc::now()),
@@ -242,9 +225,6 @@ mod tests {
                 sanitized[i].geom
             );
 
-            assert_eq!(aircraft.heading_radians, sanitized[i].heading_radians);
-            assert_eq!(aircraft.pitch_radians, sanitized[i].pitch_radians);
-            assert_eq!(aircraft.velocity_mps, sanitized[i].velocity_mps);
             assert_eq!(aircraft.altitude_meters, sanitized[i].altitude_meters);
 
             if let Some(uuid) = aircraft.uuid.clone() {
@@ -267,9 +247,9 @@ mod tests {
     #[tokio::test]
     async fn ut_client_failure() {
         let nodes = vec![("aircraft", 52.3745905, 4.9160036)];
-        let aircraft: Vec<RequestAircraft> = nodes
+        let aircraft: Vec<ReqAircraftPos> = nodes
             .iter()
-            .map(|(label, latitude, longitude)| RequestAircraft {
+            .map(|(label, latitude, longitude)| ReqAircraftPos {
                 callsign: label.to_string(),
                 location: Some(Coordinates {
                     latitude: *latitude,
@@ -281,7 +261,9 @@ mod tests {
             })
             .collect();
 
-        let result = update_aircraft(aircraft, get_pool()).await.unwrap_err();
+        let result = update_aircraft_position(aircraft, get_pool())
+            .await
+            .unwrap_err();
         assert_eq!(result, AircraftError::Unknown);
     }
 
@@ -294,21 +276,25 @@ mod tests {
             "Aircraft \'",
             &"X".repeat(LABEL_MAX_LENGTH + 1),
         ] {
-            let aircraft: Vec<RequestAircraft> = vec![RequestAircraft {
+            let aircraft: Vec<ReqAircraftPos> = vec![ReqAircraftPos {
                 callsign: label.to_string(),
                 uuid: Some(Uuid::new_v4().to_string()),
                 ..Default::default()
             }];
 
-            let result = update_aircraft(aircraft, get_pool()).await.unwrap_err();
+            let result = update_aircraft_position(aircraft, get_pool())
+                .await
+                .unwrap_err();
             assert_eq!(result, AircraftError::Label);
         }
     }
 
     #[tokio::test]
     async fn ut_aircraft_request_to_gis_invalid_no_nodes() {
-        let aircraft: Vec<RequestAircraft> = vec![];
-        let result = update_aircraft(aircraft, get_pool()).await.unwrap_err();
+        let aircraft: Vec<ReqAircraftPos> = vec![];
+        let result = update_aircraft_position(aircraft, get_pool())
+            .await
+            .unwrap_err();
         assert_eq!(result, AircraftError::NoAircraft);
     }
 
@@ -316,7 +302,7 @@ mod tests {
     async fn ut_aircraft_request_to_gis_invalid_location() {
         let coords = vec![(-90.1, 0.0), (90.1, 0.0), (0.0, -180.1), (0.0, 180.1)];
         for coord in coords {
-            let aircraft: Vec<RequestAircraft> = vec![RequestAircraft {
+            let aircraft: Vec<ReqAircraftPos> = vec![ReqAircraftPos {
                 location: Some(Coordinates {
                     latitude: coord.0,
                     longitude: coord.1,
@@ -325,25 +311,29 @@ mod tests {
                 ..Default::default()
             }];
 
-            let result = update_aircraft(aircraft, get_pool()).await.unwrap_err();
+            let result = update_aircraft_position(aircraft, get_pool())
+                .await
+                .unwrap_err();
             assert_eq!(result, AircraftError::Location);
         }
 
         // No location
-        let aircraft: Vec<RequestAircraft> = vec![RequestAircraft {
+        let aircraft: Vec<ReqAircraftPos> = vec![ReqAircraftPos {
             location: None,
             callsign: "Aircraft".to_string(),
             ..Default::default()
         }];
 
-        let result = update_aircraft(aircraft, get_pool()).await.unwrap_err();
+        let result = update_aircraft_position(aircraft, get_pool())
+            .await
+            .unwrap_err();
         assert_eq!(result, AircraftError::Location);
     }
 
     #[tokio::test]
     async fn ut_aircraft_request_to_gis_invalid_time() {
         // No location
-        let aircraft: Vec<RequestAircraft> = vec![RequestAircraft {
+        let aircraft: Vec<ReqAircraftPos> = vec![ReqAircraftPos {
             time: None,
             location: Some(Coordinates {
                 latitude: 0.0,
@@ -353,7 +343,9 @@ mod tests {
             ..Default::default()
         }];
 
-        let result = update_aircraft(aircraft, get_pool()).await.unwrap_err();
+        let result = update_aircraft_position(aircraft, get_pool())
+            .await
+            .unwrap_err();
         assert_eq!(result, AircraftError::Time);
     }
 }

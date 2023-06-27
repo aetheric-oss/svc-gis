@@ -5,7 +5,7 @@ pub mod grpc_server {
     #![allow(unused_qualifications, missing_docs)]
     tonic::include_proto!("grpc");
 }
-use crate::postgis::aircraft::update_aircraft;
+use crate::postgis::aircraft::update_aircraft_position;
 use crate::postgis::nofly::update_nofly;
 use crate::postgis::routing::{best_path, PathType};
 use crate::postgis::vertiport::update_vertiports;
@@ -93,13 +93,13 @@ impl RpcService for GRPCServerImpl {
     }
 
     #[cfg(not(tarpaulin_include))]
-    async fn update_aircraft(
+    async fn update_aircraft_position(
         &self,
-        request: Request<grpc_server::UpdateAircraftRequest>,
+        request: Request<grpc_server::UpdateAircraftPositionRequest>,
     ) -> Result<Response<grpc_server::UpdateResponse>, Status> {
         grpc_debug!("(grpc update_aircraft) entry.");
         // Update aircraft in PostGIS
-        match update_aircraft(request.into_inner().aircraft, self.pool.clone()).await {
+        match update_aircraft_position(request.into_inner().aircraft, self.pool.clone()).await {
             Ok(_) => Ok(Response::new(grpc_server::UpdateResponse { updated: true })),
             Err(e) => {
                 grpc_error!("(grpc update_aircraft) error updating aircraft.");

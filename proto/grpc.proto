@@ -10,7 +10,8 @@ service RpcService {
     rpc updateVertiports(updateVertiportsRequest) returns (UpdateResponse);
     rpc updateWaypoints(updateWaypointsRequest) returns (UpdateResponse);
     rpc updateNoFlyZones(UpdateNoFlyZonesRequest) returns (UpdateResponse);
-    rpc updateAircraft(UpdateAircraftRequest) returns (UpdateResponse);
+    rpc updateAircraftPosition(UpdateAircraftPositionRequest)
+        returns (UpdateResponse);
     rpc bestPath(BestPathRequest) returns (BestPathResponse);
 }
 
@@ -63,7 +64,7 @@ message Waypoint {
 }
 
 // Aircraft Type
-message Aircraft {
+message AircraftPosition {
 
     // Aircraft Callsign
     string callsign = 1;
@@ -74,20 +75,11 @@ message Aircraft {
     // Aircraft Altitude
     float altitude_meters = 3;
 
-    // Aircraft Heading
-    float heading_radians = 4;
-
-    // Aircraft Pitch
-    float pitch_radians = 5;
-
-    // Aircraft Speed in Meters/Second
-    float velocity_mps = 6;
-
     // Telemetry Report Time
-    google.protobuf.Timestamp time = 7;
+    google.protobuf.Timestamp time = 4;
 
     // Aircraft UUID, if available
-    optional string uuid = 8;
+    optional string uuid = 5;
 }
 
 // Update Vertiports Request object
@@ -125,10 +117,10 @@ message UpdateNoFlyZonesRequest {
 }
 
 // Update Aircraft Request Object
-message UpdateAircraftRequest {
+message UpdateAircraftPositionRequest {
 
     // List of aircraft to update
-    repeated Aircraft aircraft = 1;
+    repeated AircraftPosition aircraft = 1;
 }
 
 // Types of nodes in itinerary

@@ -224,14 +224,11 @@ SECURITY DEFINER
 SET search_path = arrow, pg_temp;
 
 ---
---- Update Aircraft
+--- Update Aircraft Position
 ---
-CREATE OR REPLACE FUNCTION arrow.update_aircraft(
+CREATE OR REPLACE FUNCTION arrow.update_aircraft_position(
     craft_uuid UUID,
     craft_geom GEOMETRY(Point),
-    craft_v_mps FLOAT,
-    craft_heading_rad FLOAT,
-    craft_pitch_rad FLOAT,
     craft_altitude_m FLOAT,
     craft_callsign VARCHAR(255),
     craft_time TIMESTAMPTZ
@@ -253,10 +250,7 @@ BEGIN
             SET geom = craft_geom WHERE id = node_id;
 
         UPDATE arrow.aircraft
-            SET velocity_mps = craft_v_mps,
-                heading_radians = craft_heading_rad,
-                pitch_radians = craft_pitch_rad,
-                altitude_meters = craft_altitude_m,
+            SET altitude_meters = craft_altitude_m,
                 last_updated = craft_time,
                 arrow_id = craft_uuid
             WHERE callsign = craft_callsign;
@@ -274,18 +268,12 @@ BEGIN
         node_id,
         arrow_id,
         callsign,
-        velocity_mps,
-        heading_radians,
-        pitch_radians,
         altitude_meters,
         last_updated
     ) VALUES (
         node_id,
         craft_uuid,
         craft_callsign,
-        craft_v_mps,
-        craft_heading_rad,
-        craft_pitch_rad,
         craft_altitude_m,
         craft_time
     );
@@ -561,12 +549,9 @@ SET search_path = arrow, public, pg_temp;
 
 -- These permissions must be declared last
 GRANT USAGE ON SCHEMA arrow TO svc_gis;
-GRANT EXECUTE ON FUNCTION arrow.update_aircraft(
+GRANT EXECUTE ON FUNCTION arrow.update_aircraft_position(
     UUID,
     GEOMETRY(Point),
-    FLOAT,
-    FLOAT,
-    FLOAT,
     FLOAT,
     VARCHAR,
     TIMESTAMPTZ

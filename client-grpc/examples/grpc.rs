@@ -4,14 +4,14 @@
 use chrono::{Duration, Utc};
 use lib_common::grpc::get_endpoint_from_env;
 use lib_common::time::datetime_to_timestamp;
-use rand::{thread_rng, Rng};
+use rand::thread_rng;
 use svc_gis_client_grpc::client::BestPathRequest;
 use svc_gis_client_grpc::client::NodeType;
 #[allow(unused_qualifications, missing_docs)]
 use svc_gis_client_grpc::client::{
     rpc_service_client::RpcServiceClient, Coordinates, ReadyRequest,
 };
-use svc_gis_client_grpc::client::{Aircraft, UpdateAircraftRequest};
+use svc_gis_client_grpc::client::{AircraftPosition, UpdateAircraftPositionRequest};
 use svc_gis_client_grpc::client::{NoFlyZone, UpdateNoFlyZonesRequest};
 use svc_gis_client_grpc::client::{UpdateVertiportsRequest, Vertiport};
 use svc_gis_client_grpc::client::{UpdateWaypointsRequest, Waypoint};
@@ -138,15 +138,12 @@ async fn add_aircraft(endpoint: String) -> Result<(), Box<dyn std::error::Error>
 
     let mut rng = thread_rng();
 
-    let aircraft: Vec<Aircraft> = aircraft
+    let aircraft: Vec<AircraftPosition> = aircraft
         .iter()
-        .map(|(id, callsign, latitude, longitude)| Aircraft {
+        .map(|(id, callsign, latitude, longitude)| AircraftPosition {
             uuid: Some(id.to_owned()),
             callsign: callsign.to_string(),
             altitude_meters: 1000.0,
-            heading_radians: rng.gen_range(0.0..std::f32::consts::PI * 2.0),
-            pitch_radians: 0.0,
-            velocity_mps: rng.gen_range(-5.0..20.0),
             location: Some(Coordinates {
                 latitude: *latitude,
                 longitude: *longitude,
@@ -155,8 +152,8 @@ async fn add_aircraft(endpoint: String) -> Result<(), Box<dyn std::error::Error>
         })
         .collect();
 
-    let request = tonic::Request::new(UpdateAircraftRequest { aircraft });
-    let response = client.update_aircraft(request).await?;
+    let request = tonic::Request::new(UpdateAircraftPositionRequest { aircraft });
+    let response = client.update_aircraft_position(request).await?;
 
     println!("RESPONSE={:?}", response.into_inner());
 

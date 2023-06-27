@@ -63,7 +63,7 @@ pub struct Waypoint {
 /// Aircraft Type
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct Aircraft {
+pub struct AircraftPosition {
     /// Aircraft Callsign
     #[prost(string, tag = "1")]
     pub callsign: ::prost::alloc::string::String,
@@ -73,20 +73,11 @@ pub struct Aircraft {
     /// Aircraft Altitude
     #[prost(float, tag = "3")]
     pub altitude_meters: f32,
-    /// Aircraft Heading
-    #[prost(float, tag = "4")]
-    pub heading_radians: f32,
-    /// Aircraft Pitch
-    #[prost(float, tag = "5")]
-    pub pitch_radians: f32,
-    /// Aircraft Speed in Meters/Second
-    #[prost(float, tag = "6")]
-    pub velocity_mps: f32,
     /// Telemetry Report Time
-    #[prost(message, optional, tag = "7")]
+    #[prost(message, optional, tag = "4")]
     pub time: ::core::option::Option<::prost_types::Timestamp>,
     /// Aircraft UUID, if available
-    #[prost(string, optional, tag = "8")]
+    #[prost(string, optional, tag = "5")]
     pub uuid: ::core::option::Option<::prost::alloc::string::String>,
 }
 /// Update Vertiports Request object
@@ -134,10 +125,10 @@ pub struct UpdateNoFlyZonesRequest {
 /// Update Aircraft Request Object
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct UpdateAircraftRequest {
+pub struct UpdateAircraftPositionRequest {
     /// List of aircraft to update
     #[prost(message, repeated, tag = "1")]
-    pub aircraft: ::prost::alloc::vec::Vec<Aircraft>,
+    pub aircraft: ::prost::alloc::vec::Vec<AircraftPosition>,
 }
 /// A path between nodes has >= 1 straight segments
 #[derive(Copy)]
@@ -379,9 +370,9 @@ pub mod rpc_service_client {
             );
             self.inner.unary(request.into_request(), path, codec).await
         }
-        pub async fn update_aircraft(
+        pub async fn update_aircraft_position(
             &mut self,
-            request: impl tonic::IntoRequest<super::UpdateAircraftRequest>,
+            request: impl tonic::IntoRequest<super::UpdateAircraftPositionRequest>,
         ) -> Result<tonic::Response<super::UpdateResponse>, tonic::Status> {
             self.inner
                 .ready()
@@ -394,7 +385,7 @@ pub mod rpc_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/grpc.RpcService/updateAircraft",
+                "/grpc.RpcService/updateAircraftPosition",
             );
             self.inner.unary(request.into_request(), path, codec).await
         }
