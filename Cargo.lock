@@ -1938,7 +1938,7 @@ checksum = "81cdd64d312baedb58e21336b31bc043b77e01cc99033ce76ef539f78e965ebc"
 
 [[package]]
 name = "svc-gis"
-version = "0.0.1-develop.3"
+version = "0.0.1-develop.4"
 dependencies = [
  "anyhow",
  "axum",
@@ -1979,7 +1979,7 @@ dependencies = [
 
 [[package]]
 name = "svc-gis-client-grpc"
-version = "0.0.1-develop.3"
+version = "0.0.1-develop.4"
 dependencies = [
  "chrono",
  "lib-common",
@@ -2448,9 +2448,9 @@ dependencies = [
 
 [[package]]
 name = "uuid"
-version = "1.3.4"
+version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fa2982af2eec27de306107c027578ff7f423d65f7250e40ce0fea8f45248b81"
+checksum = "d023da39d1fde5a8a3fe1f3e01ca9632ada0a63e9797de55a879d6e2236277be"
 dependencies = [
  "getrandom",
  "serde",
