@@ -48,8 +48,8 @@ impl std::fmt::Display for AircraftError {
 }
 
 struct Aircraft {
-    uuid: Uuid,
-    callsign: Option<String>,
+    uuid: Option<Uuid>,
+    callsign: String,
     geom: String,
     velocity_mps: f32,
     altitude_meters: f32,
@@ -65,23 +65,22 @@ fn sanitize(aircraft: Vec<RequestAircraft>) -> Result<Vec<Aircraft>, AircraftErr
     }
 
     for craft in aircraft {
-        if Uuid::parse_str(&craft.uuid).is_err() {
-            postgis_error!("(sanitize aircraft) Invalid aircraft UUID: {}", craft.uuid);
-            return Err(AircraftError::AircraftId);
+        if !super::utils::check_string(&craft.callsign, LABEL_REGEX, LABEL_MAX_LENGTH) {
+            postgis_error!(
+                "(sanitize aircraft) Invalid aircraft callsign: {}",
+                craft.callsign
+            );
+            return Err(AircraftError::Label);
         }
 
-        let callsign = match craft.callsign {
-            Some(callsign) => {
-                if !super::utils::check_string(&callsign, LABEL_REGEX, LABEL_MAX_LENGTH) {
-                    postgis_error!(
-                        "(sanitize aircraft) Invalid aircraft callsign: {}",
-                        callsign
-                    );
-                    return Err(AircraftError::Label);
+        let uuid = match craft.uuid {
+            Some(uuid) => match Uuid::parse_str(&uuid) {
+                Err(e) => {
+                    postgis_error!("(sanitize aircraft) Invalid aircraft UUID: {}", e);
+                    return Err(AircraftError::AircraftId);
                 }
-
-                Some(callsign)
-            }
+                Ok(uuid) => Some(uuid),
+            },
             None => None,
         };
 
@@ -118,8 +117,8 @@ fn sanitize(aircraft: Vec<RequestAircraft>) -> Result<Vec<Aircraft>, AircraftErr
         };
 
         sanitized_aircraft.push(Aircraft {
-            uuid: Uuid::parse_str(&craft.uuid).unwrap(),
-            callsign,
+            uuid,
+            callsign: craft.callsign,
             geom,
             velocity_mps: craft.velocity_mps,
             altitude_meters: craft.altitude_meters,
@@ -153,16 +152,16 @@ pub async fn update_aircraft(
                     {},
                     '{}'::TIMESTAMPTZ
                 )",
-                craft.uuid,
+                match &craft.uuid {
+                    Some(uuid) => format!("'{}'::UUID", uuid),
+                    None => "NULL".to_string(),
+                },
                 craft.geom,
                 craft.velocity_mps,
                 craft.heading_radians,
                 craft.pitch_radians,
                 craft.altitude_meters,
-                match &craft.callsign {
-                    Some(callsign) => format!("'{}'::VARCHAR", callsign),
-                    None => "NULL".to_string(),
-                },
+                craft.callsign,
                 craft.time
             )
         })
@@ -215,7 +214,7 @@ mod tests {
         let aircraft: Vec<RequestAircraft> = nodes
             .iter()
             .map(|(label, latitude, longitude)| RequestAircraft {
-                callsign: Some(label.to_string()),
+                callsign: label.to_string(),
                 location: Some(Coordinates {
                     latitude: *latitude,
                     longitude: *longitude,
@@ -224,7 +223,7 @@ mod tests {
                 pitch_radians: rng.gen_range(0.0..RADIANS_MAX),
                 velocity_mps: rng.gen_range(-10.0..10.),
                 altitude_meters: rng.gen_range(0.0..2000.),
-                uuid: Uuid::new_v4().to_string(),
+                uuid: Some(Uuid::new_v4().to_string()),
                 time: datetime_to_timestamp(&Utc::now()),
             })
             .collect();
@@ -247,8 +246,21 @@ mod tests {
             assert_eq!(aircraft.pitch_radians, sanitized[i].pitch_radians);
             assert_eq!(aircraft.velocity_mps, sanitized[i].velocity_mps);
             assert_eq!(aircraft.altitude_meters, sanitized[i].altitude_meters);
-            assert_eq!(aircraft.uuid, sanitized[i].uuid.to_string());
-            // assert_eq!(aircraft.time, sanitized[i].last_updated);
+
+            if let Some(uuid) = aircraft.uuid.clone() {
+                assert_eq!(
+                    uuid,
+                    sanitized[i].uuid.expect("Expected Some uuid.").to_string()
+                );
+            } else {
+                assert_eq!(sanitized[i].uuid, None);
+            }
+
+            let time = aircraft.time.clone().expect("Expected Some time.");
+            let sanitized = datetime_to_timestamp(&sanitized[i].time)
+                .expect("Couldn't convert datetime to timestamp.");
+
+            assert_eq!(time, sanitized);
         }
     }
 
@@ -258,12 +270,12 @@ mod tests {
         let aircraft: Vec<RequestAircraft> = nodes
             .iter()
             .map(|(label, latitude, longitude)| RequestAircraft {
-                callsign: Some(label.to_string()),
+                callsign: label.to_string(),
                 location: Some(Coordinates {
                     latitude: *latitude,
                     longitude: *longitude,
                 }),
-                uuid: Uuid::new_v4().to_string(),
+                uuid: Some(Uuid::new_v4().to_string()),
                 time: datetime_to_timestamp(&Utc::now()),
                 ..Default::default()
             })
@@ -283,8 +295,8 @@ mod tests {
             &"X".repeat(LABEL_MAX_LENGTH + 1),
         ] {
             let aircraft: Vec<RequestAircraft> = vec![RequestAircraft {
-                callsign: Some(label.to_string()),
-                uuid: Uuid::new_v4().to_string(),
+                callsign: label.to_string(),
+                uuid: Some(Uuid::new_v4().to_string()),
                 ..Default::default()
             }];
 
@@ -309,7 +321,7 @@ mod tests {
                     latitude: coord.0,
                     longitude: coord.1,
                 }),
-                uuid: Uuid::new_v4().to_string(),
+                callsign: "Aircraft".to_string(),
                 ..Default::default()
             }];
 
@@ -319,8 +331,8 @@ mod tests {
 
         // No location
         let aircraft: Vec<RequestAircraft> = vec![RequestAircraft {
-            uuid: Uuid::new_v4().to_string(),
             location: None,
+            callsign: "Aircraft".to_string(),
             ..Default::default()
         }];
 
@@ -333,11 +345,11 @@ mod tests {
         // No location
         let aircraft: Vec<RequestAircraft> = vec![RequestAircraft {
             time: None,
-            uuid: Uuid::new_v4().to_string(),
             location: Some(Coordinates {
                 latitude: 0.0,
                 longitude: 0.0,
             }),
+            callsign: "Aircraft".to_string(),
             ..Default::default()
         }];
 

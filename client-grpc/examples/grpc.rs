@@ -141,8 +141,8 @@ async fn add_aircraft(endpoint: String) -> Result<(), Box<dyn std::error::Error>
     let aircraft: Vec<Aircraft> = aircraft
         .iter()
         .map(|(id, callsign, latitude, longitude)| Aircraft {
-            uuid: id.to_owned(),
-            callsign: Some(callsign.to_string()),
+            uuid: Some(id.to_owned()),
+            callsign: callsign.to_string(),
             altitude_meters: 1000.0,
             heading_radians: rng.gen_range(0.0..std::f32::consts::PI * 2.0),
             pitch_radians: 0.0,

@@ -96,8 +96,8 @@ CREATE TABLE arrow.waypoints (
 ---
 CREATE TABLE arrow.aircraft (
     node_id INTEGER UNIQUE,
-    arrow_id UUID UNIQUE NOT NULL PRIMARY KEY,
-    callsign VARCHAR(255) NOT NULL,
+    arrow_id UUID UNIQUE,
+    callsign VARCHAR(255) UNIQUE NOT NULL PRIMARY KEY,
     altitude_meters FLOAT NOT NULL,
     heading_radians FLOAT NOT NULL,
     pitch_radians FLOAT NOT NULL,
@@ -240,14 +240,14 @@ RETURNS VOID AS $$
 DECLARE
     node_id INTEGER;
 BEGIN
-    IF craft_uuid IN (SELECT arrow_id FROM arrow.aircraft) THEN
+    IF craft_callsign IN (SELECT callsign FROM arrow.aircraft) THEN
         -- Don't overwrite with older information
-        IF craft_time < (SELECT last_updated FROM arrow.aircraft WHERE arrow_id = craft_uuid) THEN
+        IF craft_time < (SELECT last_updated FROM arrow.aircraft WHERE callsign = craft_callsign) THEN
             RETURN;
         END IF;
 
         SELECT air.node_id INTO node_id
-            FROM arrow.aircraft air WHERE arrow_id = craft_uuid;
+            FROM arrow.aircraft air WHERE callsign = craft_callsign;
 
         UPDATE arrow.nodes
             SET geom = craft_geom WHERE id = node_id;
@@ -257,13 +257,9 @@ BEGIN
                 heading_radians = craft_heading_rad,
                 pitch_radians = craft_pitch_rad,
                 altitude_meters = craft_altitude_m,
-                last_updated = craft_time
-            WHERE arrow_id = craft_uuid;
-
-        IF craft_callsign IS NOT NULL THEN
-            UPDATE arrow.aircraft
-                SET callsign = craft_callsign WHERE arrow_id = craft_uuid;
-        END IF;
+                last_updated = craft_time,
+                arrow_id = craft_uuid
+            WHERE callsign = craft_callsign;
 
         RETURN;
     END IF;

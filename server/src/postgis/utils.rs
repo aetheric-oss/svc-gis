@@ -60,7 +60,7 @@ pub fn check_string(string: &str, regex: &str, allowed_length: usize) -> bool {
         return false;
     }
 
-    if string.contains("NULL") {
+    if string.to_lowercase().contains("null") {
         return false;
     }
 
@@ -95,7 +95,7 @@ pub fn polygon_from_vertices(vertices: &Vec<Coordinates>) -> Result<String, Poly
         "SRID=4326;POLYGON(({}))",
         vertices
             .iter()
-            .map(|vertex| format!("{} {}", vertex.longitude, vertex.latitude))
+            .map(|vertex| format!("{:.6} {:.6}", vertex.longitude, vertex.latitude))
             .collect::<Vec<String>>()
             .join(",")
     ))
@@ -114,7 +114,147 @@ pub fn point_from_vertex(vertex: &Coordinates) -> Result<String, PointError> {
     }
 
     Ok(format!(
-        "SRID=4326;POINT({} {})",
+        "SRID=4326;POINT({:.6} {:.6})",
         vertex.longitude, vertex.latitude
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand::{thread_rng, Rng};
+
+    #[test]
+    fn ut_point_from_vertex() {
+        let mut rng = thread_rng();
+        let latitude = rng.gen_range(-90.0..90.0);
+        let longitude = rng.gen_range(-180.0..180.0);
+
+        let vertex = Coordinates {
+            latitude,
+            longitude,
+        };
+
+        let point = point_from_vertex(&vertex).unwrap();
+        assert_eq!(
+            point,
+            format!("SRID=4326;POINT({longitude:.6} {latitude:.6})")
+        );
+    }
+
+    #[test]
+    fn ut_point_from_vertex_invalid() {
+        let mut rng = thread_rng();
+        let latitude = -90.1;
+        let longitude = rng.gen_range(-180.0..180.0);
+
+        let vertex = Coordinates {
+            latitude,
+            longitude,
+        };
+
+        let point = point_from_vertex(&vertex).unwrap_err();
+        assert_eq!(point, PointError::OutOfBounds);
+
+        let latitude = 0.0;
+        let longitude = 180.1;
+
+        let vertex = Coordinates {
+            latitude,
+            longitude,
+        };
+        let point = point_from_vertex(&vertex).unwrap_err();
+        assert_eq!(point, PointError::OutOfBounds);
+    }
+
+    #[test]
+    fn ut_polygon_from_vertices() {
+        let mut rng = thread_rng();
+
+        let mut vertices = vec![];
+        for _ in 0..MIN_NUM_POLYGON_VERTICES - 1 {
+            let latitude = rng.gen_range(-90.0..90.0);
+            let longitude = rng.gen_range(-180.0..180.0);
+
+            vertices.push(Coordinates {
+                latitude,
+                longitude,
+            });
+        }
+
+        let polygon = polygon_from_vertices(&vertices).unwrap_err();
+        assert_eq!(polygon, PolygonError::VertexCount);
+
+        // Close the polygon
+        vertices.push(vertices.first().unwrap().clone());
+
+        let vertex_str = vertices
+            .iter()
+            .map(|vertex| format!("{:.6} {:.6}", vertex.longitude, vertex.latitude))
+            .collect::<Vec<String>>()
+            .join(",");
+
+        let polygon = polygon_from_vertices(&vertices).unwrap();
+        assert_eq!(polygon, format!("SRID=4326;POLYGON(({vertex_str}))"));
+    }
+
+    #[test]
+    fn ut_polygon_from_vertices_invalid() {
+        let mut rng = thread_rng();
+
+        let mut vertices = vec![];
+        for _ in 0..MIN_NUM_POLYGON_VERTICES {
+            let latitude = rng.gen_range(-90.0..90.0);
+            let longitude = rng.gen_range(-180.0..180.0);
+
+            vertices.push(Coordinates {
+                latitude,
+                longitude,
+            });
+        }
+
+        // Do not close the polygon
+        let polygon = polygon_from_vertices(&vertices).unwrap_err();
+        assert_eq!(polygon, PolygonError::OpenPolygon);
+
+        // Add an invalid vertex
+        vertices.push(Coordinates {
+            latitude: 0.0,
+            longitude: 180.1,
+        });
+
+        // Close the polygon
+        vertices.push(vertices.first().unwrap().clone());
+
+        let polygon = polygon_from_vertices(&vertices).unwrap_err();
+        assert_eq!(polygon, PolygonError::OutOfBounds);
+    }
+
+    #[test]
+    fn ut_check_string() {
+        // Valid
+        let string = "test";
+        let regex = r"^[a-zA-Z0-9_]+$";
+        let allowed_length = 10;
+
+        assert!(check_string(string, regex, allowed_length));
+
+        // Invalid Length
+        let string = "test";
+        let regex = r"^[a-zA-Z0-9_]+$";
+        let allowed_length = 3;
+        assert!(!check_string(string, regex, allowed_length));
+
+        // Breaks Regex
+        let string = "test!";
+        let regex = r"^[a-zA-Z0-9_]+$";
+        let allowed_length = 10;
+        assert!(!check_string(string, regex, allowed_length));
+
+        // Contains NULL
+        let string = "nullTest";
+        let regex = r"^[a-zA-Z0-9_]+$";
+        let allowed_length = 10;
+        assert!(!check_string(string, regex, allowed_length));
+    }
 }

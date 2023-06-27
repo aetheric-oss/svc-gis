@@ -64,9 +64,9 @@ pub struct Waypoint {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Aircraft {
-    /// Aircraft UUID
+    /// Aircraft Callsign
     #[prost(string, tag = "1")]
-    pub uuid: ::prost::alloc::string::String,
+    pub callsign: ::prost::alloc::string::String,
     /// Aircraft Location
     #[prost(message, optional, tag = "2")]
     pub location: ::core::option::Option<Coordinates>,
@@ -85,9 +85,9 @@ pub struct Aircraft {
     /// Telemetry Report Time
     #[prost(message, optional, tag = "7")]
     pub time: ::core::option::Option<::prost_types::Timestamp>,
-    /// Aircraft callsign
+    /// Aircraft UUID, if available
     #[prost(string, optional, tag = "8")]
-    pub callsign: ::core::option::Option<::prost::alloc::string::String>,
+    pub uuid: ::core::option::Option<::prost::alloc::string::String>,
 }
 /// Update Vertiports Request object
 #[allow(clippy::derive_partial_eq_without_eq)]

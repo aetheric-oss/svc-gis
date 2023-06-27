@@ -6,12 +6,12 @@ package grpc;
 // Heartbeat
 service RpcService {
     // Common Interfaces
-    rpc isReady (ReadyRequest) returns (ReadyResponse);
-    rpc updateVertiports (updateVertiportsRequest) returns (UpdateResponse);
-    rpc updateWaypoints (updateWaypointsRequest) returns (UpdateResponse);
-    rpc updateNoFlyZones (UpdateNoFlyZonesRequest) returns (UpdateResponse);
-    rpc updateAircraft (UpdateAircraftRequest) returns (UpdateResponse);
-    rpc bestPath (BestPathRequest) returns (BestPathResponse);
+    rpc isReady(ReadyRequest) returns (ReadyResponse);
+    rpc updateVertiports(updateVertiportsRequest) returns (UpdateResponse);
+    rpc updateWaypoints(updateWaypointsRequest) returns (UpdateResponse);
+    rpc updateNoFlyZones(UpdateNoFlyZonesRequest) returns (UpdateResponse);
+    rpc updateAircraft(UpdateAircraftRequest) returns (UpdateResponse);
+    rpc bestPath(BestPathRequest) returns (BestPathResponse);
 }
 
 // Ready Request object
@@ -65,8 +65,8 @@ message Waypoint {
 // Aircraft Type
 message Aircraft {
 
-    // Aircraft UUID
-    string uuid = 1;
+    // Aircraft Callsign
+    string callsign = 1;
 
     // Aircraft Location
     Coordinates location = 2;
@@ -86,8 +86,8 @@ message Aircraft {
     // Telemetry Report Time
     google.protobuf.Timestamp time = 7;
 
-    // Aircraft callsign
-    optional string callsign = 8;
+    // Aircraft UUID, if available
+    optional string uuid = 8;
 }
 
 // Update Vertiports Request object
