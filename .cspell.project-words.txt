@@ -63,3 +63,4 @@ consts
 callsign
 nodetype
 oneshot
+ewkb

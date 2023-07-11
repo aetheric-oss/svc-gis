@@ -2,7 +2,6 @@
 //! No-Fly Zones are permanent or temporary.
 
 use crate::grpc::server::grpc_server;
-use crate::postgis::execute_transaction;
 use crate::postgis::nofly::NoFlyZone as GisNoFlyZone;
 use chrono::{DateTime, Utc};
 use grpc_server::NoFlyZone as RequestNoFlyZone;
@@ -14,14 +13,14 @@ const LABEL_MAX_LENGTH: usize = 100;
 /// Allowed characters in a label
 const LABEL_REGEX: &str = r"^[a-zA-Z0-9_\s-]+$";
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 /// Nodes that aircraft can fly between
 pub struct NoFlyZone {
     /// A unique identifier for the No-Fly Zone (NOTAM id, etc.)
     pub label: String,
 
     /// The geometry string to feed into PSQL
-    pub geom: String,
+    pub geom: postgis::ewkb::Polygon,
 
     /// The start time of the no-fly zone, if applicable
     pub time_start: Option<DateTime<Utc>>,
@@ -142,37 +141,48 @@ pub async fn update_nofly(
 ) -> Result<(), NoFlyZoneError> {
     postgis_debug!("(postgis update_nofly) entry.");
     let zones = sanitize(zones)?;
-    let commands = zones
-        .iter()
-        .map(|zone| {
-            format!(
-                "SELECT arrow.update_nofly(
-                    '{}'::VARCHAR,
-                    '{}',
-                    {},
-                    {}
-                )",
-                zone.label,
-                zone.geom,
-                match zone.time_start {
-                    Some(t) => format!("'{}'::TIMESTAMPTZ", t),
-                    None => "NULL".to_string(),
-                },
-                match zone.time_end {
-                    Some(t) => format!("'{}'::TIMESTAMPTZ", t),
-                    None => "NULL".to_string(),
-                }
-            )
-        })
-        .collect();
 
-    match execute_transaction(commands, pool).await {
-        Ok(_) => Ok(()),
-        Err(_) => {
-            postgis_error!("(postgis update_nofly) Error executing transaction.");
-            Err(NoFlyZoneError::Unknown)
+    let Ok(mut client) = pool.get().await else {
+        postgis_error!("(postgis update_nofly) error getting client.");
+        return Err(NoFlyZoneError::Unknown);
+    };
+
+    let Ok(transaction) = client.transaction().await else {
+        postgis_error!("(postgis update_nofly) error creating transaction.");
+        return Err(NoFlyZoneError::Unknown);
+    };
+
+    let Ok(stmt) = transaction.prepare_cached(
+        "SELECT arrow.update_nofly($1, $2, $3, $4)"
+    ).await else {
+        postgis_error!("(postgis update_nofly) error preparing cached statement.");
+        return Err(NoFlyZoneError::Unknown);
+    };
+
+    for zone in &zones {
+        if let Err(e) = transaction
+            .execute(
+                &stmt,
+                &[&zone.label, &zone.geom, &zone.time_start, &zone.time_end],
+            )
+            .await
+        {
+            postgis_error!("(postgis update_nofly) error: {}", e);
+            return Err(NoFlyZoneError::Unknown);
         }
     }
+
+    match transaction.commit().await {
+        Ok(_) => {
+            postgis_debug!("(postgis update_nofly) success.");
+        }
+        Err(e) => {
+            postgis_error!("(postgis update_nofly) error: {}", e);
+            return Err(NoFlyZoneError::Unknown);
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

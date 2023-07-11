@@ -127,18 +127,28 @@ async fn add_aircraft(endpoint: String) -> Result<(), Box<dyn std::error::Error>
 
     let mut client = RpcServiceClient::connect(endpoint).await?;
 
-    let aircraft: Vec<(String, &str, f32, f32)> = vec![
-        (AIRCRAFT_1_UUID.to_string(), "Marauder", 52.3746, 4.9160036),
-        (Uuid::new_v4().to_string(), "Mantis", 52.3749819, 4.9157),
-        (Uuid::new_v4().to_string(), "Ghost", 52.37523, 4.9153733),
-        (Uuid::new_v4().to_string(), "Phantom", 52.3754, 4.9156845),
-        (Uuid::new_v4().to_string(), "Falcon", 52.3750703, 4.9162),
+    let aircraft: Vec<(Option<String>, &str, f32, f32)> = vec![
+        (
+            Some(AIRCRAFT_1_UUID.to_string()),
+            "Marauder",
+            52.3746,
+            4.9160036,
+        ),
+        (
+            Some(Uuid::new_v4().to_string()),
+            "Mantis",
+            52.3749819,
+            4.9157,
+        ),
+        (None, "Ghost", 52.37523, 4.9153733),
+        (None, "Phantom", 52.3754, 4.9156845),
+        (None, "Falcon", 52.3750703, 4.9162),
     ];
 
     let aircraft: Vec<AircraftPosition> = aircraft
         .iter()
-        .map(|(id, callsign, latitude, longitude)| AircraftPosition {
-            uuid: Some(id.to_owned()),
+        .map(|(uuid, callsign, latitude, longitude)| AircraftPosition {
+            uuid: uuid.clone(),
             callsign: callsign.to_string(),
             altitude_meters: 1000.0,
             location: Some(Coordinates {

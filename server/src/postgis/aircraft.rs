@@ -1,6 +1,6 @@
 //! This module contains functions for updating aircraft in the PostGIS database.
 
-use crate::{grpc::server::grpc_server, postgis::execute_transaction};
+use crate::grpc::server::grpc_server;
 use chrono::{DateTime, Utc};
 use grpc_server::AircraftPosition as ReqAircraftPos;
 use lib_common::time::timestamp_to_datetime;
@@ -50,7 +50,7 @@ impl std::fmt::Display for AircraftError {
 struct AircraftPosition {
     uuid: Option<Uuid>,
     callsign: String,
-    geom: String,
+    geom: postgis::ewkb::Point,
     altitude_meters: f32,
     time: DateTime<Utc>,
 }
@@ -130,35 +130,51 @@ pub async fn update_aircraft_position(
     aircraft: Vec<ReqAircraftPos>,
     pool: deadpool_postgres::Pool,
 ) -> Result<(), AircraftError> {
-    postgis_debug!("(postgis update_node) entry.");
+    postgis_debug!("(postgis update_aircraft_position) entry.");
     let aircraft = sanitize(aircraft)?;
-    let commands = aircraft
-        .iter()
-        .map(|craft| {
-            format!(
-                "SELECT arrow.update_aircraft_position(
-                    {},
-                    '{}',
-                    {},
-                    '{}',
-                    '{}'::TIMESTAMPTZ
-                )",
-                match &craft.uuid {
-                    Some(uuid) => format!("'{}'::UUID", uuid),
-                    None => "NULL".to_string(),
-                },
-                craft.geom,
-                craft.altitude_meters,
-                craft.callsign,
-                craft.time
-            )
-        })
-        .collect();
 
-    match execute_transaction(commands, pool).await {
-        Ok(_) => (),
-        Err(_) => {
-            postgis_error!("(postgis update_aircraft) Error executing transaction.");
+    let Ok(mut client) = pool.get().await else {
+        postgis_error!("(postgis update_aircraft_position) error getting client.");
+        return Err(AircraftError::Unknown);
+    };
+
+    let Ok(transaction) = client.transaction().await else {
+        postgis_error!("(postgis update_aircraft_position) error creating transaction.");
+        return Err(AircraftError::Unknown);
+    };
+
+    let Ok(stmt) = transaction.prepare_cached(
+        "SELECT arrow.update_aircraft_position($1, $2, $3, $4, $5::TIMESTAMPTZ)"
+    ).await else {
+        postgis_error!("(postgis update_aircraft_position) error preparing cached statement.");
+        return Err(AircraftError::Unknown);
+    };
+
+    for craft in &aircraft {
+        if let Err(e) = transaction
+            .execute(
+                &stmt,
+                &[
+                    &craft.uuid,
+                    &craft.geom,
+                    &(craft.altitude_meters as f64),
+                    &craft.callsign,
+                    &craft.time,
+                ],
+            )
+            .await
+        {
+            postgis_error!("(postgis update_aircraft_position) error: {}", e);
+            return Err(AircraftError::Unknown);
+        }
+    }
+
+    match transaction.commit().await {
+        Ok(_) => {
+            postgis_debug!("(postgis update_aircraft_position) success.");
+        }
+        Err(e) => {
+            postgis_error!("(postgis update_aircraft_position) error: {}", e);
             return Err(AircraftError::Unknown);
         }
     }

@@ -1,7 +1,6 @@
 //! Updates vertiports in the PostGIS database.
 
 use crate::grpc::server::grpc_server;
-use crate::postgis::execute_transaction;
 use grpc_server::Vertiport as RequestVertiport;
 use uuid::Uuid;
 
@@ -45,7 +44,7 @@ impl std::fmt::Display for VertiportError {
 struct Vertiport {
     uuid: Uuid,
     label: Option<String>,
-    geom: String,
+    geom: postgis::ewkb::Polygon,
 }
 
 /// Verify that the request inputs are valid
@@ -102,32 +101,45 @@ pub async fn update_vertiports(
 ) -> Result<(), VertiportError> {
     postgis_debug!("(postgis update_node) entry.");
     let vertiports = sanitize(vertiports)?;
-    let commands = vertiports
-        .iter()
-        .map(|vertiport| {
-            format!(
-                "SELECT arrow.update_vertiport(
-                    '{}'::uuid,
-                    '{}',
-                    {}
-                )",
-                vertiport.uuid,
-                vertiport.geom,
-                match &vertiport.label {
-                    Some(l) => format!("'{}'::VARCHAR", l),
-                    None => "NULL".to_string(),
-                }
-            )
-        })
-        .collect();
 
-    match execute_transaction(commands, pool).await {
-        Ok(_) => Ok(()),
-        Err(_) => {
-            postgis_error!("(update_vertiports) Error updating vertiports.");
-            Err(VertiportError::Unknown)
+    let Ok(mut client) = pool.get().await else {
+        postgis_error!("(postgis update_vertiports) error getting client.");
+        return Err(VertiportError::Unknown);
+    };
+
+    let Ok(transaction) = client.transaction().await else {
+        postgis_error!("(postgis update_vertiports) error creating transaction.");
+        return Err(VertiportError::Unknown);
+    };
+
+    let Ok(stmt) = transaction.prepare_cached(
+        "SELECT arrow.update_vertiport($1, $2, $3)"
+    ).await else {
+        postgis_error!("(postgis update_vertiports) error preparing cached statement.");
+        return Err(VertiportError::Unknown);
+    };
+
+    for vertiport in &vertiports {
+        if let Err(e) = transaction
+            .execute(&stmt, &[&vertiport.uuid, &vertiport.geom, &vertiport.label])
+            .await
+        {
+            postgis_error!("(postgis update_vertiports) error: {}", e);
+            return Err(VertiportError::Unknown);
         }
     }
+
+    match transaction.commit().await {
+        Ok(_) => {
+            postgis_debug!("(postgis update_vertiports) success.");
+        }
+        Err(e) => {
+            postgis_error!("(postgis update_vertiports) error: {}", e);
+            return Err(VertiportError::Unknown);
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

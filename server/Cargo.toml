@@ -18,10 +18,7 @@ vendored-openssl = ["openssl/vendored"]
 # Will add a 'mock' module for the enabled resources, providing access to mock data generation functions
 mock = []
 # Will use a stubbed backend connection, only use for tests!
-stub_backends = [
-  # "svc-storage-client-grpc/stub_client",
-  # "svc-storage-client-grpc/stub_backends",
-]
+stub_backends = []
 # Will implement stub functions for the server, only use for tests!
 stub_server = ["test_util"]
 # Only added to support client-grpc feature when running tests
@@ -44,6 +41,7 @@ num                 = "0.4"
 num-derive          = "0.3"
 num-traits          = "0.2"
 openssl             = "0.10"
+postgis             = "0.9"
 postgres-native-tls = "0.5"
 prost               = "0.11"
 prost-build         = "0.11"

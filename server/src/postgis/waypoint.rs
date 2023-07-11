@@ -1,7 +1,6 @@
 //! Updates waypoints in the PostGIS database.
 
 use crate::grpc::server::grpc_server;
-use crate::postgis::execute_transaction;
 use grpc_server::Waypoint as RequestWaypoint;
 
 /// Maximum length of a waypoint label
@@ -39,7 +38,7 @@ impl std::fmt::Display for WaypointError {
 
 struct Waypoint {
     label: String,
-    geom: String,
+    geom: postgis::ewkb::Point,
 }
 
 /// Verify that the request inputs are valid
@@ -92,26 +91,45 @@ pub async fn update_waypoints(
 ) -> Result<(), WaypointError> {
     postgis_debug!("(postgis update_node) entry.");
     let waypoints = sanitize(waypoints)?;
-    let commands = waypoints
-        .iter()
-        .map(|waypoint| {
-            format!(
-                "SELECT arrow.update_waypoint(
-                    '{}'::VARCHAR,
-                    '{}'
-                )",
-                waypoint.label, waypoint.geom
-            )
-        })
-        .collect();
 
-    match execute_transaction(commands, pool).await {
-        Ok(_) => Ok(()),
-        Err(_) => {
-            postgis_error!("(update_waypoints) Error updating waypoints.");
-            Err(WaypointError::Unknown)
+    let Ok(mut client) = pool.get().await else {
+        postgis_error!("(postgis update_waypoints) error getting client.");
+        return Err(WaypointError::Unknown);
+    };
+
+    let Ok(transaction) = client.transaction().await else {
+        postgis_error!("(postgis update_waypoints) error creating transaction.");
+        return Err(WaypointError::Unknown);
+    };
+
+    let Ok(stmt) = transaction.prepare_cached(
+        "SELECT arrow.update_waypoint($1, $2)"
+    ).await else {
+        postgis_error!("(postgis update_waypoints) error preparing cached statement.");
+        return Err(WaypointError::Unknown);
+    };
+
+    for waypoint in &waypoints {
+        if let Err(e) = transaction
+            .execute(&stmt, &[&waypoint.label, &waypoint.geom])
+            .await
+        {
+            postgis_error!("(postgis update_waypoints) error: {}", e);
+            return Err(WaypointError::Unknown);
         }
     }
+
+    match transaction.commit().await {
+        Ok(_) => {
+            postgis_debug!("(postgis update_waypoints) success.");
+        }
+        Err(e) => {
+            postgis_error!("(postgis update_waypoints) error: {}", e);
+            return Err(WaypointError::Unknown);
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

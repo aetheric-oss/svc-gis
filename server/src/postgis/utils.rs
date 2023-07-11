@@ -71,7 +71,9 @@ pub fn check_string(string: &str, regex: &str, allowed_length: usize) -> bool {
 /// The first and last vertices must be equal
 /// The polygon must have at least [`MIN_NUM_POLYGON_VERTICES`] vertices
 /// Each vertex must be within the valid range of latitude and longitude
-pub fn polygon_from_vertices(vertices: &Vec<Coordinates>) -> Result<String, PolygonError> {
+pub fn polygon_from_vertices(
+    vertices: &Vec<Coordinates>,
+) -> Result<postgis::ewkb::Polygon, PolygonError> {
     let size = vertices.len();
 
     // Check that the zone has at least N vertices
@@ -91,19 +93,25 @@ pub fn polygon_from_vertices(vertices: &Vec<Coordinates>) -> Result<String, Poly
         return Err(PolygonError::OutOfBounds);
     }
 
-    Ok(format!(
-        "SRID=4326;POLYGON(({}))",
-        vertices
-            .iter()
-            .map(|vertex| format!("{:.6} {:.6}", vertex.longitude, vertex.latitude))
-            .collect::<Vec<String>>()
-            .join(",")
-    ))
+    Ok(postgis::ewkb::Polygon {
+        rings: vec![postgis::ewkb::LineString {
+            points: vertices
+                .iter()
+                .map(|vertex| postgis::ewkb::Point {
+                    x: vertex.longitude as f64,
+                    y: vertex.latitude as f64,
+                    srid: Some(4326),
+                })
+                .collect(),
+            srid: Some(4326),
+        }],
+        srid: Some(4326),
+    })
 }
 
 /// Generate a PostGis 'Point' from a vertex
 /// Each vertex must be within the valid range of latitude and longitude
-pub fn point_from_vertex(vertex: &Coordinates) -> Result<String, PointError> {
+pub fn point_from_vertex(vertex: &Coordinates) -> Result<postgis::ewkb::Point, PointError> {
     // Each coordinate must fit within the valid range of latitude and longitude
     if vertex.latitude < -90.0
         || vertex.latitude > 90.0
@@ -113,10 +121,11 @@ pub fn point_from_vertex(vertex: &Coordinates) -> Result<String, PointError> {
         return Err(PointError::OutOfBounds);
     }
 
-    Ok(format!(
-        "SRID=4326;POINT({:.6} {:.6})",
-        vertex.longitude, vertex.latitude
-    ))
+    Ok(postgis::ewkb::Point {
+        x: vertex.longitude as f64,
+        y: vertex.latitude as f64,
+        srid: Some(4326),
+    })
 }
 
 #[cfg(test)]
@@ -138,7 +147,11 @@ mod tests {
         let point = point_from_vertex(&vertex).unwrap();
         assert_eq!(
             point,
-            format!("SRID=4326;POINT({longitude:.6} {latitude:.6})")
+            postgis::ewkb::Point {
+                x: longitude as f64,
+                y: latitude as f64,
+                srid: Some(4326)
+            }
         );
     }
 
@@ -195,7 +208,22 @@ mod tests {
             .join(",");
 
         let polygon = polygon_from_vertices(&vertices).unwrap();
-        assert_eq!(polygon, format!("SRID=4326;POLYGON(({vertex_str}))"));
+        let expected = postgis::ewkb::Polygon {
+            rings: vec![postgis::ewkb::LineString {
+                points: vertices
+                    .iter()
+                    .map(|vertex| postgis::ewkb::Point {
+                        x: vertex.longitude as f64,
+                        y: vertex.latitude as f64,
+                        srid: Some(4326),
+                    })
+                    .collect(),
+                srid: Some(4326),
+            }],
+            srid: Some(4326),
+        };
+
+        assert_eq!(polygon, expected);
     }
 
     #[test]
