@@ -137,10 +137,10 @@ pub async fn update_aircraft_position(
         .map(|craft| {
             format!(
                 "SELECT arrow.update_aircraft_position(
-                    '{}'::UUID,
+                    {},
                     '{}',
                     {},
-                    {},
+                    '{}',
                     '{}'::TIMESTAMPTZ
                 )",
                 match &craft.uuid {

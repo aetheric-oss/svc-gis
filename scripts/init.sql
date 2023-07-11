@@ -99,9 +99,6 @@ CREATE TABLE arrow.aircraft (
     arrow_id UUID UNIQUE,
     callsign VARCHAR(255) UNIQUE NOT NULL PRIMARY KEY,
     altitude_meters FLOAT NOT NULL,
-    heading_radians FLOAT NOT NULL,
-    pitch_radians FLOAT NOT NULL,
-    velocity_mps FLOAT NOT NULL,
     last_updated TIMESTAMPTZ NOT NULL,
     CONSTRAINT fk_node_id
         FOREIGN KEY (node_id)

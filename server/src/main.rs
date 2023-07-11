@@ -23,7 +23,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pool = postgis::pool::create_pool(config.clone());
 
     // Create gRPC server
-    let _ = tokio::spawn(grpc::server::grpc_server(config, pool.clone())).await;
+    let _ = tokio::spawn(grpc::server::grpc_server(config, None, pool.clone())).await;
 
     info!("Server shutdown.");
     Ok(())

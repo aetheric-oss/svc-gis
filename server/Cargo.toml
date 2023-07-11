@@ -11,7 +11,21 @@ license-file.workspace = true
 repository.workspace   = true
 
 [features]
-vendored-openssl = ['openssl/vendored']
+default          = []
+dev              = ["mock"]
+test_util        = ["mock", "stub_backends"]
+vendored-openssl = ["openssl/vendored"]
+# Will add a 'mock' module for the enabled resources, providing access to mock data generation functions
+mock = []
+# Will use a stubbed backend connection, only use for tests!
+stub_backends = [
+  # "svc-storage-client-grpc/stub_client",
+  # "svc-storage-client-grpc/stub_backends",
+]
+# Will implement stub functions for the server, only use for tests!
+stub_server = ["test_util"]
+# Only added to support client-grpc feature when running tests
+stub_client = ["stub_backends"]
 
 [dependencies]
 anyhow              = "1.0"
@@ -71,6 +85,11 @@ version = "1.2"
 
 [dev-dependencies]
 rand = "0.8"
+
+# Make sure we enable the required modules when running tests
+[dev-dependencies.svc-gis]
+features = ["dev"]
+path     = "."
 
 [dev-dependencies.cargo-husky]
 default-features = false          # Disable features which are enabled by default

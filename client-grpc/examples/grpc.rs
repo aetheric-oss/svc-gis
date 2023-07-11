@@ -4,7 +4,6 @@
 use chrono::{Duration, Utc};
 use lib_common::grpc::get_endpoint_from_env;
 use lib_common::time::datetime_to_timestamp;
-use rand::thread_rng;
 use svc_gis_client_grpc::client::BestPathRequest;
 use svc_gis_client_grpc::client::NodeType;
 #[allow(unused_qualifications, missing_docs)]
@@ -135,8 +134,6 @@ async fn add_aircraft(endpoint: String) -> Result<(), Box<dyn std::error::Error>
         (Uuid::new_v4().to_string(), "Phantom", 52.3754, 4.9156845),
         (Uuid::new_v4().to_string(), "Falcon", 52.3750703, 4.9162),
     ];
-
-    let mut rng = thread_rng();
 
     let aircraft: Vec<AircraftPosition> = aircraft
         .iter()
