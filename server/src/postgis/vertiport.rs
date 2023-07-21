@@ -65,10 +65,11 @@ fn sanitize(vertiports: Vec<RequestVertiport>) -> Result<Vec<Vertiport>, Vertipo
 
         let label = match &vertiport.label {
             Some(label) => {
-                if !super::utils::check_string(label, LABEL_REGEX, LABEL_MAX_LENGTH) {
+                if let Err(e) = super::utils::check_string(label, LABEL_REGEX, LABEL_MAX_LENGTH) {
                     postgis_error!(
-                        "(sanitize vertiports) Vertiport {} has invalid label.",
-                        vertiport.uuid
+                        "(sanitize vertiports) Vertiport {} has invalid label: {}",
+                        vertiport.uuid,
+                        e
                     );
                     return Err(VertiportError::Label);
                 }

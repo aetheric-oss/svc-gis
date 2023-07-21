@@ -73,8 +73,12 @@ fn sanitize(req_zones: Vec<RequestNoFlyZone>) -> Result<Vec<GisNoFlyZone>, NoFly
 
     let mut zones: Vec<GisNoFlyZone> = vec![];
     for zone in req_zones {
-        if !super::utils::check_string(&zone.label, LABEL_REGEX, LABEL_MAX_LENGTH) {
-            postgis_error!("(sanitize nofly) Invalid no-fly zone label: {}", zone.label);
+        if let Err(e) = super::utils::check_string(&zone.label, LABEL_REGEX, LABEL_MAX_LENGTH) {
+            postgis_error!(
+                "(sanitize nofly) Invalid no-fly zone label: {}; {}",
+                zone.label,
+                e
+            );
             return Err(NoFlyZoneError::Label);
         }
 

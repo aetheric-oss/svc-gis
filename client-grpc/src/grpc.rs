@@ -167,10 +167,10 @@ pub struct PathSegment {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct BestPathRequest {
-    /// Start Node (Vertiport or Aircraft)
+    /// Start Node - UUID for Vertiports, Callsigns for Aircraft
     #[prost(string, tag = "1")]
-    pub node_uuid_start: ::prost::alloc::string::String,
-    /// End Node (Vertiport)
+    pub node_start_id: ::prost::alloc::string::String,
+    /// End Node (Vertiport UUID)
     #[prost(string, tag = "2")]
     pub node_uuid_end: ::prost::alloc::string::String,
     /// Start Node Type (Vertiport or Aircraft Allowed)

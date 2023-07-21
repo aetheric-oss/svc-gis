@@ -19,6 +19,7 @@ use uuid::Uuid;
 const VERTIPORT_1_UUID: &str = "00000000-0000-0000-0000-000000000000";
 const VERTIPORT_2_UUID: &str = "00000000-0000-0000-0000-000000000001";
 const AIRCRAFT_1_UUID: &str = "00000000-0000-0000-0000-000000000002";
+const AIRCRAFT_1_LABEL: &str = "Marauder";
 
 /// Provide endpoint url to use
 pub fn get_endpoint() -> String {
@@ -130,7 +131,7 @@ async fn add_aircraft(endpoint: String) -> Result<(), Box<dyn std::error::Error>
     let aircraft: Vec<(Option<String>, &str, f32, f32)> = vec![
         (
             Some(AIRCRAFT_1_UUID.to_string()),
-            "Marauder",
+            AIRCRAFT_1_LABEL,
             52.3746,
             4.9160036,
         ),
@@ -188,7 +189,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         println!("\n\u{1F426} Best Path WITHOUT Temporary No-Fly Zone");
         let request = tonic::Request::new(BestPathRequest {
-            node_uuid_start: VERTIPORT_1_UUID.to_string(),
+            node_start_id: VERTIPORT_1_UUID.to_string(),
             node_uuid_end: VERTIPORT_2_UUID.to_string(),
             start_type: NodeType::Vertiport as i32,
             time_start: datetime_to_timestamp(&Utc::now()),
@@ -279,7 +280,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         println!("\n\u{26D4}\u{1F681} Best Path DURING Temporary No-Fly Zone");
         let request = tonic::Request::new(BestPathRequest {
-            node_uuid_start: VERTIPORT_1_UUID.to_string(),
+            node_start_id: VERTIPORT_1_UUID.to_string(),
             node_uuid_end: VERTIPORT_2_UUID.to_string(),
             start_type: NodeType::Vertiport as i32,
             time_start: datetime_to_timestamp(&no_fly_start_time),
@@ -299,11 +300,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         println!("\n\u{1F681} Best Path AFTER Temporary No-Fly Zone Expires");
         let request = tonic::Request::new(BestPathRequest {
-            node_uuid_start: VERTIPORT_1_UUID.to_string(),
+            node_start_id: VERTIPORT_1_UUID.to_string(),
             node_uuid_end: VERTIPORT_2_UUID.to_string(),
             start_type: NodeType::Vertiport as i32,
             time_start: datetime_to_timestamp(&(no_fly_end_time + Duration::seconds(1))),
             time_end: datetime_to_timestamp(&(no_fly_end_time + Duration::hours(1))),
+        });
+
+        let response = client.best_path(request).await?.into_inner();
+
+        println!("RESPONSE={:?}", response);
+        println!(
+            "\x1b[33;3m{} segment(s) in path.\x1b[0m",
+            response.segments.len()
+        );
+    }
+
+    // Best Path From Aircraft
+    {
+        println!("\n\u{1F681} Best Path From Aircraft during TFR");
+        let request = tonic::Request::new(BestPathRequest {
+            node_start_id: AIRCRAFT_1_LABEL.to_string(),
+            node_uuid_end: VERTIPORT_2_UUID.to_string(),
+            start_type: NodeType::Aircraft as i32,
+            time_start: datetime_to_timestamp(&no_fly_start_time),
+            time_end: datetime_to_timestamp(&(no_fly_start_time + Duration::hours(1))),
         });
 
         let response = client.best_path(request).await?.into_inner();

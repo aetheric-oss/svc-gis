@@ -6,11 +6,13 @@ use grpc_server::AircraftPosition as ReqAircraftPos;
 use lib_common::time::timestamp_to_datetime;
 use uuid::Uuid;
 
+use super::utils::StringError;
+
 /// Maximum length of a callsign
 const LABEL_MAX_LENGTH: usize = 100;
 
 /// Allowed characters in a callsign
-const LABEL_REGEX: &str = r"^[a-zA-Z0-9_\s-]+$";
+const CALLSIGN_REGEX: &str = r"^[a-zA-Z0-9_\s-]+$";
 
 /// Possible errors with aircraft requests
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -55,6 +57,11 @@ struct AircraftPosition {
     time: DateTime<Utc>,
 }
 
+/// Verifies that a callsign is valid
+pub fn check_callsign(callsign: &str) -> Result<(), StringError> {
+    super::utils::check_string(callsign, CALLSIGN_REGEX, LABEL_MAX_LENGTH)
+}
+
 fn sanitize(aircraft: Vec<ReqAircraftPos>) -> Result<Vec<AircraftPosition>, AircraftError> {
     let mut sanitized_aircraft: Vec<AircraftPosition> = vec![];
     if aircraft.is_empty() {
@@ -62,10 +69,11 @@ fn sanitize(aircraft: Vec<ReqAircraftPos>) -> Result<Vec<AircraftPosition>, Airc
     }
 
     for craft in aircraft {
-        if !super::utils::check_string(&craft.callsign, LABEL_REGEX, LABEL_MAX_LENGTH) {
+        if let Err(e) = check_callsign(&craft.callsign) {
             postgis_error!(
-                "(sanitize aircraft) Invalid aircraft callsign: {}",
-                craft.callsign
+                "(sanitize aircraft) Invalid aircraft callsign: {}; {}",
+                craft.callsign,
+                e
             );
             return Err(AircraftError::Label);
         }

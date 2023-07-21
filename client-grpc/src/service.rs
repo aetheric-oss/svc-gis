@@ -18,7 +18,7 @@ where
     /// The type expected for ReadyResponse structs.
     type ReadyResponse;
 
-    /// Returns a [`tonic::Response`] containing a [`ReadyResponse`]
+    /// Returns a [`tonic::Response`] containing a [`ReadyResponse`](Self::ReadyResponse)
     /// Takes an [`ReadyRequest`](Self::ReadyRequest).
     ///
     /// # Errors
@@ -29,7 +29,7 @@ where
     /// # Examples
     /// ```
     /// use lib_common::grpc::get_endpoint_from_env;
-    /// use svc_gis_client_grpc::client::{ReadyRequest, RpcServiceClient};
+    /// use svc_gis_client_grpc::client::{ReadyRequest, ReadyResponse, RpcServiceClient};
     /// use svc_gis_client_grpc::{Client, GrpcClient};
     /// use svc_gis_client_grpc::service::Client as ServiceClient;
     /// use tonic::transport::Channel;
@@ -195,7 +195,7 @@ where
     ///     let (host, port) = get_endpoint_from_env("SERVER_HOSTNAME", "SERVER_PORT_GRPC");
     ///     let connection = GrpcClient::<RpcServiceClient<Channel>>::new_client(&host, port, "gis");
     ///     let request = tonic::Request::new(BestPathRequest {
-    ///         node_uuid_start: "".to_string(),
+    ///         node_start_id: "".to_string(),
     ///         node_uuid_end: "".to_string(),
     ///         start_type: 0,
     ///         time_start: datetime_to_timestamp(&chrono::Utc::now()),

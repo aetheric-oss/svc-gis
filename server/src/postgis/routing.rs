@@ -1,5 +1,5 @@
 //! This module contains functions for routing between nodes.
-use crate::grpc::server::grpc_server::{BestPathRequest, PathSegment};
+use crate::grpc::server::grpc_server::{BestPathRequest, NodeType, PathSegment};
 use chrono::{DateTime, Utc};
 use lib_common::time::timestamp_to_datetime;
 use uuid::Uuid;
@@ -63,19 +63,46 @@ impl std::fmt::Display for PathError {
 
 #[derive(Debug)]
 struct PathRequest {
-    node_uuid_start: Uuid,
+    node_start_id: String,
     node_uuid_end: Uuid,
     time_start: DateTime<Utc>,
     time_end: DateTime<Utc>,
 }
 
+impl TryFrom<i32> for NodeType {
+    type Error = ();
+
+    fn try_from(v: i32) -> Result<Self, Self::Error> {
+        match v {
+            x if x == NodeType::Vertiport as i32 => Ok(NodeType::Vertiport),
+            x if x == NodeType::Aircraft as i32 => Ok(NodeType::Aircraft),
+            x if x == NodeType::Waypoint as i32 => Ok(NodeType::Waypoint),
+            _ => Err(()),
+        }
+    }
+}
+
 /// Sanitize the request inputs
 fn sanitize(request: BestPathRequest) -> Result<PathRequest, PathError> {
-    let node_uuid_start = match uuid::Uuid::parse_str(&request.node_uuid_start) {
-        Ok(uuid) => uuid,
-        Err(_) => return Err(PathError::InvalidStartNode),
-    };
+    match NodeType::try_from(request.start_type) {
+        Ok(t) => match t {
+            NodeType::Vertiport => {
+                uuid::Uuid::parse_str(&request.node_start_id)
+                    .map_err(|_| PathError::InvalidStartNode)?;
+            }
+            NodeType::Aircraft => {
+                crate::postgis::aircraft::check_callsign(&request.node_start_id)
+                    .map_err(|_| PathError::InvalidStartNode)?;
+            }
+            _ => {
+                postgis_error!("(sanitize) invalid start node type: {:?}", t);
+                return Err(PathError::InvalidStartNode);
+            }
+        },
+        _ => return Err(PathError::InvalidStartNode),
+    }
 
+    let node_start_id = request.node_start_id;
     let node_uuid_end = match uuid::Uuid::parse_str(&request.node_uuid_end) {
         Ok(uuid) => uuid,
         Err(_) => return Err(PathError::InvalidEndNode),
@@ -106,7 +133,7 @@ fn sanitize(request: BestPathRequest) -> Result<PathRequest, PathError> {
     }
 
     Ok(PathRequest {
-        node_uuid_start,
+        node_start_id,
         node_uuid_end,
         time_start,
         time_end,
@@ -136,12 +163,12 @@ pub async fn best_path(
 
     let cmd_str = format!(
         "SELECT * FROM arrow.{fn_name}(
-            '{}'::UUID,
+            '{}',
             '{}'::UUID,
             '{}'::TIMESTAMPTZ,
             '{}'::TIMESTAMPTZ
         );",
-        request.node_uuid_start, request.node_uuid_end, request.time_start, request.time_end
+        request.node_start_id, request.node_uuid_end, request.time_start, request.time_end
     );
 
     let client = match pool.get().await {
@@ -171,8 +198,8 @@ pub async fn best_path(
         let end_longitude: f64 = r.get(6);
         let distance_meters: f64 = r.get(7);
 
-        let start_type = Into::<crate::grpc::server::NodeType>::into(start_type) as i32;
-        let end_type = Into::<crate::grpc::server::NodeType>::into(end_type) as i32;
+        let start_type = Into::<NodeType>::into(start_type) as i32;
+        let end_type = Into::<NodeType>::into(end_type) as i32;
 
         results.push(PathSegment {
             index: r.get(0),
@@ -200,7 +227,7 @@ mod tests {
     #[test]
     fn ut_sanitize_valid() {
         let request = BestPathRequest {
-            node_uuid_start: uuid::Uuid::new_v4().to_string(),
+            node_start_id: uuid::Uuid::new_v4().to_string(),
             node_uuid_end: uuid::Uuid::new_v4().to_string(),
             start_type: grpc_server::NodeType::Vertiport as i32,
             time_start: None,
@@ -214,7 +241,7 @@ mod tests {
     #[test]
     fn ut_sanitize_invalid_uuids() {
         let request = BestPathRequest {
-            node_uuid_start: "Invalid".to_string(),
+            node_start_id: "Invalid".to_string(),
             node_uuid_end: uuid::Uuid::new_v4().to_string(),
             start_type: grpc_server::NodeType::Vertiport as i32,
             time_start: None,
@@ -225,7 +252,7 @@ mod tests {
         assert_eq!(result, PathError::InvalidStartNode);
 
         let request = BestPathRequest {
-            node_uuid_start: uuid::Uuid::new_v4().to_string(),
+            node_start_id: uuid::Uuid::new_v4().to_string(),
             node_uuid_end: "Invalid".to_string(),
             start_type: grpc_server::NodeType::Vertiport as i32,
             time_start: None,
@@ -234,6 +261,34 @@ mod tests {
 
         let result = sanitize(request).unwrap_err();
         assert_eq!(result, PathError::InvalidEndNode);
+    }
+
+    #[test]
+    fn ut_sanitize_invalid_aircraft() {
+        let request = BestPathRequest {
+            node_start_id: "Test-123!".to_string(),
+            node_uuid_end: uuid::Uuid::new_v4().to_string(),
+            start_type: grpc_server::NodeType::Aircraft as i32,
+            time_start: None,
+            time_end: None,
+        };
+
+        let result = sanitize(request).unwrap_err();
+        assert_eq!(result, PathError::InvalidStartNode);
+    }
+
+    #[test]
+    fn ut_sanitize_invalid_start_node() {
+        let request = BestPathRequest {
+            node_start_id: "test-123".to_string(),
+            node_uuid_end: uuid::Uuid::new_v4().to_string(),
+            start_type: grpc_server::NodeType::Waypoint as i32,
+            time_start: None,
+            time_end: None,
+        };
+
+        let result = sanitize(request).unwrap_err();
+        assert_eq!(result, PathError::InvalidStartNode);
     }
 
     #[test]
@@ -248,7 +303,7 @@ mod tests {
 
         // Start time is after end time
         let request = BestPathRequest {
-            node_uuid_start: uuid::Uuid::new_v4().to_string(),
+            node_start_id: uuid::Uuid::new_v4().to_string(),
             node_uuid_end: uuid::Uuid::new_v4().to_string(),
             start_type: grpc_server::NodeType::Vertiport as i32,
             time_start: Some(time_start),
@@ -260,7 +315,7 @@ mod tests {
 
         // Start time (assumed) is after current time
         let request = BestPathRequest {
-            node_uuid_start: uuid::Uuid::new_v4().to_string(),
+            node_start_id: uuid::Uuid::new_v4().to_string(),
             node_uuid_end: uuid::Uuid::new_v4().to_string(),
             start_type: grpc_server::NodeType::Vertiport as i32,
             time_start: None,
@@ -275,7 +330,7 @@ mod tests {
             panic!("(ut_sanitize_time) could not convert time to timestamp.");
         };
         let request = BestPathRequest {
-            node_uuid_start: uuid::Uuid::new_v4().to_string(),
+            node_start_id: uuid::Uuid::new_v4().to_string(),
             node_uuid_end: uuid::Uuid::new_v4().to_string(),
             start_type: grpc_server::NodeType::Vertiport as i32,
             time_start: Some(time_start),
@@ -299,7 +354,7 @@ mod tests {
 
         // Won't route for a time in the past
         let request = BestPathRequest {
-            node_uuid_start: uuid::Uuid::new_v4().to_string(),
+            node_start_id: uuid::Uuid::new_v4().to_string(),
             node_uuid_end: uuid::Uuid::new_v4().to_string(),
             start_type: grpc_server::NodeType::Vertiport as i32,
             time_start: Some(time_start),

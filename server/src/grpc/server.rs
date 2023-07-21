@@ -119,12 +119,7 @@ impl RpcService for ServerImpl {
 
         let path_type = match num::FromPrimitive::from_i32(request.start_type) {
             Some(NodeType::Vertiport) => PathType::PortToPort,
-            Some(NodeType::Aircraft) => {
-                grpc_error!("(grpc best_path) attempt to route from aircraft.");
-                return Err(Status::unimplemented(
-                    "Aircraft to vertiport routing is not yet supported.",
-                ));
-            }
+            Some(NodeType::Aircraft) => PathType::AircraftToPort,
             _ => {
                 grpc_error!("(grpc best_path) invalid start node type.");
                 return Err(Status::invalid_argument(
@@ -291,12 +286,7 @@ impl RpcService for ServerImpl {
 
         let path_type = match num::FromPrimitive::from_i32(request.start_type) {
             Some(NodeType::Vertiport) => PathType::PortToPort,
-            Some(NodeType::Aircraft) => {
-                grpc_error!("(grpc best_path MOCK) attempt to route from aircraft.");
-                return Err(Status::unimplemented(
-                    "Aircraft to vertiport routing is not yet supported.",
-                ));
-            }
+            Some(NodeType::Aircraft) => PathType::AircraftToPort,
             _ => {
                 grpc_error!("(grpc best_path MOCK) invalid start node type.");
                 return Err(Status::invalid_argument(

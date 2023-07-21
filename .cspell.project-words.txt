@@ -64,3 +64,4 @@ callsign
 nodetype
 oneshot
 ewkb
+callsigns

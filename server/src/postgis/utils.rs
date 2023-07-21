@@ -49,22 +49,45 @@ impl std::fmt::Display for PointError {
     }
 }
 
+#[derive(Debug, Copy, Clone, PartialEq)]
+/// Errors validating a string
+pub enum StringError {
+    /// Provided string is too long
+    InvalidLength,
+
+    /// Provided string does not match regex
+    InvalidRegex,
+
+    /// Provided string contains invalid keywords
+    ContainsForbidden,
+}
+
+impl std::fmt::Display for StringError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            StringError::InvalidLength => write!(f, "String is too long."),
+            StringError::InvalidRegex => write!(f, "String does not match regex."),
+            StringError::ContainsForbidden => write!(f, "String contains 'null'."),
+        }
+    }
+}
+
 /// Check if a provided string argument is valid
-pub fn check_string(string: &str, regex: &str, allowed_length: usize) -> bool {
+pub fn check_string(string: &str, regex: &str, allowed_length: usize) -> Result<(), StringError> {
     if string.len() > allowed_length {
-        return false;
+        return Err(StringError::InvalidLength);
     }
 
     let re = regex::Regex::new(regex).unwrap();
     if !re.is_match(string) {
-        return false;
+        return Err(StringError::InvalidRegex);
     }
 
     if string.to_lowercase().contains("null") {
-        return false;
+        return Err(StringError::ContainsForbidden);
     }
 
-    true
+    Ok(())
 }
 
 /// Generate a PostGIS Polygon from a list of vertices
@@ -201,12 +224,6 @@ mod tests {
         // Close the polygon
         vertices.push(vertices.first().unwrap().clone());
 
-        let vertex_str = vertices
-            .iter()
-            .map(|vertex| format!("{:.6} {:.6}", vertex.longitude, vertex.latitude))
-            .collect::<Vec<String>>()
-            .join(",");
-
         let polygon = polygon_from_vertices(&vertices).unwrap();
         let expected = postgis::ewkb::Polygon {
             rings: vec![postgis::ewkb::LineString {
@@ -265,24 +282,33 @@ mod tests {
         let regex = r"^[a-zA-Z0-9_]+$";
         let allowed_length = 10;
 
-        assert!(check_string(string, regex, allowed_length));
+        assert!(check_string(string, regex, allowed_length).is_ok());
 
         // Invalid Length
         let string = "test";
         let regex = r"^[a-zA-Z0-9_]+$";
         let allowed_length = 3;
-        assert!(!check_string(string, regex, allowed_length));
+        assert_eq!(
+            check_string(string, regex, allowed_length).unwrap_err(),
+            StringError::InvalidLength,
+        );
 
         // Breaks Regex
         let string = "test!";
         let regex = r"^[a-zA-Z0-9_]+$";
         let allowed_length = 10;
-        assert!(!check_string(string, regex, allowed_length));
+        assert_eq!(
+            check_string(string, regex, allowed_length).unwrap_err(),
+            StringError::InvalidRegex,
+        );
 
         // Contains NULL
         let string = "nullTest";
         let regex = r"^[a-zA-Z0-9_]+$";
         let allowed_length = 10;
-        assert!(!check_string(string, regex, allowed_length));
+        assert_eq!(
+            check_string(string, regex, allowed_length).unwrap_err(),
+            StringError::ContainsForbidden,
+        );
     }
 }

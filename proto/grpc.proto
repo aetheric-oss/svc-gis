@@ -167,10 +167,10 @@ message PathSegment {
 
 // Best Path Request object
 message BestPathRequest {
-    // Start Node (Vertiport or Aircraft)
-    string node_uuid_start = 1;
+    // Start Node - UUID for Vertiports, Callsigns for Aircraft
+    string node_start_id = 1;
 
-    // End Node (Vertiport)
+    // End Node (Vertiport UUID)
     string node_uuid_end = 2;
 
     // Start Node Type (Vertiport or Aircraft Allowed)

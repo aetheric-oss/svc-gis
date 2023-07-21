@@ -49,10 +49,11 @@ fn sanitize(waypoints: Vec<RequestWaypoint>) -> Result<Vec<Waypoint>, WaypointEr
     }
 
     for waypoint in waypoints {
-        if !super::utils::check_string(&waypoint.label, LABEL_REGEX, LABEL_MAX_LENGTH) {
+        if let Err(e) = super::utils::check_string(&waypoint.label, LABEL_REGEX, LABEL_MAX_LENGTH) {
             postgis_error!(
-                "(sanitize waypoints) Invalid waypoint label: {}",
-                waypoint.label
+                "(sanitize waypoints) Invalid waypoint label: {}; {}",
+                waypoint.label,
+                e
             );
             return Err(WaypointError::Label);
         }

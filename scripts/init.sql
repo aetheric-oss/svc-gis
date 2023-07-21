@@ -391,14 +391,14 @@ EXECUTE FUNCTION arrow.node_cleanup();
 CREATE OR REPLACE FUNCTION arrow.available_routes (
     allowed_nofly_id_1 INTEGER,
     allowed_nofly_id_2 INTEGER,
-    time_start timestamptz,
-    time_end timestamptz
+    time_start TIMESTAMPTZ,
+    time_end TIMESTAMPTZ
 ) RETURNS TABLE (
     id INTEGER,
     id_source INTEGER,
     id_target INTEGER,
     distance_meters FLOAT,
-    geom geometry
+    geom GEOMETRY
 ) AS $$
 BEGIN
     RETURN QUERY
@@ -408,7 +408,7 @@ BEGIN
         (
             SELECT anf.id, anf.geom FROM arrow.nofly AS anf
             WHERE (
-                (anf.id <> $1 AND anf.id <> $2) -- No-Fly Zone is not the start or end goals
+                (anf.id IS DISTINCT FROM $1 AND anf.id IS DISTINCT FROM $2) -- No-Fly Zone is not the start or end goals
                 AND (
                     (anf.time_start IS NULL AND anf.time_end IS NULL) -- No-Fly Zone is permanent
                     OR ((anf.time_start < $4) AND (anf.time_end > $3)) -- Falls Within TFR
@@ -544,6 +544,81 @@ $body$ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = arrow, public, pg_temp;
 
+
+CREATE OR REPLACE FUNCTION arrow.best_path_a2p (
+    start_label VARCHAR, -- Aircraft
+    end_node UUID, -- Vertiport
+    start_time TIMESTAMPTZ,
+    end_time TIMESTAMPTZ
+) RETURNS TABLE (
+    path_seq INTEGER,
+    start_type arrow.NodeType,
+    start_latitude FLOAT,
+    start_longitude FLOAT,
+    end_type arrow.NodeType,
+    end_latitude FLOAT,
+    end_longitude FLOAT,
+    distance_meters FLOAT
+) AS $body$
+DECLARE
+    start_node_id INTEGER;
+    end_node_id INTEGER;
+    end_nofly_id INTEGER;
+BEGIN
+    --- Get Node and Nofly IDs for start and end nodes
+    SELECT node_id
+        INTO start_node_id
+        FROM arrow.aircraft WHERE callsign = $1;
+
+    SELECT node_id, nofly_id
+        INTO end_node_id, end_nofly_id
+        FROM arrow.vertiports WHERE arrow_id = $2;
+
+    -- Build routes for the specific aircraft
+    INSERT INTO arrow.routes (
+        id_source,
+        id_target,
+        geom,
+        distance_meters
+    ) SELECT
+        start_node.id,
+        end_node.id,
+        ST_MakeLine(start_node.geom, end_node.geom),
+        ST_DistanceSphere(start_node.geom, end_node.geom)
+    FROM arrow.nodes start_node
+    INNER JOIN arrow.nodes end_node ON
+        (start_node_id = start_node.id) -- Unidirectional routes from aircraft
+        AND (end_node.node_type <> 'aircraft') -- Don't route to aircraft
+    ON CONFLICT (id_source, id_target) DO
+        UPDATE SET geom = EXCLUDED.geom,
+            distance_meters = EXCLUDED.distance_meters;
+
+    --- Get best path between nodes
+    RETURN QUERY
+        SELECT
+            results.path_seq,
+            (SELECT node_type FROM arrow.nodes WHERE id = results.start_id),
+            (SELECT ST_Y(geom) FROM arrow.nodes WHERE id = results.start_id),
+            (SELECT ST_X(geom) FROM arrow.nodes WHERE id = results.start_id),
+            (SELECT node_type FROM arrow.nodes WHERE id = results.end_id),
+            (SELECT ST_Y(geom) FROM arrow.nodes WHERE id = results.end_id),
+            (SELECT ST_X(geom) FROM arrow.nodes WHERE id = results.end_id),
+            results.distance_meters
+        FROM (
+            SELECT * FROM arrow.best_path (
+                start_node_id,
+                end_node_id,
+                NULL,
+                end_nofly_id,
+                start_time,
+                end_time
+            )
+        ) as results;
+END;
+$body$ LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = arrow, public, pg_temp;
+
 -- These permissions must be declared last
 GRANT USAGE ON SCHEMA arrow TO svc_gis;
 GRANT EXECUTE ON FUNCTION arrow.update_aircraft_position(
@@ -574,6 +649,13 @@ GRANT EXECUTE ON FUNCTION arrow.update_waypoint(
 
 GRANT EXECUTE ON FUNCTION arrow.best_path_p2p(
     UUID,
+    UUID,
+    TIMESTAMPTZ,
+    TIMESTAMPTZ
+) TO svc_gis;
+
+GRANT EXECUTE ON FUNCTION arrow.best_path_a2p(
+    VARCHAR,
     UUID,
     TIMESTAMPTZ,
     TIMESTAMPTZ
