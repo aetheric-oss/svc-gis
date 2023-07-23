@@ -6,7 +6,7 @@ pub mod grpc_server {
     tonic::include_proto!("grpc");
 }
 
-use crate::postgis::aircraft::update_aircraft_position;
+use crate::postgis::aircraft::{update_aircraft_future, update_aircraft_position};
 use crate::postgis::nofly::update_nofly;
 use crate::postgis::routing::{best_path, PathType};
 use crate::postgis::vertiport::update_vertiports;
@@ -104,6 +104,22 @@ impl RpcService for ServerImpl {
             Ok(_) => Ok(Response::new(grpc_server::UpdateResponse { updated: true })),
             Err(e) => {
                 grpc_error!("(grpc update_aircraft) error updating aircraft.");
+                Err(Status::internal(e.to_string()))
+            }
+        }
+    }
+
+    #[cfg(not(tarpaulin_include))]
+    async fn update_aircraft_future(
+        &self,
+        request: Request<grpc_server::UpdateAircraftFutureRequest>,
+    ) -> Result<Response<grpc_server::UpdateResponse>, Status> {
+        grpc_debug!("(grpc update_aircraft_future) entry.");
+        // Update aircraft future in PostGIS
+        match update_aircraft_future(request.into_inner().futures, self.pool.clone()).await {
+            Ok(_) => Ok(Response::new(grpc_server::UpdateResponse { updated: true })),
+            Err(e) => {
+                grpc_error!("(grpc update_aircraft_future) error updating aircraft.");
                 Err(Status::internal(e.to_string()))
             }
         }
@@ -271,6 +287,22 @@ impl RpcService for ServerImpl {
             Ok(_) => Ok(Response::new(grpc_server::UpdateResponse { updated: true })),
             Err(e) => {
                 grpc_error!("(grpc update_aircraft MOCK) error updating aircraft.");
+                Err(Status::internal(e.to_string()))
+            }
+        }
+    }
+
+    #[cfg(not(tarpaulin_include))]
+    async fn update_aircraft_future(
+        &self,
+        request: Request<grpc_server::UpdateAircraftFutureRequest>,
+    ) -> Result<Response<grpc_server::UpdateResponse>, Status> {
+        grpc_warn!("(grpc update_aircraft_future MOCK) entry.");
+        // Update aircraft in PostGIS
+        match update_aircraft_future(request.into_inner().futures, self.pool.clone()).await {
+            Ok(_) => Ok(Response::new(grpc_server::UpdateResponse { updated: true })),
+            Err(e) => {
+                grpc_error!("(grpc update_aircraft_future MOCK) error updating aircraft.");
                 Err(Status::internal(e.to_string()))
             }
         }

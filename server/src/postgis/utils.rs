@@ -151,10 +151,44 @@ pub fn point_from_vertex(vertex: &Coordinates) -> Result<postgis::ewkb::Point, P
     })
 }
 
+/// Calculate the distance between two points in meters
+pub fn haversine(start: &postgis::ewkb::Point, end: &postgis::ewkb::Point) -> f64 {
+    // km in radians
+    let km_rad: f64 = 6371.0;
+
+    let d_lat: f64 = (end.y - start.y).to_radians();
+    let d_lon: f64 = (end.x - start.x).to_radians();
+    let lat1: f64 = (start.y).to_radians();
+    let lat2: f64 = (end.y).to_radians();
+
+    let a: f64 = ((d_lat / 2.0).sin()) * ((d_lat / 2.0).sin())
+        + ((d_lon / 2.0).sin()) * ((d_lon / 2.0).sin()) * (lat1.cos()) * (lat2.cos());
+    let c: f64 = 2.0 * ((a.sqrt()).atan2((1.0 - a).sqrt()));
+
+    km_rad * c * 1000.
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use rand::{thread_rng, Rng};
+
+    #[test]
+    fn ut_haversine() {
+        let start = postgis::ewkb::Point {
+            y: 38.898556,
+            x: -77.037852,
+            srid: Some(4326),
+        };
+        let end = postgis::ewkb::Point {
+            y: 38.897147,
+            x: -77.043934,
+            srid: Some(4326),
+        };
+
+        let distance = haversine(&start, &end);
+        assert!((549.6312 - distance).abs() < 1.);
+    }
 
     #[test]
     fn ut_point_from_vertex() {

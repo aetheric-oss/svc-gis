@@ -12,6 +12,8 @@ service RpcService {
     rpc updateNoFlyZones(UpdateNoFlyZonesRequest) returns (UpdateResponse);
     rpc updateAircraftPosition(UpdateAircraftPositionRequest)
         returns (UpdateResponse);
+    rpc updateAircraftFuture(UpdateAircraftFutureRequest)
+        returns (UpdateResponse);
     rpc bestPath(BestPathRequest) returns (BestPathResponse);
 }
 
@@ -121,6 +123,27 @@ message UpdateAircraftPositionRequest {
 
     // List of aircraft to update
     repeated AircraftPosition aircraft = 1;
+}
+
+// Information about an aircraft's future paths
+message AircraftFuture {
+    // Aircraft's Unique Identifier
+    string callsign = 1;
+
+    // Aircraft Location
+    repeated Coordinates locations = 2;
+
+    // Departure Time
+    google.protobuf.Timestamp time_start = 3;
+
+    // Arrival Time
+    google.protobuf.Timestamp time_end = 4;
+}
+
+// Update Aircraft Future Request Object
+message UpdateAircraftFutureRequest {
+    // List of aircraft to update
+    repeated AircraftFuture futures = 1;
 }
 
 // Types of nodes in itinerary

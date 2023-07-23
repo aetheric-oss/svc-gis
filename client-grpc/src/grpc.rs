@@ -130,6 +130,31 @@ pub struct UpdateAircraftPositionRequest {
     #[prost(message, repeated, tag = "1")]
     pub aircraft: ::prost::alloc::vec::Vec<AircraftPosition>,
 }
+/// Information about an aircraft's future paths
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AircraftFuture {
+    /// Aircraft's Unique Identifier
+    #[prost(string, tag = "1")]
+    pub callsign: ::prost::alloc::string::String,
+    /// Aircraft Location
+    #[prost(message, repeated, tag = "2")]
+    pub locations: ::prost::alloc::vec::Vec<Coordinates>,
+    /// Departure Time
+    #[prost(message, optional, tag = "3")]
+    pub time_start: ::core::option::Option<::prost_types::Timestamp>,
+    /// Arrival Time
+    #[prost(message, optional, tag = "4")]
+    pub time_end: ::core::option::Option<::prost_types::Timestamp>,
+}
+/// Update Aircraft Future Request Object
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct UpdateAircraftFutureRequest {
+    /// List of aircraft to update
+    #[prost(message, repeated, tag = "1")]
+    pub futures: ::prost::alloc::vec::Vec<AircraftFuture>,
+}
 /// A path between nodes has >= 1 straight segments
 #[derive(Copy)]
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -386,6 +411,25 @@ pub mod rpc_service_client {
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/grpc.RpcService/updateAircraftPosition",
+            );
+            self.inner.unary(request.into_request(), path, codec).await
+        }
+        pub async fn update_aircraft_future(
+            &mut self,
+            request: impl tonic::IntoRequest<super::UpdateAircraftFutureRequest>,
+        ) -> Result<tonic::Response<super::UpdateResponse>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/grpc.RpcService/updateAircraftFuture",
             );
             self.inner.unary(request.into_request(), path, codec).await
         }

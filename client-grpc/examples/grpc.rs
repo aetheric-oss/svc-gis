@@ -18,6 +18,7 @@ use uuid::Uuid;
 
 const VERTIPORT_1_UUID: &str = "00000000-0000-0000-0000-000000000000";
 const VERTIPORT_2_UUID: &str = "00000000-0000-0000-0000-000000000001";
+const VERTIPORT_3_UUID: &str = "00000000-0000-0000-0000-000000000003";
 const AIRCRAFT_1_UUID: &str = "00000000-0000-0000-0000-000000000002";
 const AIRCRAFT_1_LABEL: &str = "Marauder";
 
@@ -67,7 +68,7 @@ async fn add_vertiports(endpoint: String) -> Result<(), Box<dyn std::error::Erro
             label: Some("VertiportB".to_string()),
         },
         Vertiport {
-            uuid: Uuid::new_v4().to_string(),
+            uuid: VERTIPORT_3_UUID.to_string(),
             vertices: vec![
                 (52.3753536, 4.9157569),
                 (52.3752766, 4.9157193),
