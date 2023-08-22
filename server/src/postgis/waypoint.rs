@@ -41,17 +41,13 @@ struct Waypoint {
     geom: postgis::ewkb::Point,
 }
 
-/// Verify that the request inputs are valid
-fn sanitize(waypoints: Vec<RequestWaypoint>) -> Result<Vec<Waypoint>, WaypointError> {
-    let mut sanitized_waypoints: Vec<Waypoint> = Vec::new();
-    if waypoints.is_empty() {
-        return Err(WaypointError::NoWaypoints);
-    }
+impl TryFrom<RequestWaypoint> for Waypoint {
+    type Error = WaypointError;
 
-    for waypoint in waypoints {
+    fn try_from(waypoint: RequestWaypoint) -> Result<Self, Self::Error> {
         if let Err(e) = super::utils::check_string(&waypoint.label, LABEL_REGEX, LABEL_MAX_LENGTH) {
             postgis_error!(
-                "(sanitize waypoints) Invalid waypoint label: {}; {}",
+                "(try_from RequestWaypoint) Invalid waypoint label: {}; {}",
                 waypoint.label,
                 e
             );
@@ -60,7 +56,7 @@ fn sanitize(waypoints: Vec<RequestWaypoint>) -> Result<Vec<Waypoint>, WaypointEr
 
         let Some(location) = waypoint.location else {
             postgis_error!(
-                "(sanitize waypoints) Waypoint has no location."
+                "(try_from RequestWaypoint) Waypoint has no location."
             );
             return Err(WaypointError::Location);
         };
@@ -69,20 +65,18 @@ fn sanitize(waypoints: Vec<RequestWaypoint>) -> Result<Vec<Waypoint>, WaypointEr
             Ok(geom) => geom,
             Err(e) => {
                 postgis_error!(
-                    "(sanitize waypoints) Error creating point from vertex: {:?}",
+                    "(try_from RequestWaypoint) Error creating point from vertex: {:?}",
                     e
                 );
                 return Err(WaypointError::Location);
             }
         };
 
-        sanitized_waypoints.push(Waypoint {
+        Ok(Waypoint {
             label: waypoint.label,
             geom,
-        });
+        })
     }
-
-    Ok(sanitized_waypoints)
 }
 
 /// Update waypoints in the PostGIS database
@@ -90,9 +84,15 @@ pub async fn update_waypoints(
     waypoints: Vec<RequestWaypoint>,
     pool: deadpool_postgres::Pool,
 ) -> Result<(), WaypointError> {
-    postgis_debug!("(postgis update_node) entry.");
-    let waypoints = sanitize(waypoints)?;
+    postgis_debug!("(postgis update_waypoints) entry.");
+    if waypoints.is_empty() {
+        return Err(WaypointError::NoWaypoints);
+    }
 
+    let waypoints: Vec<Waypoint> = waypoints
+        .into_iter()
+        .map(Waypoint::try_from)
+        .collect::<Result<Vec<_>, _>>()?;
     let Ok(mut client) = pool.get().await else {
         postgis_error!("(postgis update_waypoints) error getting client.");
         return Err(WaypointError::Unknown);
@@ -151,7 +151,7 @@ mod tests {
     }
 
     #[test]
-    fn ut_sanitize_valid() {
+    fn ut_request_valid() {
         let nodes = vec![
             ("ORANGE", 52.3745905, 4.9160036),
             ("STRAWBERRY", 52.3749819, 4.9156925),
@@ -171,18 +171,21 @@ mod tests {
             })
             .collect();
 
-        let Ok(sanitized) = sanitize(waypoints.clone()) else {
-            panic!();
-        };
+        let converted = waypoints
+            .clone()
+            .into_iter()
+            .map(Waypoint::try_from)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
 
-        assert_eq!(waypoints.len(), sanitized.len());
+        assert_eq!(waypoints.len(), converted.len());
 
         for (i, waypoint) in waypoints.iter().enumerate() {
-            assert_eq!(waypoint.label, sanitized[i].label);
+            assert_eq!(waypoint.label, converted[i].label);
             let location = waypoint.location.unwrap();
             assert_eq!(
                 utils::point_from_vertex(&location).unwrap(),
-                sanitized[i].geom
+                converted[i].geom
             );
         }
     }

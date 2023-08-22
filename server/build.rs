@@ -10,7 +10,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .type_attribute("ReadyResponse", "#[derive(Eq, Copy)]")
         .type_attribute("UpdateResponse", "#[derive(Eq, Copy)]")
         .type_attribute("PathSegment", "#[derive(Copy)]")
+        .type_attribute("NodeType", "#[derive(postgres_types::FromSql)]")
         .type_attribute("NodeType", "#[derive(num_derive::FromPrimitive)]")
+        .type_attribute("NodeType", r#"#[postgres(name = "nodetype")]"#)
         .type_attribute("Coordinates", "#[derive(Copy)]");
 
     let client_config = server_config.clone();

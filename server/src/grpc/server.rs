@@ -155,7 +155,7 @@ impl RpcService for ServerImpl {
                 Ok(Response::new(response))
             }
             Err(e) => {
-                grpc_error!("(grpc nearest_neighbors) error getting best path.");
+                grpc_error!("(grpc nearest_neighbors) error getting nearest neighbors.");
                 Err(Status::internal(e.to_string()))
             }
         }

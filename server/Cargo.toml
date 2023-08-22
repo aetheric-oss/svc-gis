@@ -95,4 +95,4 @@ features         = ["user-hooks"]
 version          = "1"
 
 [build-dependencies]
-tonic-build = "0.8"
+tonic-build = { version = "0.8", features = ["cleanup-markdown"] }

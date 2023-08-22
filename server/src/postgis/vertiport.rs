@@ -47,17 +47,13 @@ struct Vertiport {
     geom: postgis::ewkb::Polygon,
 }
 
-/// Verify that the request inputs are valid
-fn sanitize(vertiports: Vec<RequestVertiport>) -> Result<Vec<Vertiport>, VertiportError> {
-    if vertiports.is_empty() {
-        return Err(VertiportError::NoVertiports);
-    }
+impl TryFrom<RequestVertiport> for Vertiport {
+    type Error = VertiportError;
 
-    let mut sanitized_vertiports: Vec<Vertiport> = Vec::new();
-    for vertiport in vertiports {
+    fn try_from(vertiport: RequestVertiport) -> Result<Self, Self::Error> {
         let Ok(uuid) = Uuid::parse_str(&vertiport.uuid) else {
             postgis_error!(
-                "(sanitize vertiports) Invalid vertiport UUID: {}",
+                "(try_from RequestVertiport) Invalid vertiport UUID: {}",
                 vertiport.uuid
             );
             return Err(VertiportError::VertiportId);
@@ -67,7 +63,7 @@ fn sanitize(vertiports: Vec<RequestVertiport>) -> Result<Vec<Vertiport>, Vertipo
             Some(label) => {
                 if let Err(e) = super::utils::check_string(label, LABEL_REGEX, LABEL_MAX_LENGTH) {
                     postgis_error!(
-                        "(sanitize vertiports) Vertiport {} has invalid label: {}",
+                        "(try_from RequestVertiport) Vertiport {} has invalid label: {}",
                         vertiport.uuid,
                         e
                     );
@@ -82,17 +78,15 @@ fn sanitize(vertiports: Vec<RequestVertiport>) -> Result<Vec<Vertiport>, Vertipo
             Ok(geom) => geom,
             Err(e) => {
                 postgis_error!(
-                    "(sanitize vertiports) Error converting vertiport polygon: {}",
+                    "(try_from RequestVertiport) Error converting vertiport polygon: {}",
                     e.to_string()
                 );
                 return Err(VertiportError::Location);
             }
         };
 
-        sanitized_vertiports.push(Vertiport { uuid, label, geom })
+        Ok(Vertiport { uuid, label, geom })
     }
-
-    Ok(sanitized_vertiports)
 }
 
 /// Update vertiports in the PostGIS database
@@ -100,8 +94,15 @@ pub async fn update_vertiports(
     vertiports: Vec<RequestVertiport>,
     pool: deadpool_postgres::Pool,
 ) -> Result<(), VertiportError> {
-    postgis_debug!("(postgis update_node) entry.");
-    let vertiports = sanitize(vertiports)?;
+    postgis_debug!("(postgis update_vertiports) entry.");
+    if vertiports.is_empty() {
+        return Err(VertiportError::NoVertiports);
+    }
+
+    let vertiports: Vec<Vertiport> = vertiports
+        .into_iter()
+        .map(Vertiport::try_from)
+        .collect::<Result<Vec<_>, _>>()?;
 
     let Ok(mut client) = pool.get().await else {
         postgis_error!("(postgis update_vertiports) error getting client.");
@@ -171,7 +172,7 @@ mod tests {
     }
 
     #[test]
-    fn ut_sanitize_valid() {
+    fn ut_request_valid() {
         let nodes = vec![
             ("Vertiport A", square(52.3745905, 4.9160036)),
             ("Vertiport B", square(52.3749819, 4.9156925)),
@@ -193,17 +194,20 @@ mod tests {
             })
             .collect();
 
-        let Ok(sanitized) = sanitize(vertiports.clone()) else {
-            panic!();
-        };
+        let converted = vertiports
+            .clone()
+            .into_iter()
+            .map(Vertiport::try_from)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
 
-        assert_eq!(vertiports.len(), sanitized.len());
+        assert_eq!(vertiports.len(), converted.len());
 
         for (i, vertiport) in vertiports.iter().enumerate() {
-            assert_eq!(vertiport.label, sanitized[i].label);
+            assert_eq!(vertiport.label, converted[i].label);
             assert_eq!(
                 utils::polygon_from_vertices(&vertiport.vertices).unwrap(),
-                sanitized[i].geom
+                converted[i].geom
             );
         }
     }

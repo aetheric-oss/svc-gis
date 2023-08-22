@@ -59,62 +59,65 @@ struct PathRequest {
     time_end: DateTime<Utc>,
 }
 
-/// Sanitize the request inputs
-fn sanitize(request: BestPathRequest) -> Result<PathRequest, PathError> {
-    match NodeType::try_from(request.start_type) {
-        Ok(t) => match t {
-            NodeType::Vertiport => {
+impl TryFrom<BestPathRequest> for PathRequest {
+    type Error = PathError;
+
+    fn try_from(request: BestPathRequest) -> Result<Self, Self::Error> {
+        match num::FromPrimitive::from_i32(request.start_type) {
+            Some(NodeType::Vertiport) => {
                 uuid::Uuid::parse_str(&request.node_start_id)
                     .map_err(|_| PathError::InvalidStartNode)?;
             }
-            NodeType::Aircraft => {
+            Some(NodeType::Aircraft) => {
                 crate::postgis::aircraft::check_callsign(&request.node_start_id)
                     .map_err(|_| PathError::InvalidStartNode)?;
             }
             _ => {
-                postgis_error!("(sanitize) invalid start node type: {:?}", t);
+                postgis_error!(
+                    "(try_from BestPathRequest) invalid start node type: {:?}",
+                    request.start_type
+                );
                 return Err(PathError::InvalidStartNode);
             }
-        },
-        _ => return Err(PathError::InvalidStartNode),
+        }
+
+        let node_start_id = request.node_start_id;
+        let node_uuid_end = match uuid::Uuid::parse_str(&request.node_uuid_end) {
+            Ok(uuid) => uuid,
+            Err(_) => return Err(PathError::InvalidEndNode),
+        };
+
+        let time_start = match request.time_start {
+            None => chrono::Utc::now(),
+            Some(time) => match timestamp_to_datetime(&time) {
+                Some(time) => time,
+                None => return Err(PathError::InvalidStartTime),
+            },
+        };
+
+        let time_end = match request.time_end {
+            None => chrono::Utc::now() + chrono::Duration::days(1),
+            Some(time) => match timestamp_to_datetime(&time) {
+                Some(time) => time,
+                None => return Err(PathError::InvalidEndTime),
+            },
+        };
+
+        if time_end < time_start {
+            return Err(PathError::InvalidTimeWindow);
+        }
+
+        if time_end < Utc::now() {
+            return Err(PathError::InvalidEndTime);
+        }
+
+        Ok(PathRequest {
+            node_start_id,
+            node_uuid_end,
+            time_start,
+            time_end,
+        })
     }
-
-    let node_start_id = request.node_start_id;
-    let node_uuid_end = match uuid::Uuid::parse_str(&request.node_uuid_end) {
-        Ok(uuid) => uuid,
-        Err(_) => return Err(PathError::InvalidEndNode),
-    };
-
-    let time_start = match request.time_start {
-        None => chrono::Utc::now(),
-        Some(time) => match timestamp_to_datetime(&time) {
-            Some(time) => time,
-            None => return Err(PathError::InvalidStartTime),
-        },
-    };
-
-    let time_end = match request.time_end {
-        None => chrono::Utc::now() + chrono::Duration::days(1),
-        Some(time) => match timestamp_to_datetime(&time) {
-            Some(time) => time,
-            None => return Err(PathError::InvalidEndTime),
-        },
-    };
-
-    if time_end < time_start {
-        return Err(PathError::InvalidTimeWindow);
-    }
-
-    if time_end < Utc::now() {
-        return Err(PathError::InvalidEndTime);
-    }
-
-    Ok(PathRequest {
-        node_start_id,
-        node_uuid_end,
-        time_start,
-        time_end,
-    })
 }
 
 /// Get the best path from a vertiport to another vertiport
@@ -146,7 +149,7 @@ async fn best_path_vertiport_source(
                 "(best_path_vertiport_source) could not request routes: {}",
                 e
             );
-            return Err(PathError::Unknown);
+            Err(PathError::Unknown)
         }
     }
 }
@@ -175,7 +178,8 @@ async fn best_path_aircraft_source(
                 "(best_path_aircraft_source) could not request routes: {}",
                 e
             );
-            return Err(PathError::Unknown);
+
+            Err(PathError::Unknown)
         }
     }
 }
@@ -194,7 +198,7 @@ pub async fn best_path(
     request: BestPathRequest,
     pool: deadpool_postgres::Pool,
 ) -> Result<Vec<PathSegment>, PathError> {
-    let request = sanitize(request)?;
+    let request = PathRequest::try_from(request)?;
     let client = match pool.get().await {
         Ok(client) => client,
         Err(e) => {
@@ -206,9 +210,9 @@ pub async fn best_path(
 
     let rows = match path_type {
         PathType::PortToPort => {
-            let Ok(stmt) = client.prepare_cached(&format!(
+            let Ok(stmt) = client.prepare_cached(
                 "SELECT * FROM arrow.best_path_p2p($1, $2, $3, $4);"
-            )).await else {
+            ).await else {
                 postgis_error!("(best_path) could not prepare statement.");
                 return Err(PathError::Unknown);
             };
@@ -216,9 +220,9 @@ pub async fn best_path(
             best_path_vertiport_source(stmt, client, request).await?
         }
         PathType::AircraftToPort => {
-            let Ok(stmt) = client.prepare_cached(&format!(
+            let Ok(stmt) = client.prepare_cached(
                 "SELECT * FROM arrow.best_path_a2p($1, $2, $3, $4);"
-            )).await else {
+            ).await else {
                 postgis_error!("(best_path) could not prepare statement.");
                 return Err(PathError::Unknown);
             };
@@ -229,10 +233,10 @@ pub async fn best_path(
 
     let mut results: Vec<PathSegment> = vec![];
     for r in &rows {
-        let start_type: super::NodeType = r.get(1);
+        let start_type: NodeType = r.get(1);
         let start_latitude: f64 = r.get(2);
         let start_longitude: f64 = r.get(3);
-        let end_type: super::NodeType = r.get(4);
+        let end_type: NodeType = r.get(4);
         let end_latitude: f64 = r.get(5);
         let end_longitude: f64 = r.get(6);
         let distance_meters: f64 = r.get(7);
@@ -264,7 +268,7 @@ mod tests {
     use lib_common::time::datetime_to_timestamp;
 
     #[test]
-    fn ut_sanitize_valid() {
+    fn ut_request_valid() {
         let request = BestPathRequest {
             node_start_id: uuid::Uuid::new_v4().to_string(),
             node_uuid_end: uuid::Uuid::new_v4().to_string(),
@@ -273,12 +277,12 @@ mod tests {
             time_end: None,
         };
 
-        let result = sanitize(request);
+        let result = PathRequest::try_from(request);
         assert!(result.is_ok());
     }
 
     #[test]
-    fn ut_sanitize_invalid_uuids() {
+    fn ut_request_invalid_uuids() {
         let request = BestPathRequest {
             node_start_id: "Invalid".to_string(),
             node_uuid_end: uuid::Uuid::new_v4().to_string(),
@@ -287,7 +291,7 @@ mod tests {
             time_end: None,
         };
 
-        let result = sanitize(request).unwrap_err();
+        let result = PathRequest::try_from(request).unwrap_err();
         assert_eq!(result, PathError::InvalidStartNode);
 
         let request = BestPathRequest {
@@ -298,12 +302,12 @@ mod tests {
             time_end: None,
         };
 
-        let result = sanitize(request).unwrap_err();
+        let result = PathRequest::try_from(request).unwrap_err();
         assert_eq!(result, PathError::InvalidEndNode);
     }
 
     #[test]
-    fn ut_sanitize_invalid_aircraft() {
+    fn ut_request_invalid_aircraft() {
         let request = BestPathRequest {
             node_start_id: "Test-123!".to_string(),
             node_uuid_end: uuid::Uuid::new_v4().to_string(),
@@ -312,12 +316,12 @@ mod tests {
             time_end: None,
         };
 
-        let result = sanitize(request).unwrap_err();
+        let result = PathRequest::try_from(request).unwrap_err();
         assert_eq!(result, PathError::InvalidStartNode);
     }
 
     #[test]
-    fn ut_sanitize_invalid_start_node() {
+    fn ut_request_invalid_start_node() {
         let request = BestPathRequest {
             node_start_id: "test-123".to_string(),
             node_uuid_end: uuid::Uuid::new_v4().to_string(),
@@ -326,18 +330,18 @@ mod tests {
             time_end: None,
         };
 
-        let result = sanitize(request).unwrap_err();
+        let result = PathRequest::try_from(request).unwrap_err();
         assert_eq!(result, PathError::InvalidStartNode);
     }
 
     #[test]
-    fn ut_sanitize_invalid_time_window() {
+    fn ut_request_invalid_time_window() {
         let Some(time_start) = datetime_to_timestamp(&Utc::now()) else {
-            panic!("(ut_sanitize_time) could not convert time to timestamp.");
+            panic!("(ut_request_invalid_time_window) could not convert time to timestamp.");
         };
 
         let Some(time_end) = datetime_to_timestamp(&(Utc::now() - Duration::seconds(1))) else {
-            panic!("(ut_sanitize_time) could not convert time to timestamp.");
+            panic!("(ut_request_invalid_time_window) could not convert time to timestamp.");
         };
 
         // Start time is after end time
@@ -349,7 +353,7 @@ mod tests {
             time_end: Some(time_end.clone()),
         };
 
-        let result = sanitize(request).unwrap_err();
+        let result = PathRequest::try_from(request).unwrap_err();
         assert_eq!(result, PathError::InvalidTimeWindow);
 
         // Start time (assumed) is after current time
@@ -361,12 +365,12 @@ mod tests {
             time_end: Some(time_end),
         };
 
-        let result = sanitize(request).unwrap_err();
+        let result = PathRequest::try_from(request).unwrap_err();
         assert_eq!(result, PathError::InvalidTimeWindow);
 
         // End time (assumed) is before start time
         let Some(time_start) = datetime_to_timestamp(&(Utc::now() + Duration::days(10))) else {
-            panic!("(ut_sanitize_time) could not convert time to timestamp.");
+            panic!("(ut_request_invalid_time_window) could not convert time to timestamp.");
         };
         let request = BestPathRequest {
             node_start_id: uuid::Uuid::new_v4().to_string(),
@@ -376,19 +380,19 @@ mod tests {
             time_end: None,
         };
 
-        let result = sanitize(request).unwrap_err();
+        let result = PathRequest::try_from(request).unwrap_err();
         assert_eq!(result, PathError::InvalidTimeWindow);
     }
 
     #[test]
-    fn ut_sanitize_invalid_time_end() {
+    fn ut_request_invalid_time_end() {
         // End time (assumed) is before start time
         let Some(time_start) = datetime_to_timestamp(&(Utc::now() - Duration::days(10))) else {
-            panic!("(ut_sanitize_time) could not convert time to timestamp.");
+            panic!("(ut_request_invalid_time_end) could not convert time to timestamp.");
         };
 
         let Some(time_end) = datetime_to_timestamp(&(Utc::now() - Duration::seconds(1))) else {
-            panic!("(ut_sanitize_time) could not convert time to timestamp.");
+            panic!("(ut_request_invalid_time_end) could not convert time to timestamp.");
         };
 
         // Won't route for a time in the past
@@ -400,7 +404,7 @@ mod tests {
             time_end: Some(time_end),
         };
 
-        let result = sanitize(request).unwrap_err();
+        let result = PathRequest::try_from(request).unwrap_err();
         assert_eq!(result, PathError::InvalidEndTime);
     }
 }

@@ -234,7 +234,9 @@ pub struct NearestNeighborResponse {
     pub distances: ::prost::alloc::vec::Vec<DistanceTo>,
 }
 /// Types of nodes in itinerary
+#[derive(postgres_types::FromSql)]
 #[derive(num_derive::FromPrimitive)]
+#[postgres(name = "nodetype")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum NodeType {

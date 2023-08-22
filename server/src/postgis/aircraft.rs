@@ -62,16 +62,13 @@ pub fn check_callsign(callsign: &str) -> Result<(), StringError> {
     super::utils::check_string(callsign, CALLSIGN_REGEX, LABEL_MAX_LENGTH)
 }
 
-fn sanitize(aircraft: Vec<ReqAircraftPos>) -> Result<Vec<AircraftPosition>, AircraftError> {
-    let mut sanitized_aircraft: Vec<AircraftPosition> = vec![];
-    if aircraft.is_empty() {
-        return Err(AircraftError::NoAircraft);
-    }
+impl TryFrom<ReqAircraftPos> for AircraftPosition {
+    type Error = AircraftError;
 
-    for craft in aircraft {
+    fn try_from(craft: ReqAircraftPos) -> Result<Self, Self::Error> {
         if let Err(e) = check_callsign(&craft.callsign) {
             postgis_error!(
-                "(sanitize aircraft) Invalid aircraft callsign: {}; {}",
+                "(try_from ReqAircraftPos) Invalid aircraft callsign: {}; {}",
                 craft.callsign,
                 e
             );
@@ -81,7 +78,7 @@ fn sanitize(aircraft: Vec<ReqAircraftPos>) -> Result<Vec<AircraftPosition>, Airc
         let uuid = match craft.uuid {
             Some(uuid) => match Uuid::parse_str(&uuid) {
                 Err(e) => {
-                    postgis_error!("(sanitize aircraft) Invalid aircraft UUID: {}", e);
+                    postgis_error!("(try_from ReqAircraftPos) Invalid aircraft UUID: {}", e);
                     return Err(AircraftError::AircraftId);
                 }
                 Ok(uuid) => Some(uuid),
@@ -91,7 +88,7 @@ fn sanitize(aircraft: Vec<ReqAircraftPos>) -> Result<Vec<AircraftPosition>, Airc
 
         let Some(location) = craft.location else {
             postgis_error!(
-                "(sanitize aircraft) Aircraft location is invalid."
+                "(try_from ReqAircraftPos) Aircraft location is invalid."
             );
             return Err(AircraftError::Location);
         };
@@ -100,7 +97,7 @@ fn sanitize(aircraft: Vec<ReqAircraftPos>) -> Result<Vec<AircraftPosition>, Airc
             Ok(geom) => geom,
             Err(e) => {
                 postgis_error!(
-                    "(sanitize aircraft) Error creating point from vertex: {}",
+                    "(try_from ReqAircraftPos) Error creating point from vertex: {}",
                     e
                 );
                 return Err(AircraftError::Location);
@@ -109,28 +106,26 @@ fn sanitize(aircraft: Vec<ReqAircraftPos>) -> Result<Vec<AircraftPosition>, Airc
 
         let Some(time) = craft.time else {
             postgis_error!(
-                "(sanitize aircraft) Aircraft time is invalid."
+                "(try_from ReqAircraftPos) Aircraft time is invalid."
             );
             return Err(AircraftError::Time);
         };
 
         let Some(time) = timestamp_to_datetime(&time) else {
             postgis_error!(
-                "(sanitize aircraft) Error converting timestamp to datetime."
+                "(try_from ReqAircraftPos) Error converting timestamp to datetime."
             );
             return Err(AircraftError::Time);
         };
 
-        sanitized_aircraft.push(AircraftPosition {
+        Ok(AircraftPosition {
             uuid,
             callsign: craft.callsign,
             geom,
             altitude_meters: craft.altitude_meters,
             time,
-        });
+        })
     }
-
-    Ok(sanitized_aircraft)
 }
 
 /// Updates aircraft in the PostGIS database.
@@ -139,7 +134,14 @@ pub async fn update_aircraft_position(
     pool: deadpool_postgres::Pool,
 ) -> Result<(), AircraftError> {
     postgis_debug!("(postgis update_aircraft_position) entry.");
-    let aircraft = sanitize(aircraft)?;
+    if aircraft.is_empty() {
+        return Err(AircraftError::NoAircraft);
+    }
+
+    let aircraft: Vec<AircraftPosition> = aircraft
+        .into_iter()
+        .map(AircraftPosition::try_from)
+        .collect::<Result<Vec<_>, _>>()?;
 
     let Ok(mut client) = pool.get().await else {
         postgis_error!("(postgis update_aircraft_position) error getting client.");
@@ -211,7 +213,7 @@ mod tests {
     }
 
     #[test]
-    fn ut_sanitize_valid() {
+    fn ut_request_valid() {
         let mut rng = thread_rng();
         let nodes = vec![
             ("Marauder", 52.3745905, 4.9160036),
@@ -235,36 +237,38 @@ mod tests {
             })
             .collect();
 
-        let Ok(sanitized) = sanitize(aircraft.clone()) else {
-            panic!();
-        };
-
-        assert_eq!(aircraft.len(), sanitized.len());
+        let converted = aircraft
+            .clone()
+            .into_iter()
+            .map(AircraftPosition::try_from)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(aircraft.len(), converted.len());
 
         for (i, aircraft) in aircraft.iter().enumerate() {
-            assert_eq!(aircraft.callsign, sanitized[i].callsign);
+            assert_eq!(aircraft.callsign, converted[i].callsign);
             let location = aircraft.location.unwrap();
             assert_eq!(
                 utils::point_from_vertex(&location).unwrap(),
-                sanitized[i].geom
+                converted[i].geom
             );
 
-            assert_eq!(aircraft.altitude_meters, sanitized[i].altitude_meters);
+            assert_eq!(aircraft.altitude_meters, converted[i].altitude_meters);
 
             if let Some(uuid) = aircraft.uuid.clone() {
                 assert_eq!(
                     uuid,
-                    sanitized[i].uuid.expect("Expected Some uuid.").to_string()
+                    converted[i].uuid.expect("Expected Some uuid.").to_string()
                 );
             } else {
-                assert_eq!(sanitized[i].uuid, None);
+                assert_eq!(converted[i].uuid, None);
             }
 
             let time = aircraft.time.clone().expect("Expected Some time.");
-            let sanitized = datetime_to_timestamp(&sanitized[i].time)
+            let converted = datetime_to_timestamp(&converted[i].time)
                 .expect("Couldn't convert datetime to timestamp.");
 
-            assert_eq!(time, sanitized);
+            assert_eq!(time, converted);
         }
     }
 

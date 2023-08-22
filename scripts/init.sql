@@ -11,8 +11,8 @@ ALTER ROLE svc_gis SET search_path TO "$user", postgis, topology, public;
 --
 -- Nodes for Path Finding
 --
-CREATE TYPE arrow.NodeType AS ENUM ('waypoint', 'vertiport', 'aircraft');
-CREATE TYPE arrow.NoFlyType AS ENUM ('nofly', 'vertiport');
+CREATE TYPE arrow.NodeType AS ENUM ('Waypoint', 'Vertiport', 'Aircraft');
+CREATE TYPE arrow.NoFlyType AS ENUM ('Nofly', 'Vertiport');
 CREATE TABLE arrow.nodes (
     id SERIAL PRIMARY KEY NOT NULL,
     node_type arrow.NodeType NOT NULL,
@@ -152,11 +152,11 @@ BEGIN
     -- Vertiports are both nodes and nofly zones
     -- The Nodes and No-Fly Zones should be created first
     INSERT INTO arrow.nodes (node_type, geom)
-        VALUES ('vertiport', arrow.centroid(port_geom))
+        VALUES ('Vertiport', arrow.centroid(port_geom))
         RETURNING id INTO node_id; -- FK constraint will fail if this fails
 
     INSERT INTO arrow.nofly (label, geom, nofly_type, time_start, time_end)
-        VALUES (port_label, port_geom, 'vertiport', NULL, NULL)
+        VALUES (port_label, port_geom, 'Vertiport', NULL, NULL)
         RETURNING id INTO nofly_id; -- FK constraint will fail if this fails
 
     INSERT INTO arrow.vertiports (node_id, nofly_id, arrow_id, label)
@@ -189,7 +189,7 @@ BEGIN
     -- Vertiports are both nodes and nofly zones
     -- The Nodes and No-Fly Zones should be created first
     INSERT INTO arrow.nodes (node_type, geom)
-        VALUES ('waypoint', pt_geom)
+        VALUES ('Waypoint', pt_geom)
         RETURNING id INTO node_id; -- FK constraint will fail if this fails
 
     INSERT INTO arrow.waypoints (node_id, label)
@@ -209,7 +209,7 @@ CREATE OR REPLACE FUNCTION arrow.update_nofly(
 ) RETURNS VOID AS $$
 BEGIN
     INSERT INTO arrow.nofly (label, geom, nofly_type, time_start, time_end)
-        VALUES (nofly_label, nofly_geom, 'nofly', nofly_time_start, nofly_time_end)
+        VALUES (nofly_label, nofly_geom, 'Nofly', nofly_time_start, nofly_time_end)
         ON CONFLICT(label)
             DO UPDATE
                 SET geom = EXCLUDED.geom,
@@ -257,7 +257,7 @@ BEGIN
     -- Vertiports are both nodes and nofly zones
     -- The Nodes and No-Fly Zones should be created first
     INSERT INTO arrow.nodes (node_type, geom)
-        VALUES ('aircraft', craft_geom)
+        VALUES ('Aircraft', craft_geom)
         RETURNING id INTO node_id; -- FK constraint will fail if this fails
 
     INSERT INTO arrow.aircraft (
@@ -290,7 +290,7 @@ CREATE OR REPLACE FUNCTION arrow.route_update()
 AS $$
 BEGIN
     -- Don't update routes for aircraft
-    IF NEW.node_type = 'aircraft' THEN
+    IF NEW.node_type = 'Aircraft' THEN
         RETURN NEW;
     END IF;
 
@@ -309,8 +309,8 @@ BEGIN
     INNER JOIN arrow.nodes end_node ON
         (NEW.id IN (start_node.id, end_node.id))
         AND (start_node.id <> end_node.id) -- Build two unidirectional routes
-        AND (start_node.node_type <> 'aircraft') -- Don't route from aircraft
-        AND (end_node.node_type <> 'aircraft') -- Don't route to aircraft
+        AND (start_node.node_type <> 'Aircraft') -- Don't route from aircraft
+        AND (end_node.node_type <> 'Aircraft') -- Don't route to aircraft
     ON CONFLICT (id_source, id_target) DO
         UPDATE SET geom = EXCLUDED.geom,
             distance_meters = EXCLUDED.distance_meters;
@@ -586,7 +586,7 @@ BEGIN
     FROM arrow.nodes start_node
     INNER JOIN arrow.nodes end_node ON
         (start_node_id = start_node.id) -- Unidirectional routes from aircraft
-        AND (end_node.node_type <> 'aircraft') -- Don't route to aircraft
+        AND (end_node.node_type <> 'Aircraft') -- Don't route to aircraft
     ON CONFLICT (id_source, id_target) DO
         UPDATE SET geom = EXCLUDED.geom,
             distance_meters = EXCLUDED.distance_meters;
@@ -644,7 +644,7 @@ BEGIN
             WHERE
                 ar.id_source = start_node_id
                 AND ar.distance_meters < max_range_meters
-                AND (SELECT node_type FROM arrow.nodes WHERE id = ar.id_target) = 'vertiport'
+                AND (SELECT node_type FROM arrow.nodes WHERE id = ar.id_target) = 'Vertiport'
             ORDER BY ar.distance_meters
             LIMIT n_results;
 END;
@@ -677,7 +677,7 @@ BEGIN
         FROM arrow.routes ar
         WHERE ar.id_source = start_node_id
             AND ar.distance_meters < max_range_meters
-            AND (SELECT node_type FROM arrow.nodes WHERE id = ar.id_target) = 'vertiport'
+            AND (SELECT node_type FROM arrow.nodes WHERE id = ar.id_target) = 'Vertiport'
         ORDER BY ar.distance_meters
         LIMIT n_results;
 END;

@@ -1,9 +1,6 @@
 //! This module contains functions for routing between nodes.
-use crate::grpc::server::grpc_server::{
-    DistanceTo, NearestNeighborRequest, NodeType as GrpcNodeType,
-};
+use crate::grpc::server::grpc_server::{DistanceTo, NearestNeighborRequest, NodeType};
 
-use crate::postgis::NodeType;
 use uuid::Uuid;
 
 /// Possible errors with path requests
@@ -49,88 +46,47 @@ impl std::fmt::Display for NNError {
     }
 }
 
-#[derive(Debug)]
-struct NNRequest {
-    node_start_id: String,
-    start_type: NodeType,
-    end_type: NodeType,
-    limit: i32,
-    max_range_meters: f64,
+impl NearestNeighborRequest {
+    fn validate(&self) -> Result<(), NNError> {
+        if self.limit < 1 {
+            postgis_error!(
+                "(validate NearestNeighborRequest) invalid limit: {}",
+                self.limit
+            );
+            return Err(NNError::InvalidLimit);
+        }
+
+        if self.max_range_meters < 0.0 {
+            postgis_error!(
+                "(validate NearestNeighborRequest) invalid max range meters: {}",
+                self.max_range_meters
+            );
+            return Err(NNError::InvalidRange);
+        }
+
+        Ok(())
+    }
 }
 
-/// Sanitize the request inputs
-fn sanitize(request: NearestNeighborRequest) -> Result<NNRequest, NNError> {
-    let Ok(start_type) = NodeType::try_from(request.start_type) else {
-        postgis_error!(
-            "(sanitize) invalid start node type: {:?}",
-            request.start_type
-        );
-
-        return Err(NNError::InvalidStartNode);
-    };
-
-    let Ok(end_type) = NodeType::try_from(request.end_type) else {
-        postgis_error!("(sanitize) invalid end node type: {:?}", request.end_type);
-        return Err(NNError::InvalidEndNode);
-    };
-
-    match start_type {
-        NodeType::Vertiport => {
-            uuid::Uuid::parse_str(&request.start_node_id).map_err(|_| NNError::InvalidStartNode)?;
-        }
-        NodeType::Aircraft => {
-            crate::postgis::aircraft::check_callsign(&request.start_node_id)
-                .map_err(|_| NNError::InvalidStartNode)?;
-        }
-        _ => {
-            postgis_error!("(sanitize) invalid start node type: {:?}", start_type);
-            return Err(NNError::Unsupported);
-        }
-    }
-
-    if end_type != NodeType::Vertiport {
-        postgis_error!("(sanitize) invalid end node type: {:?}", end_type);
-        return Err(NNError::Unsupported);
-    }
-
-    if request.limit < 1 {
-        postgis_error!("(sanitize) invalid limit: {}", request.limit);
-        return Err(NNError::InvalidLimit);
-    }
-
-    if request.max_range_meters < 0.0 {
-        postgis_error!(
-            "(sanitize) invalid max range meters: {}",
-            request.max_range_meters
-        );
-        return Err(NNError::InvalidRange);
-    }
-
-    let node_start_id = request.start_node_id;
-    Ok(NNRequest {
-        node_start_id,
-        start_type,
-        end_type,
-        limit: request.limit,
-        max_range_meters: request.max_range_meters as f64,
-    })
-}
-
-/// Get the best path from a vertiport to another vertiport
+/// Get the nearest neighboring vertiports to a vertiport
 async fn nearest_neighbor_vertiport_source(
     stmt: tokio_postgres::Statement,
     client: deadpool_postgres::Client,
-    request: NNRequest,
+    request: NearestNeighborRequest,
 ) -> Result<Vec<tokio_postgres::Row>, NNError> {
-    let Ok(node_start_id) = Uuid::parse_str(&request.node_start_id) else {
-        postgis_error!("(nearest_neighbor_vertiport_source) could not parse start node id into UUID: {}", request.node_start_id);
+    let Ok(start_node_id) = Uuid::parse_str(&request.start_node_id) else {
+        postgis_error!("(nearest_neighbor_vertiport_source) could not parse start node id into UUID: {}", request.start_node_id);
         return Err(NNError::InvalidStartNode);
     };
 
     match client
         .query(
             &stmt,
-            &[&node_start_id, &request.limit, &request.max_range_meters],
+            &[
+                &start_node_id,
+                &request.limit,
+                &(request.max_range_meters as f64),
+            ],
         )
         .await
     {
@@ -140,24 +96,25 @@ async fn nearest_neighbor_vertiport_source(
                 "(nearest_neighbor_vertiport_source) could not request routes: {}",
                 e
             );
-            return Err(NNError::Unknown);
+
+            Err(NNError::Unknown)
         }
     }
 }
 
-/// Get the best path from a aircraft to another vertiport
+/// Get the nearest neighboring vertiports to an aircraft
 async fn nearest_neighbor_aircraft_source(
     stmt: tokio_postgres::Statement,
     client: deadpool_postgres::Client,
-    request: NNRequest,
+    request: NearestNeighborRequest,
 ) -> Result<Vec<tokio_postgres::Row>, NNError> {
     match client
         .query(
             &stmt,
             &[
-                &request.node_start_id,
+                &request.start_node_id,
                 &request.limit,
-                &request.max_range_meters,
+                &(request.max_range_meters as f64),
             ],
         )
         .await
@@ -168,7 +125,8 @@ async fn nearest_neighbor_aircraft_source(
                 "(nearest_neighbor_aircraft_source) could not request routes: {}",
                 e
             );
-            return Err(NNError::Unknown);
+
+            Err(NNError::Unknown)
         }
     }
 }
@@ -179,18 +137,49 @@ pub async fn nearest_neighbors(
     request: NearestNeighborRequest,
     pool: deadpool_postgres::Pool,
 ) -> Result<Vec<DistanceTo>, NNError> {
-    let request = sanitize(request)?;
+    request.validate()?;
+
+    let start_type = match num::FromPrimitive::from_i32(request.start_type) {
+        Some(NodeType::Vertiport) => {
+            uuid::Uuid::parse_str(&request.start_node_id).map_err(|_| NNError::InvalidStartNode)?;
+            NodeType::Vertiport
+        }
+        Some(NodeType::Aircraft) => {
+            crate::postgis::aircraft::check_callsign(&request.start_node_id)
+                .map_err(|_| NNError::InvalidStartNode)?;
+            NodeType::Aircraft
+        }
+        _ => {
+            postgis_error!(
+                "(nearest_neighbors) invalid start node type: {:?}",
+                request.start_type
+            );
+            return Err(NNError::Unsupported);
+        }
+    };
+
+    let end_type = match num::FromPrimitive::from_i32(request.end_type) {
+        Some(NodeType::Vertiport) => NodeType::Vertiport,
+        _ => {
+            postgis_error!(
+                "(nearest_neighbors) invalid end node type: {:?}",
+                request.end_type
+            );
+            return Err(NNError::Unsupported);
+        }
+    };
 
     let Ok(client) = pool.get().await else {
         println!("(nearest_neighbors) could not get client from pool.");
         return Err(NNError::Client);
     };
 
-    let rows = match (request.start_type, request.end_type) {
+    let target_type = request.end_type;
+    let rows = match (start_type, end_type) {
         (NodeType::Vertiport, NodeType::Vertiport) => {
-            let Ok(stmt) = client.prepare_cached(&format!(
+            let Ok(stmt) = client.prepare_cached(
                 "SELECT * FROM arrow.nearest_vertiports_to_vertiport($1, $2, $3);",
-            )).await else {
+            ).await else {
                 postgis_error!("(nearest_neighbors) could not prepare statement.");
                 return Err(NNError::Unknown);
             };
@@ -198,9 +187,9 @@ pub async fn nearest_neighbors(
             nearest_neighbor_vertiport_source(stmt, client, request).await?
         }
         (NodeType::Aircraft, NodeType::Vertiport) => {
-            let Ok(stmt) = client.prepare_cached(&format!(
+            let Ok(stmt) = client.prepare_cached(
                 "SELECT * FROM arrow.nearest_vertiports_to_aircraft($1, $2, $3);",
-            )).await else {
+            ).await else {
                 postgis_error!("(nearest_neighbors) could not prepare statement.");
                 return Err(NNError::Unknown);
             };
@@ -220,7 +209,7 @@ pub async fn nearest_neighbors(
 
         results.push(DistanceTo {
             label: label.to_string(),
-            target_type: GrpcNodeType::Vertiport as i32,
+            target_type,
             distance_meters: distance_meters as f32,
         });
     }
@@ -232,9 +221,20 @@ pub async fn nearest_neighbors(
 mod tests {
     use super::*;
     use crate::grpc::server::grpc_server;
+    use deadpool_postgres::{Config, ManagerConfig, Pool, RecyclingMethod, Runtime};
+    use tokio_postgres::NoTls;
 
-    #[test]
-    fn ut_sanitize_valid() {
+    fn get_pool() -> Pool {
+        let mut cfg = Config::default();
+        cfg.dbname = Some("deadpool".to_string());
+        cfg.manager = Some(ManagerConfig {
+            recycling_method: RecyclingMethod::Fast,
+        });
+        cfg.create_pool(Some(Runtime::Tokio1), NoTls).unwrap()
+    }
+
+    #[tokio::test]
+    async fn ut_client_failure() {
         let request = NearestNeighborRequest {
             start_node_id: uuid::Uuid::new_v4().to_string(),
             start_type: grpc_server::NodeType::Vertiport as i32,
@@ -243,26 +243,12 @@ mod tests {
             max_range_meters: 1000.0,
         };
 
-        let result = sanitize(request);
-        assert!(result.is_ok());
+        let result = nearest_neighbors(request, get_pool()).await.unwrap_err();
+        assert_eq!(result, NNError::Client);
     }
 
-    #[test]
-    fn ut_sanitize_valid_aircraft_start() {
-        let request = NearestNeighborRequest {
-            start_node_id: "test".to_string(),
-            start_type: grpc_server::NodeType::Aircraft as i32,
-            end_type: grpc_server::NodeType::Vertiport as i32,
-            limit: 10,
-            max_range_meters: 1000.0,
-        };
-
-        let result = sanitize(request);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn ut_sanitize_invalid_uuids() {
+    #[tokio::test]
+    async fn ut_request_invalid_uuids() {
         let request = NearestNeighborRequest {
             start_node_id: "Invalid".to_string(),
             start_type: grpc_server::NodeType::Vertiport as i32,
@@ -271,12 +257,12 @@ mod tests {
             max_range_meters: 1000.0,
         };
 
-        let result = sanitize(request).unwrap_err();
+        let result = nearest_neighbors(request, get_pool()).await.unwrap_err();
         assert_eq!(result, NNError::InvalidStartNode);
     }
 
-    #[test]
-    fn ut_sanitize_invalid_aircraft() {
+    #[tokio::test]
+    async fn ut_request_invalid_aircraft() {
         let request = NearestNeighborRequest {
             start_node_id: "Test-123!".to_string(),
             start_type: grpc_server::NodeType::Aircraft as i32,
@@ -285,12 +271,12 @@ mod tests {
             max_range_meters: 1000.0,
         };
 
-        let result = sanitize(request).unwrap_err();
+        let result = nearest_neighbors(request, get_pool()).await.unwrap_err();
         assert_eq!(result, NNError::InvalidStartNode);
     }
 
-    #[test]
-    fn ut_sanitize_invalid_start_node() {
+    #[tokio::test]
+    async fn ut_request_invalid_start_node() {
         let request = NearestNeighborRequest {
             start_node_id: "Aircraft".to_string(),
             start_type: grpc_server::NodeType::Waypoint as i32,
@@ -299,12 +285,12 @@ mod tests {
             max_range_meters: 1000.0,
         };
 
-        let result = sanitize(request).unwrap_err();
+        let result = nearest_neighbors(request, get_pool()).await.unwrap_err();
         assert_eq!(result, NNError::Unsupported);
     }
 
-    #[test]
-    fn ut_sanitize_invalid_end_node() {
+    #[tokio::test]
+    async fn ut_request_invalid_end_node() {
         let request = NearestNeighborRequest {
             start_node_id: uuid::Uuid::new_v4().to_string(),
             start_type: grpc_server::NodeType::Vertiport as i32,
@@ -313,12 +299,12 @@ mod tests {
             max_range_meters: 1000.0,
         };
 
-        let result = sanitize(request).unwrap_err();
+        let result = nearest_neighbors(request, get_pool()).await.unwrap_err();
         assert_eq!(result, NNError::Unsupported);
     }
 
-    #[test]
-    fn ut_sanitize_invalid_limit() {
+    #[tokio::test]
+    async fn ut_request_invalid_limit() {
         let request = NearestNeighborRequest {
             start_node_id: uuid::Uuid::new_v4().to_string(),
             start_type: grpc_server::NodeType::Vertiport as i32,
@@ -327,12 +313,12 @@ mod tests {
             max_range_meters: 1000.0,
         };
 
-        let result = sanitize(request).unwrap_err();
+        let result = nearest_neighbors(request, get_pool()).await.unwrap_err();
         assert_eq!(result, NNError::InvalidLimit);
     }
 
-    #[test]
-    fn ut_sanitize_invalid_range() {
+    #[tokio::test]
+    async fn ut_request_invalid_range() {
         let request = NearestNeighborRequest {
             start_node_id: uuid::Uuid::new_v4().to_string(),
             start_type: grpc_server::NodeType::Vertiport as i32,
@@ -341,12 +327,12 @@ mod tests {
             max_range_meters: -1.0,
         };
 
-        let result = sanitize(request).unwrap_err();
+        let result = nearest_neighbors(request, get_pool()).await.unwrap_err();
         assert_eq!(result, NNError::InvalidRange);
     }
 
-    #[test]
-    fn ut_sanitize_invalid_path_type() {
+    #[tokio::test]
+    async fn ut_request_invalid_path_type() {
         let request = NearestNeighborRequest {
             start_node_id: uuid::Uuid::new_v4().to_string(),
             start_type: grpc_server::NodeType::Aircraft as i32,
@@ -355,7 +341,7 @@ mod tests {
             max_range_meters: 1000.0,
         };
 
-        let result = sanitize(request).unwrap_err();
+        let result = nearest_neighbors(request, get_pool()).await.unwrap_err();
         assert_eq!(result, NNError::Unsupported);
     }
 }

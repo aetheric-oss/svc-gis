@@ -2,7 +2,6 @@
 //! No-Fly Zones are permanent or temporary.
 
 use crate::grpc::server::grpc_server;
-use crate::postgis::nofly::NoFlyZone as GisNoFlyZone;
 use chrono::{DateTime, Utc};
 use grpc_server::NoFlyZone as RequestNoFlyZone;
 use lib_common::time::timestamp_to_datetime;
@@ -64,18 +63,13 @@ impl std::fmt::Display for NoFlyZoneError {
     }
 }
 
-/// Convert GRPC request no-fly zone type into GIS no-fly type
-fn sanitize(req_zones: Vec<RequestNoFlyZone>) -> Result<Vec<GisNoFlyZone>, NoFlyZoneError> {
-    if req_zones.is_empty() {
-        postgis_error!("(nofly sanitize) no no-fly zones provided.");
-        return Err(NoFlyZoneError::NoZones);
-    }
+impl TryFrom<RequestNoFlyZone> for NoFlyZone {
+    type Error = NoFlyZoneError;
 
-    let mut zones: Vec<GisNoFlyZone> = vec![];
-    for zone in req_zones {
+    fn try_from(zone: RequestNoFlyZone) -> Result<Self, Self::Error> {
         if let Err(e) = super::utils::check_string(&zone.label, LABEL_REGEX, LABEL_MAX_LENGTH) {
             postgis_error!(
-                "(sanitize nofly) Invalid no-fly zone label: {}; {}",
+                "(try_from RequestNoFlyZone) Invalid no-fly zone label: {}; {}",
                 zone.label,
                 e
             );
@@ -86,7 +80,10 @@ fn sanitize(req_zones: Vec<RequestNoFlyZone>) -> Result<Vec<GisNoFlyZone>, NoFly
             Some(ts) => match timestamp_to_datetime(ts) {
                 Some(dt) => Some(dt),
                 _ => {
-                    postgis_error!("(nofly sanitize) failed to parse timestamp: {:?}", ts);
+                    postgis_error!(
+                        "(try_from RequestNoFlyZone) failed to parse timestamp: {:?}",
+                        ts
+                    );
                     return Err(NoFlyZoneError::Time);
                 }
             },
@@ -97,7 +94,10 @@ fn sanitize(req_zones: Vec<RequestNoFlyZone>) -> Result<Vec<GisNoFlyZone>, NoFly
             Some(ts) => match timestamp_to_datetime(ts) {
                 Some(dt) => Some(dt),
                 _ => {
-                    postgis_error!("(nofly sanitize) failed to parse timestamp: {:?}", ts);
+                    postgis_error!(
+                        "(try_from RequestNoFlyZone) failed to parse timestamp: {:?}",
+                        ts
+                    );
                     return Err(NoFlyZoneError::Time);
                 }
             },
@@ -108,7 +108,9 @@ fn sanitize(req_zones: Vec<RequestNoFlyZone>) -> Result<Vec<GisNoFlyZone>, NoFly
         if let Some(ts) = time_start {
             if let Some(te) = time_end {
                 if te < ts {
-                    postgis_error!("(nofly sanitize) end time is earlier than start time.");
+                    postgis_error!(
+                        "(try_from RequestNoFlyZone) end time is earlier than start time."
+                    );
                     return Err(NoFlyZoneError::TimeOrder);
                 }
             }
@@ -118,24 +120,20 @@ fn sanitize(req_zones: Vec<RequestNoFlyZone>) -> Result<Vec<GisNoFlyZone>, NoFly
             Ok(geom) => geom,
             Err(e) => {
                 postgis_error!(
-                    "(sanitize nofly) Error converting nofly polygon: {}",
+                    "(try_from RequestNoFlyZone) Error converting nofly polygon: {}",
                     e.to_string()
                 );
                 return Err(NoFlyZoneError::Location);
             }
         };
 
-        let zone = GisNoFlyZone {
-            label: zone.label.clone(),
+        Ok(NoFlyZone {
+            label: zone.label,
             geom,
             time_start,
             time_end,
-        };
-
-        zones.push(zone);
+        })
     }
-
-    Ok(zones)
 }
 
 /// Updates no-fly zones in the PostGIS database.
@@ -144,7 +142,15 @@ pub async fn update_nofly(
     pool: deadpool_postgres::Pool,
 ) -> Result<(), NoFlyZoneError> {
     postgis_debug!("(postgis update_nofly) entry.");
-    let zones = sanitize(zones)?;
+    if zones.is_empty() {
+        postgis_error!("(postgis update_nofly) no no-fly zones provided.");
+        return Err(NoFlyZoneError::NoZones);
+    }
+
+    let zones: Vec<NoFlyZone> = zones
+        .into_iter()
+        .map(NoFlyZone::try_from)
+        .collect::<Result<Vec<_>, _>>()?;
 
     let Ok(mut client) = pool.get().await else {
         postgis_error!("(postgis update_nofly) error getting client.");
@@ -217,14 +223,14 @@ mod tests {
     }
 
     #[test]
-    fn ut_sanitize_valid() {
+    fn ut_request_valid() {
         let nodes = vec![
             ("NFZ A", square(52.3745905, 4.9160036)),
             ("NFZ B", square(52.3749819, 4.9156925)),
             ("NFZ C", square(52.3752144, 4.9153733)),
         ];
 
-        let nofly_zone: Vec<RequestNoFlyZone> = nodes
+        let nofly_zones: Vec<RequestNoFlyZone> = nodes
             .iter()
             .map(|(label, points)| RequestNoFlyZone {
                 label: label.to_string(),
@@ -239,17 +245,20 @@ mod tests {
             })
             .collect();
 
-        let Ok(sanitized) = sanitize(nofly_zone.clone()) else {
-            panic!();
-        };
+        let converted = nofly_zones
+            .clone()
+            .into_iter()
+            .map(NoFlyZone::try_from)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
 
-        assert_eq!(nofly_zone.len(), sanitized.len());
+        assert_eq!(nofly_zones.len(), converted.len());
 
-        for (i, nfz) in nofly_zone.iter().enumerate() {
-            assert_eq!(nfz.label, sanitized[i].label);
+        for (i, nfz) in nofly_zones.iter().enumerate() {
+            assert_eq!(nfz.label, converted[i].label);
             assert_eq!(
                 utils::polygon_from_vertices(&nfz.vertices).unwrap(),
-                sanitized[i].geom
+                converted[i].geom
             );
         }
     }
