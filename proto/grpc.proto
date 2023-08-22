@@ -13,6 +13,7 @@ service RpcService {
     rpc updateAircraftPosition(UpdateAircraftPositionRequest)
         returns (UpdateResponse);
     rpc bestPath(BestPathRequest) returns (BestPathResponse);
+    rpc nearestNeighbors(NearestNeighborRequest) returns (NearestNeighborResponse);
 }
 
 // Ready Request object
@@ -187,4 +188,41 @@ message BestPathRequest {
 message BestPathResponse {
     // Nodes in the best path
     repeated PathSegment segments = 1;
+}
+
+// Nearest Neighbor Request object
+message NearestNeighborRequest {
+    // Start Node - UUID for Vertiports, Callsigns for Aircraft
+    string start_node_id = 1;
+
+    // Start Node Type (Vertiport or Aircraft Allowed)
+    NodeType start_type = 2;
+
+    // End Node Type (Vertiport or Aircraft Allowed)
+    NodeType end_type = 3;
+
+    // Limit to this many results
+    int32 limit = 4;
+
+    // Limit to this range
+    float max_range_meters = 5;
+}
+
+// Distance to a node
+message DistanceTo {
+    // Vertiport or Aircraft ID
+    string label = 1;
+
+    // Vertiport or Aircraft Type
+    NodeType target_type = 2;
+
+    // Distance to vertiport
+    float distance_meters = 3;
+}
+
+// Nearest Vertiports Request object
+message NearestNeighborResponse {
+
+    // Distances to nearby objects
+    repeated DistanceTo distances = 1;
 }

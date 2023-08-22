@@ -5,6 +5,7 @@ use chrono::{Duration, Utc};
 use lib_common::grpc::get_endpoint_from_env;
 use lib_common::time::datetime_to_timestamp;
 use svc_gis_client_grpc::client::BestPathRequest;
+use svc_gis_client_grpc::client::NearestNeighborRequest;
 use svc_gis_client_grpc::client::NodeType;
 #[allow(unused_qualifications, missing_docs)]
 use svc_gis_client_grpc::client::{
@@ -18,6 +19,7 @@ use uuid::Uuid;
 
 const VERTIPORT_1_UUID: &str = "00000000-0000-0000-0000-000000000000";
 const VERTIPORT_2_UUID: &str = "00000000-0000-0000-0000-000000000001";
+const VERTIPORT_3_UUID: &str = "00000000-0000-0000-0000-000000000003";
 const AIRCRAFT_1_UUID: &str = "00000000-0000-0000-0000-000000000002";
 const AIRCRAFT_1_LABEL: &str = "Marauder";
 
@@ -67,7 +69,7 @@ async fn add_vertiports(endpoint: String) -> Result<(), Box<dyn std::error::Erro
             label: Some("VertiportB".to_string()),
         },
         Vertiport {
-            uuid: Uuid::new_v4().to_string(),
+            uuid: VERTIPORT_3_UUID.to_string(),
             vertices: vec![
                 (52.3753536, 4.9157569),
                 (52.3752766, 4.9157193),
@@ -333,6 +335,50 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!(
             "\x1b[33;3m{} segment(s) in path.\x1b[0m",
             response.segments.len()
+        );
+    }
+
+    // Nearest Neighbor to Vertiport
+    {
+        println!("\n\u{1F3E0} Nearest Vertiport Neighbors to Vertiport");
+        let request = NearestNeighborRequest {
+            start_node_id: VERTIPORT_1_UUID.to_string(),
+            start_type: NodeType::Vertiport as i32,
+            end_type: NodeType::Vertiport as i32,
+            limit: 10,
+            max_range_meters: 3000.0,
+        };
+
+        let request = tonic::Request::new(request);
+
+        let response = client.nearest_neighbors(request).await?.into_inner();
+
+        println!("RESPONSE={:?}", response);
+        println!(
+            "\x1b[33;3m{} nearest neighbors(s).\x1b[0m",
+            response.distances.len()
+        );
+    }
+
+    // Nearest Neighbor to Aircraft
+    {
+        println!("\n\u{1F3E0} Nearest Vertiport Neighbors to Aircraft");
+        let request = NearestNeighborRequest {
+            start_node_id: AIRCRAFT_1_LABEL.to_string(),
+            start_type: NodeType::Aircraft as i32,
+            end_type: NodeType::Vertiport as i32,
+            limit: 10,
+            max_range_meters: 3000.0,
+        };
+
+        let request = tonic::Request::new(request);
+
+        let response = client.nearest_neighbors(request).await?.into_inner();
+
+        println!("RESPONSE={:?}", response);
+        println!(
+            "\x1b[33;3m{} nearest neighbors(s).\x1b[0m",
+            response.distances.len()
         );
     }
 

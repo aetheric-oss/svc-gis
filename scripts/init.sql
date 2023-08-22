@@ -1,10 +1,9 @@
-CREATE DATABASE gis;
 CREATE USER svc_gis;
+CREATE DATABASE gis;
 \c gis
 
 CREATE SCHEMA arrow;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
-CREATE EXTENSION postgis;
 CREATE EXTENSION pgrouting CASCADE;
 SET search_path TO "$user", postgis, topology, public;
 ALTER ROLE svc_gis SET search_path TO "$user", postgis, topology, public;
@@ -544,7 +543,6 @@ $body$ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = arrow, public, pg_temp;
 
-
 CREATE OR REPLACE FUNCTION arrow.best_path_a2p (
     start_label VARCHAR, -- Aircraft
     end_node UUID, -- Vertiport
@@ -619,6 +617,74 @@ $body$ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = arrow, public, pg_temp;
 
+-- Get the nearest vertiports to a vertiport
+CREATE OR REPLACE FUNCTION arrow.nearest_vertiports_to_vertiport (
+    start_uuid UUID, -- Vertiport
+    n_results INTEGER,
+    max_range_meters FLOAT
+) RETURNS TABLE (
+    arrow_id UUID,
+    distance_meters FLOAT
+) AS $body$
+DECLARE
+    start_node_id INTEGER;
+BEGIN
+    -- Get Node ID of starting vertiport
+    SELECT node_id
+        FROM arrow.vertiports av
+        WHERE av.arrow_id = start_uuid
+        INTO start_node_id;
+
+    -- Plug the geometry into a nearest-neighbor query
+    RETURN QUERY
+        SELECT
+            (SELECT av.arrow_id FROM arrow.vertiports av WHERE node_id = ar.id_target),
+            ar.distance_meters
+            FROM arrow.routes ar
+            WHERE
+                ar.id_source = start_node_id
+                AND ar.distance_meters < max_range_meters
+                AND (SELECT node_type FROM arrow.nodes WHERE id = ar.id_target) = 'vertiport'
+            ORDER BY ar.distance_meters
+            LIMIT n_results;
+END;
+$body$ LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = arrow, public, pg_temp;
+
+-- Get the nearest vertiports to an aircraft
+CREATE OR REPLACE FUNCTION arrow.nearest_vertiports_to_aircraft (
+    start_label VARCHAR, -- Aircraft
+    n_results INTEGER,
+    max_range_meters FLOAT
+) RETURNS TABLE (
+    arrow_id UUID,
+    distance_meters FLOAT
+) AS $body$
+DECLARE
+    start_node_id INTEGER;
+BEGIN
+    -- Get Node ID of starting vertiport
+    SELECT node_id
+        INTO start_node_id
+        FROM arrow.aircraft WHERE callsign = start_label;
+
+    -- Plug the geometry into a nearest-neighbor query
+    RETURN QUERY
+    SELECT
+        (SELECT av.arrow_id FROM arrow.vertiports av WHERE node_id = ar.id_target),
+        ar.distance_meters
+        FROM arrow.routes ar
+        WHERE ar.id_source = start_node_id
+            AND ar.distance_meters < max_range_meters
+            AND (SELECT node_type FROM arrow.nodes WHERE id = ar.id_target) = 'vertiport'
+        ORDER BY ar.distance_meters
+        LIMIT n_results;
+END;
+$body$ LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = arrow, public, pg_temp;
+
 -- These permissions must be declared last
 GRANT USAGE ON SCHEMA arrow TO svc_gis;
 GRANT EXECUTE ON FUNCTION arrow.update_aircraft_position(
@@ -659,4 +725,16 @@ GRANT EXECUTE ON FUNCTION arrow.best_path_a2p(
     UUID,
     TIMESTAMPTZ,
     TIMESTAMPTZ
+) TO svc_gis;
+
+GRANT EXECUTE ON FUNCTION arrow.nearest_vertiports_to_vertiport(
+    UUID,
+    INTEGER,
+    FLOAT
+) TO svc_gis;
+
+GRANT EXECUTE ON FUNCTION arrow.nearest_vertiports_to_aircraft(
+    VARCHAR,
+    INTEGER,
+    FLOAT
 ) TO svc_gis;

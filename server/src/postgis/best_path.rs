@@ -1,22 +1,12 @@
 //! This module contains functions for routing between nodes.
 use crate::grpc::server::grpc_server::{BestPathRequest, NodeType, PathSegment};
+use crate::postgis::PathType;
 use chrono::{DateTime, Utc};
 use lib_common::time::timestamp_to_datetime;
 use uuid::Uuid;
 
 // TODO(R4): Include altitude, lanes, corridors
 const ALTITUDE_HARDCODE: f32 = 1000.0;
-
-/// Routing can occur from a vertiport to a vertiport
-/// Or an aircraft to a vertiport (in-flight re-routing)
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub enum PathType {
-    /// Route between vertiports
-    PortToPort = 0,
-
-    /// Route from an aircraft to a vertiport
-    AircraftToPort = 1,
-}
 
 /// Possible errors with path requests
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -67,19 +57,6 @@ struct PathRequest {
     node_uuid_end: Uuid,
     time_start: DateTime<Utc>,
     time_end: DateTime<Utc>,
-}
-
-impl TryFrom<i32> for NodeType {
-    type Error = ();
-
-    fn try_from(v: i32) -> Result<Self, Self::Error> {
-        match v {
-            x if x == NodeType::Vertiport as i32 => Ok(NodeType::Vertiport),
-            x if x == NodeType::Aircraft as i32 => Ok(NodeType::Aircraft),
-            x if x == NodeType::Waypoint as i32 => Ok(NodeType::Waypoint),
-            _ => Err(()),
-        }
-    }
 }
 
 /// Sanitize the request inputs
@@ -140,6 +117,69 @@ fn sanitize(request: BestPathRequest) -> Result<PathRequest, PathError> {
     })
 }
 
+/// Get the best path from a vertiport to another vertiport
+async fn best_path_vertiport_source(
+    stmt: tokio_postgres::Statement,
+    client: deadpool_postgres::Client,
+    request: PathRequest,
+) -> Result<Vec<tokio_postgres::Row>, PathError> {
+    let Ok(node_start_id) = Uuid::parse_str(&request.node_start_id) else {
+        postgis_error!("(best_path_vertiport_source) could not parse start node id into UUID: {}", request.node_start_id);
+        return Err(PathError::InvalidStartNode);
+    };
+
+    match client
+        .query(
+            &stmt,
+            &[
+                &node_start_id,
+                &request.node_uuid_end,
+                &request.time_start,
+                &request.time_end,
+            ],
+        )
+        .await
+    {
+        Ok(results) => Ok(results),
+        Err(e) => {
+            println!(
+                "(best_path_vertiport_source) could not request routes: {}",
+                e
+            );
+            return Err(PathError::Unknown);
+        }
+    }
+}
+
+/// Get the best path from a aircraft to another vertiport
+async fn best_path_aircraft_source(
+    stmt: tokio_postgres::Statement,
+    client: deadpool_postgres::Client,
+    request: PathRequest,
+) -> Result<Vec<tokio_postgres::Row>, PathError> {
+    match client
+        .query(
+            &stmt,
+            &[
+                &request.node_start_id,
+                &request.node_uuid_end,
+                &request.time_start,
+                &request.time_end,
+            ],
+        )
+        .await
+    {
+        Ok(results) => Ok(results),
+        Err(e) => {
+            println!(
+                "(best_path_aircraft_source) could not request routes: {}",
+                e
+            );
+            return Err(PathError::Unknown);
+        }
+    }
+}
+
 /// The purpose of this initial search is to verify that a flight between two
 ///  vertiports is physically possible.
 ///
@@ -155,36 +195,35 @@ pub async fn best_path(
     pool: deadpool_postgres::Pool,
 ) -> Result<Vec<PathSegment>, PathError> {
     let request = sanitize(request)?;
-
-    let fn_name = match path_type {
-        PathType::PortToPort => "best_path_p2p",
-        PathType::AircraftToPort => "best_path_a2p",
-    };
-
-    let cmd_str = format!(
-        "SELECT * FROM arrow.{fn_name}(
-            '{}',
-            '{}'::UUID,
-            '{}'::TIMESTAMPTZ,
-            '{}'::TIMESTAMPTZ
-        );",
-        request.node_start_id, request.node_uuid_end, request.time_start, request.time_end
-    );
-
     let client = match pool.get().await {
         Ok(client) => client,
         Err(e) => {
-            println!("(get_paths) could not get client from pool.");
-            println!("(get_paths) error: {:?}", e);
+            println!("(best_path) could not get client from pool.");
+            println!("(best_path) error: {:?}", e);
             return Err(PathError::Client);
         }
     };
 
-    let rows = match client.query(&cmd_str, &[]).await {
-        Ok(results) => results,
-        Err(e) => {
-            println!("(get_paths) could not request routes: {}", e);
-            return Err(PathError::Unknown);
+    let rows = match path_type {
+        PathType::PortToPort => {
+            let Ok(stmt) = client.prepare_cached(&format!(
+                "SELECT * FROM arrow.best_path_p2p($1, $2, $3, $4);"
+            )).await else {
+                postgis_error!("(best_path) could not prepare statement.");
+                return Err(PathError::Unknown);
+            };
+
+            best_path_vertiport_source(stmt, client, request).await?
+        }
+        PathType::AircraftToPort => {
+            let Ok(stmt) = client.prepare_cached(&format!(
+                "SELECT * FROM arrow.best_path_a2p($1, $2, $3, $4);"
+            )).await else {
+                postgis_error!("(best_path) could not prepare statement.");
+                return Err(PathError::Unknown);
+            };
+
+            best_path_aircraft_source(stmt, client, request).await?
         }
     };
 

@@ -7,10 +7,12 @@ pub mod grpc_server {
 }
 
 use crate::postgis::aircraft::update_aircraft_position;
+use crate::postgis::best_path::best_path;
+use crate::postgis::nearest::nearest_neighbors;
 use crate::postgis::nofly::update_nofly;
-use crate::postgis::routing::{best_path, PathType};
 use crate::postgis::vertiport::update_vertiports;
 use crate::postgis::waypoint::update_waypoints;
+use crate::postgis::PathType;
 pub use grpc_server::rpc_service_server::{RpcService, RpcServiceServer};
 pub use grpc_server::NodeType;
 use grpc_server::{ReadyRequest, ReadyResponse};
@@ -135,6 +137,25 @@ impl RpcService for ServerImpl {
             }
             Err(e) => {
                 grpc_error!("(grpc best_path) error getting best path.");
+                Err(Status::internal(e.to_string()))
+            }
+        }
+    }
+
+    #[cfg(not(tarpaulin_include))]
+    async fn nearest_neighbors(
+        &self,
+        request: Request<grpc_server::NearestNeighborRequest>,
+    ) -> Result<Response<grpc_server::NearestNeighborResponse>, Status> {
+        grpc_debug!("(grpc nearest_neighbors) entry.");
+
+        match nearest_neighbors(request.into_inner(), self.pool.clone()).await {
+            Ok(distances) => {
+                let response = grpc_server::NearestNeighborResponse { distances };
+                Ok(Response::new(response))
+            }
+            Err(e) => {
+                grpc_error!("(grpc nearest_neighbors) error getting best path.");
                 Err(Status::internal(e.to_string()))
             }
         }
@@ -302,6 +323,24 @@ impl RpcService for ServerImpl {
             }
             Err(e) => {
                 grpc_error!("(grpc best_path MOCK) error getting best path.");
+                Err(Status::internal(e.to_string()))
+            }
+        }
+    }
+
+    #[cfg(not(tarpaulin_include))]
+    async fn nearest_neighbors(
+        &self,
+        request: Request<grpc_server::NearestNeighborRequest>,
+    ) -> Result<Response<grpc_server::NearestNeighborResponse>, Status> {
+        grpc_warn!("(grpc nearest_neighbors MOCK) entry.");
+        match nearest_neighbors(request.into_inner(), self.pool.clone()).await {
+            Ok(distances) => {
+                let response = grpc_server::NearestNeighborResponse { distances };
+                Ok(Response::new(response))
+            }
+            Err(e) => {
+                grpc_error!("(grpc nearest_neighbors MOCK) error getting nearest neighbors.");
                 Err(Status::internal(e.to_string()))
             }
         }

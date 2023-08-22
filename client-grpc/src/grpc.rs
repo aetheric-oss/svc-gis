@@ -191,6 +191,48 @@ pub struct BestPathResponse {
     #[prost(message, repeated, tag = "1")]
     pub segments: ::prost::alloc::vec::Vec<PathSegment>,
 }
+/// Nearest Neighbor Request object
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct NearestNeighborRequest {
+    /// Start Node - UUID for Vertiports, Callsigns for Aircraft
+    #[prost(string, tag = "1")]
+    pub start_node_id: ::prost::alloc::string::String,
+    /// Start Node Type (Vertiport or Aircraft Allowed)
+    #[prost(enumeration = "NodeType", tag = "2")]
+    pub start_type: i32,
+    /// End Node Type (Vertiport or Aircraft Allowed)
+    #[prost(enumeration = "NodeType", tag = "3")]
+    pub end_type: i32,
+    /// Limit to this many results
+    #[prost(int32, tag = "4")]
+    pub limit: i32,
+    /// Limit to this range
+    #[prost(float, tag = "5")]
+    pub max_range_meters: f32,
+}
+/// Distance to a node
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DistanceTo {
+    /// Vertiport or Aircraft ID
+    #[prost(string, tag = "1")]
+    pub label: ::prost::alloc::string::String,
+    /// Vertiport or Aircraft Type
+    #[prost(enumeration = "NodeType", tag = "2")]
+    pub target_type: i32,
+    /// Distance to vertiport
+    #[prost(float, tag = "3")]
+    pub distance_meters: f32,
+}
+/// Nearest Vertiports Request object
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct NearestNeighborResponse {
+    /// Distances to nearby objects
+    #[prost(message, repeated, tag = "1")]
+    pub distances: ::prost::alloc::vec::Vec<DistanceTo>,
+}
 /// Types of nodes in itinerary
 #[derive(num_derive::FromPrimitive)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
@@ -404,6 +446,25 @@ pub mod rpc_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static("/grpc.RpcService/bestPath");
+            self.inner.unary(request.into_request(), path, codec).await
+        }
+        pub async fn nearest_neighbors(
+            &mut self,
+            request: impl tonic::IntoRequest<super::NearestNeighborRequest>,
+        ) -> Result<tonic::Response<super::NearestNeighborResponse>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/grpc.RpcService/nearestNeighbors",
+            );
             self.inner.unary(request.into_request(), path, codec).await
         }
     }
