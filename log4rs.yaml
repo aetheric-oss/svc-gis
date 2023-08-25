@@ -7,7 +7,7 @@ appenders:
       pattern: "{d(%Y-%m-%d %H:%M:%S)} | {({l}):5.5} | {f}:{L} — {m}{n}"
   grpc_requests:
     kind: rolling_file
-    path: "log/grpc_requests.log"
+    path: "logs/grpc_requests.log"
     policy:
       trigger:
         kind: size
@@ -21,7 +21,7 @@ appenders:
       kind: json
   postgis:
     kind: rolling_file
-    path: "log/postgis.log"
+    path: "logs/postgis.log"
     policy:
       trigger:
         kind: size
@@ -29,6 +29,20 @@ appenders:
       roller:
         kind: fixed_window
         pattern: logs/postgis_{}.gz
+        count: 5
+        base: 1
+    encoder:
+      kind: json
+  tests:
+    kind: rolling_file
+    path: "logs/tests.log"
+    policy:
+      trigger:
+        kind: size
+        limit: 20mb
+      roller:
+        kind: fixed_window
+        pattern: logs/tests_{}.gz
         count: 5
         base: 1
     encoder:
@@ -48,3 +62,7 @@ loggers:
     level: info
     appenders:
       - postgis
+  test::unit:
+    level: info
+    appenders:
+      - tests

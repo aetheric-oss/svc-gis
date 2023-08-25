@@ -1,8 +1,30 @@
 #![doc = include_str!("../README.md")]
 
+#[cfg(test)]
+#[macro_use]
+pub mod test_util;
+
+use std::sync::Once;
+
 pub mod config;
 pub mod grpc;
 pub mod postgis;
+
+pub use crate::config::Config;
+
+static INIT_LOGGER: Once = Once::new();
+/// Initialize the logger with provided configuration
+pub fn init_logger(config: &Config) {
+    INIT_LOGGER.call_once(|| {
+        let log_cfg: &str = config.log_config.as_str();
+        if let Err(e) = log4rs::init_file(log_cfg, Default::default()) {
+            panic!(
+                "(logger) could not parse log config {} found in config {:?}: {}.",
+                log_cfg, config, e
+            );
+        }
+    });
+}
 
 /// Tokio signal handler that will wait for a user to press CTRL+C.
 /// This signal handler can be used in our [`axum::Server`] method `with_graceful_shutdown`

@@ -4,7 +4,6 @@
 use crate::grpc::server::grpc_server;
 use chrono::{DateTime, Utc};
 use grpc_server::NoFlyZone as RequestNoFlyZone;
-use lib_common::time::timestamp_to_datetime;
 
 /// Maximum length of a label
 const LABEL_MAX_LENGTH: usize = 100;
@@ -76,33 +75,8 @@ impl TryFrom<RequestNoFlyZone> for NoFlyZone {
             return Err(NoFlyZoneError::Label);
         }
 
-        let time_start = match &zone.time_start {
-            Some(ts) => match timestamp_to_datetime(ts) {
-                Some(dt) => Some(dt),
-                _ => {
-                    postgis_error!(
-                        "(try_from RequestNoFlyZone) failed to parse timestamp: {:?}",
-                        ts
-                    );
-                    return Err(NoFlyZoneError::Time);
-                }
-            },
-            _ => None,
-        };
-
-        let time_end = match &zone.time_end {
-            Some(ts) => match timestamp_to_datetime(ts) {
-                Some(dt) => Some(dt),
-                _ => {
-                    postgis_error!(
-                        "(try_from RequestNoFlyZone) failed to parse timestamp: {:?}",
-                        ts
-                    );
-                    return Err(NoFlyZoneError::Time);
-                }
-            },
-            _ => None,
-        };
+        let time_start = zone.time_start.map(Into::<DateTime<Utc>>::into);
+        let time_end = zone.time_end.map(Into::<DateTime<Utc>>::into);
 
         // The start time must be earlier than the end time if both are provided
         if let Some(ts) = time_start {

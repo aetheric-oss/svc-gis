@@ -2,7 +2,6 @@
 use crate::grpc::server::grpc_server::{BestPathRequest, NodeType, PathSegment};
 use crate::postgis::PathType;
 use chrono::{DateTime, Utc};
-use lib_common::time::timestamp_to_datetime;
 use uuid::Uuid;
 
 // TODO(R4): Include altitude, lanes, corridors
@@ -87,20 +86,14 @@ impl TryFrom<BestPathRequest> for PathRequest {
             Err(_) => return Err(PathError::InvalidEndNode),
         };
 
-        let time_start = match request.time_start {
+        let time_start: DateTime<Utc> = match request.time_start {
             None => chrono::Utc::now(),
-            Some(time) => match timestamp_to_datetime(&time) {
-                Some(time) => time,
-                None => return Err(PathError::InvalidStartTime),
-            },
+            Some(time) => time.into(),
         };
 
-        let time_end = match request.time_end {
+        let time_end: DateTime<Utc> = match request.time_end {
             None => chrono::Utc::now() + chrono::Duration::days(1),
-            Some(time) => match timestamp_to_datetime(&time) {
-                Some(time) => time,
-                None => return Err(PathError::InvalidEndTime),
-            },
+            Some(time) => time.into(),
         };
 
         if time_end < time_start {
@@ -265,7 +258,7 @@ mod tests {
     use super::*;
     use crate::grpc::server::grpc_server;
     use chrono::{Duration, Utc};
-    use lib_common::time::datetime_to_timestamp;
+    use prost_wkt_types::Timestamp;
 
     #[test]
     fn ut_request_valid() {
@@ -336,13 +329,8 @@ mod tests {
 
     #[test]
     fn ut_request_invalid_time_window() {
-        let Some(time_start) = datetime_to_timestamp(&Utc::now()) else {
-            panic!("(ut_request_invalid_time_window) could not convert time to timestamp.");
-        };
-
-        let Some(time_end) = datetime_to_timestamp(&(Utc::now() - Duration::seconds(1))) else {
-            panic!("(ut_request_invalid_time_window) could not convert time to timestamp.");
-        };
+        let time_start: Timestamp = Utc::now().into();
+        let time_end: Timestamp = (Utc::now() - Duration::seconds(1)).into();
 
         // Start time is after end time
         let request = BestPathRequest {
@@ -369,9 +357,8 @@ mod tests {
         assert_eq!(result, PathError::InvalidTimeWindow);
 
         // End time (assumed) is before start time
-        let Some(time_start) = datetime_to_timestamp(&(Utc::now() + Duration::days(10))) else {
-            panic!("(ut_request_invalid_time_window) could not convert time to timestamp.");
-        };
+        let time_start: Timestamp = (Utc::now() + Duration::days(10)).into();
+
         let request = BestPathRequest {
             node_start_id: uuid::Uuid::new_v4().to_string(),
             node_uuid_end: uuid::Uuid::new_v4().to_string(),
@@ -387,13 +374,8 @@ mod tests {
     #[test]
     fn ut_request_invalid_time_end() {
         // End time (assumed) is before start time
-        let Some(time_start) = datetime_to_timestamp(&(Utc::now() - Duration::days(10))) else {
-            panic!("(ut_request_invalid_time_end) could not convert time to timestamp.");
-        };
-
-        let Some(time_end) = datetime_to_timestamp(&(Utc::now() - Duration::seconds(1))) else {
-            panic!("(ut_request_invalid_time_end) could not convert time to timestamp.");
-        };
+        let time_start: Timestamp = (Utc::now() - Duration::days(10)).into();
+        let time_end: Timestamp = (Utc::now() - Duration::seconds(1)).into();
 
         // Won't route for a time in the past
         let request = BestPathRequest {

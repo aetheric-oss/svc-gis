@@ -3,7 +3,6 @@
 use crate::grpc::server::grpc_server;
 use chrono::{DateTime, Utc};
 use grpc_server::AircraftPosition as ReqAircraftPos;
-use lib_common::time::timestamp_to_datetime;
 use uuid::Uuid;
 
 use super::utils::StringError;
@@ -111,12 +110,7 @@ impl TryFrom<ReqAircraftPos> for AircraftPosition {
             return Err(AircraftError::Time);
         };
 
-        let Some(time) = timestamp_to_datetime(&time) else {
-            postgis_error!(
-                "(try_from ReqAircraftPos) Error converting timestamp to datetime."
-            );
-            return Err(AircraftError::Time);
-        };
+        let time: DateTime<Utc> = time.into();
 
         Ok(AircraftPosition {
             uuid,
@@ -197,14 +191,15 @@ mod tests {
     use super::*;
     use crate::grpc::server::grpc_server::Coordinates;
     use crate::postgis::utils;
+    use crate::{init_logger, Config};
     use chrono::Utc;
-    use deadpool_postgres::{Config, ManagerConfig, Pool, RecyclingMethod, Runtime};
-    use lib_common::time::datetime_to_timestamp;
+    use deadpool_postgres::{ManagerConfig, Pool, RecyclingMethod, Runtime};
+    use prost_wkt_types::Timestamp;
     use rand::{thread_rng, Rng};
     use tokio_postgres::NoTls;
 
     fn get_pool() -> Pool {
-        let mut cfg = Config::default();
+        let mut cfg = deadpool_postgres::Config::default();
         cfg.dbname = Some("deadpool".to_string());
         cfg.manager = Some(ManagerConfig {
             recycling_method: RecyclingMethod::Fast,
@@ -214,6 +209,9 @@ mod tests {
 
     #[test]
     fn ut_request_valid() {
+        init_logger(&Config::try_from_env().unwrap_or_default());
+        unit_test_info!("(ut_request_valid) start");
+
         let mut rng = thread_rng();
         let nodes = vec![
             ("Marauder", 52.3745905, 4.9160036),
@@ -233,7 +231,7 @@ mod tests {
                 }),
                 altitude_meters: rng.gen_range(0.0..2000.),
                 uuid: Some(Uuid::new_v4().to_string()),
-                time: datetime_to_timestamp(&Utc::now()),
+                time: Some(Into::<Timestamp>::into(Utc::now())),
             })
             .collect();
 
@@ -264,16 +262,20 @@ mod tests {
                 assert_eq!(converted[i].uuid, None);
             }
 
-            let time = aircraft.time.clone().expect("Expected Some time.");
-            let converted = datetime_to_timestamp(&converted[i].time)
-                .expect("Couldn't convert datetime to timestamp.");
+            let time: Timestamp = aircraft.time.clone().expect("Expected Some time.");
+            let converted: Timestamp = converted[i].time.into();
 
             assert_eq!(time, converted);
         }
+
+        unit_test_info!("(ut_request_valid) success");
     }
 
     #[tokio::test]
     async fn ut_client_failure() {
+        init_logger(&Config::try_from_env().unwrap_or_default());
+        unit_test_info!("(ut_client_failure) start");
+
         let nodes = vec![("aircraft", 52.3745905, 4.9160036)];
         let aircraft: Vec<ReqAircraftPos> = nodes
             .iter()
@@ -284,7 +286,7 @@ mod tests {
                     longitude: *longitude,
                 }),
                 uuid: Some(Uuid::new_v4().to_string()),
-                time: datetime_to_timestamp(&Utc::now()),
+                time: Some(Into::<Timestamp>::into(Utc::now())),
                 ..Default::default()
             })
             .collect();
@@ -293,10 +295,15 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(result, AircraftError::Unknown);
+
+        unit_test_info!("(ut_client_failure) success");
     }
 
     #[tokio::test]
     async fn ut_aircraft_request_to_gis_invalid_label() {
+        init_logger(&Config::try_from_env().unwrap_or_default());
+        unit_test_info!("(ut_aircraft_request_to_gis_invalid_label) start");
+
         for label in &[
             "NULL",
             "Aircraft;",
@@ -315,19 +322,29 @@ mod tests {
                 .unwrap_err();
             assert_eq!(result, AircraftError::Label);
         }
+
+        unit_test_info!("(ut_aircraft_request_to_gis_invalid_label) success");
     }
 
     #[tokio::test]
     async fn ut_aircraft_request_to_gis_invalid_no_nodes() {
+        init_logger(&Config::try_from_env().unwrap_or_default());
+        unit_test_info!("(ut_aircraft_request_to_gis_invalid_no_nodes) start");
+
         let aircraft: Vec<ReqAircraftPos> = vec![];
         let result = update_aircraft_position(aircraft, get_pool())
             .await
             .unwrap_err();
         assert_eq!(result, AircraftError::NoAircraft);
+
+        unit_test_info!("(ut_aircraft_request_to_gis_invalid_no_nodes) success");
     }
 
     #[tokio::test]
     async fn ut_aircraft_request_to_gis_invalid_location() {
+        init_logger(&Config::try_from_env().unwrap_or_default());
+        unit_test_info!("(ut_aircraft_request_to_gis_invalid_location) start");
+
         let coords = vec![(-90.1, 0.0), (90.1, 0.0), (0.0, -180.1), (0.0, 180.1)];
         for coord in coords {
             let aircraft: Vec<ReqAircraftPos> = vec![ReqAircraftPos {
@@ -356,6 +373,8 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(result, AircraftError::Location);
+
+        unit_test_info!("(ut_aircraft_request_to_gis_invalid_location) success");
     }
 
     #[tokio::test]

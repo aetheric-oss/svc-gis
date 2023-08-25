@@ -6,13 +6,7 @@ pub mod grpc_server {
     tonic::include_proto!("grpc");
 }
 
-use crate::postgis::aircraft::update_aircraft_position;
-use crate::postgis::best_path::best_path;
-use crate::postgis::nearest::nearest_neighbors;
-use crate::postgis::nofly::update_nofly;
-use crate::postgis::vertiport::update_vertiports;
-use crate::postgis::waypoint::update_waypoints;
-use crate::postgis::PathType;
+use crate::postgis::*;
 pub use grpc_server::rpc_service_server::{RpcService, RpcServiceServer};
 pub use grpc_server::NodeType;
 use grpc_server::{ReadyRequest, ReadyResponse};
@@ -52,7 +46,8 @@ impl RpcService for ServerImpl {
         grpc_debug!("(grpc update_vertiports) entry.");
 
         // Update nodes in PostGIS
-        match update_vertiports(request.into_inner().vertiports, self.pool.clone()).await {
+        match vertiport::update_vertiports(request.into_inner().vertiports, self.pool.clone()).await
+        {
             Ok(_) => Ok(Response::new(grpc_server::UpdateResponse { updated: true })),
             Err(e) => {
                 grpc_error!("(grpc update_vertiports) error updating vertiports.");
@@ -69,7 +64,7 @@ impl RpcService for ServerImpl {
         grpc_debug!("(grpc update_waypoints) entry.");
 
         // Update nodes in PostGIS
-        match update_waypoints(request.into_inner().waypoints, self.pool.clone()).await {
+        match waypoint::update_waypoints(request.into_inner().waypoints, self.pool.clone()).await {
             Ok(_) => Ok(Response::new(grpc_server::UpdateResponse { updated: true })),
             Err(e) => {
                 grpc_error!("(grpc update_waypoints) error updating nodes.");
@@ -86,7 +81,7 @@ impl RpcService for ServerImpl {
         grpc_debug!("(grpc update_no_fly_zones) entry.");
 
         // Update nodes in PostGIS
-        match update_nofly(request.into_inner().zones, self.pool.clone()).await {
+        match nofly::update_nofly(request.into_inner().zones, self.pool.clone()).await {
             Ok(_) => Ok(Response::new(grpc_server::UpdateResponse { updated: true })),
             Err(e) => {
                 grpc_error!("(grpc update_no_fly_zones) error updating zones.");
@@ -100,12 +95,14 @@ impl RpcService for ServerImpl {
         &self,
         request: Request<grpc_server::UpdateAircraftPositionRequest>,
     ) -> Result<Response<grpc_server::UpdateResponse>, Status> {
-        grpc_debug!("(grpc update_aircraft) entry.");
+        grpc_debug!("(grpc update_aircraft_position) entry.");
         // Update aircraft in PostGIS
-        match update_aircraft_position(request.into_inner().aircraft, self.pool.clone()).await {
+        match aircraft::update_aircraft_position(request.into_inner().aircraft, self.pool.clone())
+            .await
+        {
             Ok(_) => Ok(Response::new(grpc_server::UpdateResponse { updated: true })),
             Err(e) => {
-                grpc_error!("(grpc update_aircraft) error updating aircraft.");
+                grpc_error!("(grpc update_aircraft_position) error updating aircraft.");
                 Err(Status::internal(e.to_string()))
             }
         }
@@ -130,7 +127,7 @@ impl RpcService for ServerImpl {
             }
         };
 
-        match best_path(path_type, request, self.pool.clone()).await {
+        match best_path::best_path(path_type, request, self.pool.clone()).await {
             Ok(segments) => {
                 let response = grpc_server::BestPathResponse { segments };
                 Ok(Response::new(response))
@@ -149,7 +146,7 @@ impl RpcService for ServerImpl {
     ) -> Result<Response<grpc_server::NearestNeighborResponse>, Status> {
         grpc_debug!("(grpc nearest_neighbors) entry.");
 
-        match nearest_neighbors(request.into_inner(), self.pool.clone()).await {
+        match nearest::nearest_neighbors(request.into_inner(), self.pool.clone()).await {
             Ok(distances) => {
                 let response = grpc_server::NearestNeighborResponse { distances };
                 Ok(Response::new(response))
@@ -170,7 +167,7 @@ impl RpcService for ServerImpl {
 /// use svc_gis::config::Config;
 /// use deadpool_postgres::{tokio_postgres::NoTls, Runtime};
 /// async fn example() -> Result<(), tokio::task::JoinError> {
-///     let config = Config::from_env().unwrap();
+///     let config = Config::try_from_env().unwrap();
 ///     let pool = config.pg.create_pool(Some(Runtime::Tokio1), NoTls).unwrap();
 ///     tokio::spawn(grpc_server(config, None, pool)).await
 /// }
@@ -233,68 +230,41 @@ impl RpcService for ServerImpl {
     #[cfg(not(tarpaulin_include))]
     async fn update_vertiports(
         &self,
-        request: Request<grpc_server::UpdateVertiportsRequest>,
+        _request: Request<grpc_server::UpdateVertiportsRequest>,
     ) -> Result<Response<grpc_server::UpdateResponse>, Status> {
         grpc_warn!("(grpc update_vertiports MOCK) entry.");
 
-        // Update nodes in PostGIS
-        match update_vertiports(request.into_inner().vertiports, self.pool.clone()).await {
-            Ok(_) => Ok(Response::new(grpc_server::UpdateResponse { updated: true })),
-            Err(e) => {
-                grpc_error!("(grpc update_vertiports MOCK) error updating vertiports.");
-                Err(Status::internal(e.to_string()))
-            }
-        }
+        Ok(Response::new(grpc_server::UpdateResponse { updated: true }))
     }
 
     #[cfg(not(tarpaulin_include))]
     async fn update_waypoints(
         &self,
-        request: Request<grpc_server::UpdateWaypointsRequest>,
+        _request: Request<grpc_server::UpdateWaypointsRequest>,
     ) -> Result<Response<grpc_server::UpdateResponse>, Status> {
         grpc_warn!("(grpc update_waypoints MOCK) entry.");
 
-        // Update nodes in PostGIS
-        match update_waypoints(request.into_inner().waypoints, self.pool.clone()).await {
-            Ok(_) => Ok(Response::new(grpc_server::UpdateResponse { updated: true })),
-            Err(e) => {
-                grpc_error!("(grpc update_waypoints MOCK) error updating nodes.");
-                Err(Status::internal(e.to_string()))
-            }
-        }
+        Ok(Response::new(grpc_server::UpdateResponse { updated: true }))
     }
 
     #[cfg(not(tarpaulin_include))]
     async fn update_no_fly_zones(
         &self,
-        request: Request<grpc_server::UpdateNoFlyZonesRequest>,
+        _request: Request<grpc_server::UpdateNoFlyZonesRequest>,
     ) -> Result<Response<grpc_server::UpdateResponse>, Status> {
         grpc_warn!("(grpc update_no_fly_zones MOCK) entry.");
 
-        // Update nodes in PostGIS
-        match update_nofly(request.into_inner().zones, self.pool.clone()).await {
-            Ok(_) => Ok(Response::new(grpc_server::UpdateResponse { updated: true })),
-            Err(e) => {
-                grpc_error!("(grpc update_no_fly_zones MOCK) error updating zones.");
-                Err(Status::invalid_argument(e.to_string()))
-            }
-        }
+        Ok(Response::new(grpc_server::UpdateResponse { updated: true }))
     }
 
     #[cfg(not(tarpaulin_include))]
     async fn update_aircraft_position(
         &self,
-        request: Request<grpc_server::UpdateAircraftPositionRequest>,
+        _request: Request<grpc_server::UpdateAircraftPositionRequest>,
     ) -> Result<Response<grpc_server::UpdateResponse>, Status> {
-        grpc_warn!("(grpc update_aircraft MOCK) entry.");
-        // Update aircraft in PostGIS
-        match update_aircraft_position(request.into_inner().aircraft, self.pool.clone()).await {
-            Ok(_) => Ok(Response::new(grpc_server::UpdateResponse { updated: true })),
-            Err(e) => {
-                grpc_error!("(grpc update_aircraft MOCK) error updating aircraft.");
-                Err(Status::internal(e.to_string()))
-            }
-        }
+        grpc_warn!("(grpc update_aircraft_position MOCK) entry.");
+
+        Ok(Response::new(grpc_server::UpdateResponse { updated: true }))
     }
 
     #[cfg(not(tarpaulin_include))]
@@ -316,7 +286,7 @@ impl RpcService for ServerImpl {
             }
         };
 
-        match best_path(path_type, request, self.pool.clone()).await {
+        match best_path::best_path(path_type, request, self.pool.clone()).await {
             Ok(segments) => {
                 let response = grpc_server::BestPathResponse { segments };
                 Ok(Response::new(response))
@@ -334,7 +304,7 @@ impl RpcService for ServerImpl {
         request: Request<grpc_server::NearestNeighborRequest>,
     ) -> Result<Response<grpc_server::NearestNeighborResponse>, Status> {
         grpc_warn!("(grpc nearest_neighbors MOCK) entry.");
-        match nearest_neighbors(request.into_inner(), self.pool.clone()).await {
+        match nearest::nearest_neighbors(request.into_inner(), self.pool.clone()).await {
             Ok(distances) => {
                 let response = grpc_server::NearestNeighborResponse { distances };
                 Ok(Response::new(response))
