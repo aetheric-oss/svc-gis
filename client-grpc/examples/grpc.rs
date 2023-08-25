@@ -3,18 +3,7 @@
 
 use chrono::{Duration, Utc};
 use lib_common::grpc::get_endpoint_from_env;
-use lib_common::time::datetime_to_timestamp;
-use svc_gis_client_grpc::client::BestPathRequest;
-use svc_gis_client_grpc::client::NearestNeighborRequest;
-use svc_gis_client_grpc::client::NodeType;
-#[allow(unused_qualifications, missing_docs)]
-use svc_gis_client_grpc::client::{
-    rpc_service_client::RpcServiceClient, Coordinates, ReadyRequest,
-};
-use svc_gis_client_grpc::client::{AircraftPosition, UpdateAircraftPositionRequest};
-use svc_gis_client_grpc::client::{NoFlyZone, UpdateNoFlyZonesRequest};
-use svc_gis_client_grpc::client::{UpdateVertiportsRequest, Vertiport};
-use svc_gis_client_grpc::client::{UpdateWaypointsRequest, Waypoint};
+use svc_gis_client_grpc::prelude::{gis::*, *};
 use uuid::Uuid;
 
 const VERTIPORT_1_UUID: &str = "00000000-0000-0000-0000-000000000000";
@@ -23,14 +12,7 @@ const VERTIPORT_3_UUID: &str = "00000000-0000-0000-0000-000000000003";
 const AIRCRAFT_1_UUID: &str = "00000000-0000-0000-0000-000000000002";
 const AIRCRAFT_1_LABEL: &str = "Marauder";
 
-/// Provide endpoint url to use
-pub fn get_endpoint() -> String {
-    let (host, port) = get_endpoint_from_env("SERVER_HOSTNAME", "SERVER_PORT_GRPC");
-    format!("http://{host}:{port}")
-}
-
-async fn add_vertiports(endpoint: String) -> Result<(), Box<dyn std::error::Error>> {
-    let mut client = RpcServiceClient::connect(endpoint).await?;
+async fn add_vertiports(client: &GisClient) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n\u{1F6EB} Add Vertiports");
     let vertiports = vec![
         Vertiport {
@@ -87,16 +69,16 @@ async fn add_vertiports(endpoint: String) -> Result<(), Box<dyn std::error::Erro
         },
     ];
 
-    let request = tonic::Request::new(UpdateVertiportsRequest { vertiports });
-    let response = client.update_vertiports(request).await?;
+    let response = client
+        .update_vertiports(UpdateVertiportsRequest { vertiports })
+        .await?;
 
     println!("RESPONSE={:?}", response.into_inner());
 
     Ok(())
 }
 
-async fn add_waypoints(endpoint: String) -> Result<(), Box<dyn std::error::Error>> {
-    let mut client = RpcServiceClient::connect(endpoint).await?;
+async fn add_waypoints(client: &GisClient) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n\u{1F4CD} Add Waypoints");
     let nodes = vec![
         ("ORANGE", 52.3745905, 4.9160036),
@@ -117,18 +99,17 @@ async fn add_waypoints(endpoint: String) -> Result<(), Box<dyn std::error::Error
         })
         .collect();
 
-    let request = tonic::Request::new(UpdateWaypointsRequest { waypoints });
-    let response = client.update_waypoints(request).await?;
+    let response = client
+        .update_waypoints(UpdateWaypointsRequest { waypoints })
+        .await?;
 
     println!("RESPONSE={:?}", response.into_inner());
 
     Ok(())
 }
 
-async fn add_aircraft(endpoint: String) -> Result<(), Box<dyn std::error::Error>> {
+async fn add_aircraft(client: &GisClient) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n\u{1F681} Add Aircraft");
-
-    let mut client = RpcServiceClient::connect(endpoint).await?;
 
     let aircraft: Vec<(Option<String>, &str, f32, f32)> = vec![
         (
@@ -158,12 +139,13 @@ async fn add_aircraft(endpoint: String) -> Result<(), Box<dyn std::error::Error>
                 latitude: *latitude,
                 longitude: *longitude,
             }),
-            time: datetime_to_timestamp(&Utc::now()),
+            time: Some(Into::<Timestamp>::into(Utc::now())),
         })
         .collect();
 
-    let request = tonic::Request::new(UpdateAircraftPositionRequest { aircraft });
-    let response = client.update_aircraft_position(request).await?;
+    let response = client
+        .update_aircraft_position(UpdateAircraftPositionRequest { aircraft })
+        .await?;
 
     println!("RESPONSE={:?}", response.into_inner());
 
@@ -173,30 +155,38 @@ async fn add_aircraft(endpoint: String) -> Result<(), Box<dyn std::error::Error>
 /// Example svc-gis-client-grpc
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let endpoint = get_endpoint();
-    println!("Using endpoint: {}", endpoint);
-
+    let (host, port) = get_endpoint_from_env("SERVER_HOSTNAME", "SERVER_PORT_GRPC");
+    let client = GisClient::new_client(&host, port, "gis");
+    println!("Client created");
     println!(
         "NOTE: Ensure the server is running on {} or this example will fail.",
-        endpoint
+        client.get_address()
     );
 
-    add_aircraft(endpoint.clone()).await?;
-    add_vertiports(endpoint.clone()).await?;
-    add_waypoints(endpoint.clone()).await?;
+    {
+        println!("\n\u{1F44D} Ready Check");
+        let response = client.is_ready(ReadyRequest {}).await?.into_inner();
 
-    let mut client = RpcServiceClient::connect(endpoint).await?;
+        println!("RESPONSE={:?}", response);
+        assert_eq!(response.ready, true);
+    }
+
+    add_aircraft(&client).await?;
+    add_vertiports(&client).await?;
+    add_waypoints(&client).await?;
 
     // Best Path Without No-Fly Zone
     {
         println!("\n\u{1F426} Best Path WITHOUT Temporary No-Fly Zone");
-        let request = tonic::Request::new(BestPathRequest {
+        let time_start: Timestamp = Utc::now().into();
+        let time_end: Timestamp = (Utc::now() + Duration::hours(2)).into();
+        let request = BestPathRequest {
             node_start_id: VERTIPORT_1_UUID.to_string(),
             node_uuid_end: VERTIPORT_2_UUID.to_string(),
             start_type: NodeType::Vertiport as i32,
-            time_start: datetime_to_timestamp(&Utc::now()),
-            time_end: datetime_to_timestamp(&(Utc::now() + Duration::hours(2))),
-        });
+            time_start: Some(time_start),
+            time_end: Some(time_end),
+        };
 
         let response = client.best_path(request).await?.into_inner();
 
@@ -232,11 +222,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             })
             .collect();
 
+        let time_start: Timestamp = no_fly_start_time.into();
+        let time_end: Timestamp = no_fly_end_time.into();
         zones.push(NoFlyZone {
             label: "NL-NFZ-01".to_string(),
             vertices,
-            time_start: datetime_to_timestamp(&no_fly_start_time),
-            time_end: datetime_to_timestamp(&no_fly_end_time),
+            time_start: Some(time_start),
+            time_end: Some(time_end),
         });
 
         // No Fly 2
@@ -271,9 +263,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             time_end: None,
         });
 
-        let request = tonic::Request::new(UpdateNoFlyZonesRequest { zones });
-
-        let response = client.update_no_fly_zones(request).await?;
+        let response = client
+            .update_no_fly_zones(UpdateNoFlyZonesRequest { zones })
+            .await?;
 
         println!("RESPONSE={:?}", response.into_inner());
     }
@@ -281,13 +273,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Best Path During Temporary No-Fly Zone
     {
         println!("\n\u{26D4}\u{1F681} Best Path DURING Temporary No-Fly Zone");
-        let request = tonic::Request::new(BestPathRequest {
+        let time_start: Timestamp = no_fly_start_time.into();
+        let time_end: Timestamp = (no_fly_start_time + Duration::hours(1)).into();
+        let request = BestPathRequest {
             node_start_id: VERTIPORT_1_UUID.to_string(),
             node_uuid_end: VERTIPORT_2_UUID.to_string(),
             start_type: NodeType::Vertiport as i32,
-            time_start: datetime_to_timestamp(&no_fly_start_time),
-            time_end: datetime_to_timestamp(&(no_fly_start_time + Duration::hours(1))),
-        });
+            time_start: Some(time_start),
+            time_end: Some(time_end),
+        };
 
         let response = client.best_path(request).await?.into_inner();
 
@@ -301,13 +295,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Best Path After Temporary No-Fly Zone
     {
         println!("\n\u{1F681} Best Path AFTER Temporary No-Fly Zone Expires");
-        let request = tonic::Request::new(BestPathRequest {
+        let time_start: Timestamp = (no_fly_end_time + Duration::seconds(1)).into();
+        let time_end: Timestamp = (no_fly_end_time + Duration::hours(1)).into();
+        let request = BestPathRequest {
             node_start_id: VERTIPORT_1_UUID.to_string(),
             node_uuid_end: VERTIPORT_2_UUID.to_string(),
             start_type: NodeType::Vertiport as i32,
-            time_start: datetime_to_timestamp(&(no_fly_end_time + Duration::seconds(1))),
-            time_end: datetime_to_timestamp(&(no_fly_end_time + Duration::hours(1))),
-        });
+            time_start: Some(time_start),
+            time_end: Some(time_end),
+        };
 
         let response = client.best_path(request).await?.into_inner();
 
@@ -321,13 +317,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Best Path From Aircraft
     {
         println!("\n\u{1F681} Best Path From Aircraft during TFR");
-        let request = tonic::Request::new(BestPathRequest {
+        let time_start: Timestamp = no_fly_start_time.into();
+        let time_end: Timestamp = (no_fly_start_time + Duration::hours(1)).into();
+        let request = BestPathRequest {
             node_start_id: AIRCRAFT_1_LABEL.to_string(),
             node_uuid_end: VERTIPORT_2_UUID.to_string(),
             start_type: NodeType::Aircraft as i32,
-            time_start: datetime_to_timestamp(&no_fly_start_time),
-            time_end: datetime_to_timestamp(&(no_fly_start_time + Duration::hours(1))),
-        });
+            time_start: Some(time_start),
+            time_end: Some(time_end),
+        };
 
         let response = client.best_path(request).await?.into_inner();
 
@@ -349,8 +347,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             max_range_meters: 3000.0,
         };
 
-        let request = tonic::Request::new(request);
-
         let response = client.nearest_neighbors(request).await?.into_inner();
 
         println!("RESPONSE={:?}", response);
@@ -371,8 +367,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             max_range_meters: 3000.0,
         };
 
-        let request = tonic::Request::new(request);
-
         let response = client.nearest_neighbors(request).await?.into_inner();
 
         println!("RESPONSE={:?}", response);
@@ -380,16 +374,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "\x1b[33;3m{} nearest neighbors(s).\x1b[0m",
             response.distances.len()
         );
-    }
-
-    {
-        println!("\n\u{1F44D} Ready Check");
-        let response = client
-            .is_ready(tonic::Request::new(ReadyRequest {}))
-            .await?
-            .into_inner();
-
-        println!("RESPONSE={:?}", response);
     }
 
     Ok(())

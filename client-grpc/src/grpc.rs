@@ -75,7 +75,7 @@ pub struct AircraftPosition {
     pub altitude_meters: f32,
     /// Telemetry Report Time
     #[prost(message, optional, tag = "4")]
-    pub time: ::core::option::Option<::prost_types::Timestamp>,
+    pub time: ::core::option::Option<::prost_wkt_types::Timestamp>,
     /// Aircraft UUID, if available
     #[prost(string, optional, tag = "5")]
     pub uuid: ::core::option::Option<::prost::alloc::string::String>,
@@ -109,10 +109,10 @@ pub struct NoFlyZone {
     pub vertices: ::prost::alloc::vec::Vec<Coordinates>,
     /// Start datetime for this zone
     #[prost(message, optional, tag = "3")]
-    pub time_start: ::core::option::Option<::prost_types::Timestamp>,
+    pub time_start: ::core::option::Option<::prost_wkt_types::Timestamp>,
     /// End datetime for this zone
     #[prost(message, optional, tag = "4")]
-    pub time_end: ::core::option::Option<::prost_types::Timestamp>,
+    pub time_end: ::core::option::Option<::prost_wkt_types::Timestamp>,
 }
 /// Update No Fly Zones Request object
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -178,10 +178,10 @@ pub struct BestPathRequest {
     pub start_type: i32,
     /// Time of departure
     #[prost(message, optional, tag = "4")]
-    pub time_start: ::core::option::Option<::prost_types::Timestamp>,
+    pub time_start: ::core::option::Option<::prost_wkt_types::Timestamp>,
     /// Time of arrival
     #[prost(message, optional, tag = "5")]
-    pub time_end: ::core::option::Option<::prost_types::Timestamp>,
+    pub time_end: ::core::option::Option<::prost_wkt_types::Timestamp>,
 }
 /// Best Path Response object
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -234,9 +234,6 @@ pub struct NearestNeighborResponse {
     pub distances: ::prost::alloc::vec::Vec<DistanceTo>,
 }
 /// Types of nodes in itinerary
-#[derive(postgres_types::FromSql)]
-#[derive(num_derive::FromPrimitive)]
-#[postgres(name = "nodetype")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum NodeType {
