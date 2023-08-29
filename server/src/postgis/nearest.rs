@@ -197,7 +197,7 @@ pub async fn nearest_neighbors(
             nearest_neighbor_aircraft_source(stmt, client, request).await?
         }
         _ => {
-            postgis_error!("(grpc nearest_neighbors) unsupported path type");
+            postgis_error!("(grpc nearest_neighbors) unsupported path type.");
             return Err(NNError::Unsupported);
         }
     };

@@ -1,6 +1,5 @@
 //! gRPC client helpers implementation
 
-// FIXME import other microservices' GRPC clients
 // pub use svc_storage_client_grpc::adsb::rpc_service_client::RpcServiceClient as AdsbClient;
 use futures::lock::Mutex;
 use std::sync::Arc;
@@ -10,13 +9,13 @@ pub use tonic::transport::Channel;
 #[derive(Clone, Debug)]
 #[allow(missing_copy_implementations)]
 pub struct GrpcClients {
-    // FIXME clients here
     // pub adsb: GrpcClient<AdsbClient<Channel>>,
 }
 
 /// Struct to define a gRPC client
-#[allow(dead_code)]
+/// Allow dead code in R3, doesn't have access to other services yet
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct GrpcClient<T> {
     inner: Arc<Mutex<Option<T>>>,
     address: String,
@@ -24,10 +23,8 @@ pub struct GrpcClient<T> {
 
 /// Returns a string in http://host:port format from provided
 /// environment variables
-/// #[allow(dead_code)]
-#[allow(dead_code)]
 fn get_grpc_endpoint(env_host: &str, env_port: &str) -> String {
-    grpc_debug!("(get_grpc_endpoint) entry");
+    grpc_debug!("(get_grpc_endpoint) entry.");
     let port = match std::env::var(env_port) {
         Ok(s) => s,
         Err(_) => {
@@ -50,7 +47,6 @@ fn get_grpc_endpoint(env_host: &str, env_port: &str) -> String {
 
 impl<T> GrpcClient<T> {
     /// Invalidates a gRPC client by setting it to [`None`]
-    #[allow(dead_code)]
     pub async fn invalidate(&mut self) {
         let arc = Arc::clone(&self.inner);
         let mut client = arc.lock().await;
@@ -72,7 +68,7 @@ macro_rules! grpc_client {
     ( $client: ident, $name: expr ) => {
         impl GrpcClient<$client<Channel>> {
             pub async fn get_client(&mut self) -> Option<$client<Channel>> {
-                grpc_debug!("(get_client) {} entry", $name);
+                grpc_debug!("(get_client) {} entry.", $name);
 
                 let arc = Arc::clone(&self.inner);
 
@@ -112,14 +108,12 @@ macro_rules! grpc_client {
     };
 }
 
-// FIXME - call grpc_client macro for all required clients here. Eg:
 // grpc_client!(AdsbClient, "adsb");
 
 impl Default for GrpcClients {
     /// Creates default clients
     fn default() -> Self {
         GrpcClients {
-            // FIXME - add other clients here
             // adsb: GrpcClient::<AdsbClient<Channel>>::new("ADSB_HOST_GRPC", "ADSB_PORT_GRPC"),
         }
     }

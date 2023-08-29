@@ -30,37 +30,40 @@ Document | Description
 
 Attribute | Applies | Explanation
 --- | --- | ---
-Safety Critical | ? | 
-Realtime | ? |
+Safety Critical | Y | This module gates access to the PostGIS database which will be used to calculate potential collisions from current aircraft positions. 
 
 ## Global Variables
 
-**Statically Allocated Queues**
+None
 
-FIXME
-
-## Logic
+## Logic 
 
 ### Initialization
 
-FIXME Description of activities at init
+At initialization this service creates two servers on separate threads: a GRPC server and a REST server.
 
-### Loop
+The REST server expects the following environment variables to be set:
+- `DOCKER_PORT_REST` (default: `8000`)
 
-FIXME Description of activities during loop
+The GRPC server expects the following environment variables to be set:
+- `DOCKER_PORT_GRPC` (default: `50051`)
+
+### Control Loop
+
+As a REST and GRPC server, this service awaits requests and executes handlers.
+
+Some handlers **require** the following environment variables to be set:
+- PG__USER
+- PG__DBNAME
+- PG__HOST
+- PG__PORT
+- PG__SSLMODE
+- DB_CA_CERT
+- DB_CLIENT_CERT
+- DB_CLIENT_KEY
+
+This information allows `svc-gis` to connect to the PostgreSQL database.
 
 ### Cleanup
 
-FIXME Description of activities at cleanup
-
-## Interface Handlers
-
-FIXME - What internal activities are triggered by messages at this module's interfaces?
-
-## Tests
-
-FIXME
-
-### Unit Tests
-
-FIXME
+None

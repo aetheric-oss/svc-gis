@@ -20,6 +20,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create gRPC server
     let _ = tokio::spawn(grpc::server::grpc_server(config, None, pool.clone())).await;
 
-    info!("Server shutdown.");
+    info!("(main) server shutdown.");
     Ok(())
 }

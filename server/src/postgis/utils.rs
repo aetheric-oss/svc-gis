@@ -78,7 +78,10 @@ pub fn check_string(string: &str, regex: &str, allowed_length: usize) -> Result<
         return Err(StringError::InvalidLength);
     }
 
-    let re = regex::Regex::new(regex).unwrap();
+    let Ok(re) = regex::Regex::new(regex) else {
+        return Err(StringError::InvalidRegex);
+    };
+
     if !re.is_match(string) {
         return Err(StringError::InvalidRegex);
     }
