@@ -1,12 +1,8 @@
+![Arrow Banner](https://github.com/Arrow-air/tf-github/raw/main/src/templates/doc-banner-services.png)
+
 # Software Design Document (SDD) - `svc-gis` 
 
-<center>
-
-<img src="https://github.com/Arrow-air/tf-github/raw/main/src/templates/doc-banner-services.png" style="height:250px" />
-
-</center>
-
-## Overview
+## :telescope: Overview
 
 This document details the software implementation of svc-gis.
 
@@ -16,7 +12,7 @@ Attribute | Description
 --- | ---
 Status | Draft
 
-## Related Documents
+## :books: Related Documents
 
 Document | Description
 --- | ---
@@ -26,17 +22,17 @@ Document | Description
 [Concept of Operations - `svc-gis`](./conops.md) | Defines the motivation and duties of this microservice.
 [Interface Control Document (ICD) - `svc-gis`](./icd.md) | Defines the inputs and outputs of this microservice.
 
-## Module Attributes
+## :dna: Module Attributes
 
 Attribute | Applies | Explanation
 --- | --- | ---
 Safety Critical | Y | This module gates access to the PostGIS database which will be used to calculate potential collisions from current aircraft positions. 
 
-## Global Variables
+## :globe_with_meridians: Global Variables
 
 None
 
-## Logic 
+## :gear: Logic
 
 ### Initialization
 
@@ -67,3 +63,160 @@ This information allows `svc-gis` to connect to the PostgreSQL database.
 ### Cleanup
 
 None
+
+## :speech_balloon: gRPC Handlers
+
+See [the ICD](./icd.md) for this microservice.
+
+### updateVertiports
+
+```mermaid
+sequenceDiagram
+    participant client as svc-scheduler
+    participant gis as svc-gis
+    participant postgis as PostGIS
+
+    note over client: test
+```
+
+### updateWaypoints
+
+
+```mermaid
+sequenceDiagram
+    participant client as svc-compliance
+    participant gis as svc-gis
+    participant postgis as PostGIS
+
+    note over client: receive adsb data
+    client->>+gis: updateWaypoints
+    note over gis: process
+    alt invalid request
+    gis->>+client: error
+    end
+    
+    alt for_each waypoint
+    gis->>+postgis: update_waypoint
+    
+    note over postgis: create or update waypoint<br>geometry
+    postgis->>+gis: success or error
+    end
+
+    note over gis: any failures will roll<br>back the entire transaction
+    
+    gis->>client: UpdateResponse
+```
+
+### updateNoFlyZones
+
+```mermaid
+sequenceDiagram
+    participant client as svc-compliance
+    participant gis as svc-gis
+    participant postgis as PostGIS
+
+    note over client: receive adsb data
+    client->>+gis: updateNoFlyZones
+    note over gis: process
+    alt invalid request
+    gis->>+client: error
+    end
+    
+    alt for_each no-fly zone
+    gis->>+postgis: update_nofly
+    note over postgis: create or update no fly zone<br>time window and geometry
+    
+    postgis->>+gis: success or error
+    end
+
+    note over gis: any errors will roll back<br>entire transaction
+
+    gis->>client: UpdateResponse
+```
+
+### updateAircraftPosition
+
+```mermaid
+sequenceDiagram
+    participant client as svc-telemetry
+    participant gis as svc-gis
+    participant postgis as PostGIS
+
+    note over client: receive adsb data
+    client->>+gis: updateAircraftPosition
+    note over gis: process
+    alt invalid request
+    gis->>+client: error
+    end
+
+    gis->>+postgis: update_aircraft_position
+    
+    alt Aircraft does not exist
+    note over postgis: add aircraft as node
+    end
+
+    alt Aircraft exists
+    note over postgis: Update geom, altitude, uuid
+    end
+    
+    postgis->>+gis: success or error
+    gis->>client: UpdateResponse
+```
+
+### bestPath
+
+```mermaid
+sequenceDiagram
+    participant scheduler as svc-scheduler
+    participant gis as svc-gis
+    participant postgis as PostGIS
+
+    scheduler->>+gis: bestPath(...)
+    note over gis: process
+    alt invalid request
+    gis->>+scheduler: error
+    end
+    alt vertiport to vertiport
+    gis->>+postgis: best_path_p2p
+    end
+
+    alt aircraft to vertiport
+    gis->>+postgis: best_path_a2p
+    end
+
+    note over postgis: best_path(...)
+
+    postgis->>+gis: Array<(start coordinates, end coordinates, meter distance)>
+
+    gis->>+scheduler: BestPathResponse
+```
+
+### nearestNeighbors
+
+:warning: This nearest neighbor search is not used in R3 and will be reworked in R4.
+
+```mermaid
+sequenceDiagram
+    participant scheduler as svc-scheduler
+    participant gis as svc-gis
+    participant postgis as PostGIS
+
+    scheduler->>+gis: nearestNeighbors(...)
+    note over gis: process
+    alt invalid request
+    gis->>+scheduler: error
+    end
+    alt vertiport to vertiport
+    gis->>+postgis: nearest_vertiports_to_vertiport
+    end
+
+    alt aircraft to vertiport
+    gis->>+postgis: nearest_vertiports_to_aircraft
+    end
+
+    note over postgis: SELECT (...) as a <br>ORDER BY a.distance_meters
+
+    postgis->>+gis: Array<(Vertiport UUIDs)>
+
+    gis->>+scheduler: NearestNeighborResponse
+```

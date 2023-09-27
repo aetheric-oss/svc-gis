@@ -1,23 +1,19 @@
+![Arrow Banner](https://github.com/Arrow-air/tf-github/raw/main/src/templates/doc-banner-services.png)
+
 # Concept of Operations - `svc-gis`
-
-<center>
-
-<img src="https://github.com/Arrow-air/tf-github/raw/main/src/templates/doc-banner-services.png" style="height:250px" />
-
-</center>
 
 Attribute | Description
 --- | ---
 Maintainer | [@Arrow-air/services](https://github.com/orgs/Arrow-air/teams)
 Status | Draft
 
-## Overview
+## :telescope: Overview
 
 This microservice is the abstraction layer for the PostGIS database.
 
 It provides a limited interface for other microservices to perform specific actions within PostGIS. It provides a level of safety as it prevents other microservices from making SQL calls directly to the database.
 
-## Related Documents
+## :books: Related Documents
 
 Document | Description
 --- | ---

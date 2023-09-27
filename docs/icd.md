@@ -1,12 +1,8 @@
+![Arrow Banner](https://github.com/Arrow-air/tf-github/raw/main/src/templates/doc-banner-services.png)
+
 # Interface Control Document (ICD) - `svc-gis`
 
-<center>
-
-<img src="https://github.com/Arrow-air/tf-github/raw/main/src/templates/doc-banner-services.png" style="height:250px" />
-
-</center>
-
-## Overview
+## :telescope: Overview
 
 This document defines the gRPC and REST interfaces unique to the `svc-gis` microservice.
 
@@ -14,7 +10,7 @@ Attribute | Description
 --- | ---
 Status | Draft
 
-## Related Documents
+## :books: Related Documents
 
 Document | Description
 --- | ---
@@ -24,15 +20,15 @@ Document | Description
 [Concept of Operations - `svc-gis`](./conops.md) | Defines the motivation and duties of this microservice.
 [Software Design Document (SDD) - `svc-gis`](./sdd.md) | Specifies the internal activity of this microservice.
 
-## Frameworks
+## :hammer: Frameworks
 
 See the High-Level ICD.
 
-## REST
+## :speech_balloon: REST
 
 This microservice implements no additional REST endpoints beyond the common REST interfaces (see High-Level ICD).
 
-## gRPC
+## :speech_balloon: gRPC
 
 ### Files
 
