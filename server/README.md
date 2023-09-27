@@ -10,6 +10,6 @@
 ![Arrow DAO
 Discord](https://img.shields.io/discord/853833144037277726?style=plastic)
 
-## :telescope: Overview
+## Overview
 
 Abstraction layer to the PostGIS interface.

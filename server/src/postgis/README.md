@@ -1,12 +1,12 @@
-# :earth_africa: PostGIS Server
+# PostGIS Server
 
-## :running: Motivation
+## Motivation
 
 Aircraft routing and automated air traffic control (ATC) is performed with the help of a PostGIS database.
 
 In the current implementation, route nodes are populated from a list of vertiports and aviation waypoints. Reports from `svc-compliance` will be used to build no-fly geometries (either permanent or temporary). 
 
-## :crystal_ball: Upcoming
+## Upcoming
 
 These nodes will then be used to build routes. All nodes within 300 kilometers of one another will have a route. In the future, routes may be predetermined by the FAA, EASA, or other civil aviation agency (CAA).
 
@@ -26,20 +26,20 @@ The `scripts/init.sql` script is launched automatically when the `postgis` conta
 
 Use `docker compose down --volumes` to delete the local `postgis-ssl` and `postgis-data` volumes if changes have been made to either of these scripts.
 
-## :elephant: PostgreSQL Tables
+## PostgreSQL Tables
 
 The `arrow` schema defines the following tables:
 
 | Table | Description | 
 | ---- | ---- |
-| [`nodes`](#round_pushpin-nodes) | Nodes for shortest path algorithms.
-| [`waypoints`](#fast_forward-waypoints) | This table lists waypoints through which aircraft can route.
-| [`vertiports`](#checkered_flag-vertiports) | This table lists waypoints through which aircraft can route.
-| [`aircraft`](#helicopter-aircraft) | This table tracks aircraft locations.
-| [`nofly`](#no_entry-nofly) | This table lists no-fly zones. These can be temporary or permanent. They can be vertiports who shouldn't be flown over unless they are the destination or departure port. |
-| [`routes`](#twisted_rightwards_arrows-routes) | This table lists routes between all nodes. These routes are currently auto-populated at a hardcoded altitude.
+| [`nodes`](#nodes) | Nodes for shortest path algorithms.
+| [`waypoints`](#waypoints) | This table lists waypoints through which aircraft can route.
+| [`vertiports`](#vertiports) | This table lists waypoints through which aircraft can route.
+| [`aircraft`](#aircraft) | This table tracks aircraft locations.
+| [`nofly`](#nofly) | This table lists no-fly zones. These can be temporary or permanent. They can be vertiports who shouldn't be flown over unless they are the destination or departure port. |
+| [`routes`](#routes) | This table lists routes between all nodes. These routes are currently auto-populated at a hardcoded altitude.
 
-### :round_pushpin: `nodes`
+### `nodes`
 
 | Column | Type | Description |
 | ---- | ---- | --- | 
@@ -47,7 +47,7 @@ The `arrow` schema defines the following tables:
 | geom | GEOMETRY(Point) | The latitude and longitude of this node, altitude ignored. |
 | node_type | Enum NodeType | 'vertiport', 'aircraft', 'waypoint'
 
-### :fast_forward: `waypoints`
+### `waypoints`
 
 | Column | Type | Description |
 | ---- | ---- | --- | 
@@ -56,7 +56,7 @@ The `arrow` schema defines the following tables:
 | node_id | INTEGER FK(arrow.nodes) | The ID of the entry in the node table associated with this waypoints. | 
 | min_altitude_meters | INTEGER | The starting altitude of this waypoint, in meters.
 
-### :checkered_flag: `vertiports`
+### `vertiports`
 
 | Column | Type | Description |
 | ---- | ---- | --- | 
@@ -66,7 +66,7 @@ The `arrow` schema defines the following tables:
 | nofly_id | INTEGER FK(arrow.nofly)  | The ID of the entry in the nofly table associated with this vertiport.
 | arrow_id | UUID UNIQUE | The Arrow UUID for this vertiport.
 
-### :helicopter: `aircraft`
+### `aircraft`
 
 | Column | Type | Description |
 | ---- | ---- | --- | 
@@ -80,7 +80,7 @@ The `arrow` schema defines the following tables:
 | velocity_mps | FLOAT | The speed of this aircraft.
 | last_report | TIMESTAMPTZ | The time of the last telemetry report.
 
-## :no_entry: `nofly`
+## `nofly`
 
 | Column | Type | Description |
 | ---- | ---- | --- | 
@@ -91,7 +91,7 @@ The `arrow` schema defines the following tables:
 | time_end | TIMESTAMPTZ | The time that this no-fly zone becomes inactive. NULL if no scheduled end date.
 | nofly_type | Enum NoFlyType | 'nofly', 'vertiport'
 
-## :twisted_rightwards_arrows: `routes`
+## `routes`
 
 Routes are currently unidirectional. There will be two routes per pair of nodes, one traveling from A -> B and one from B -> A.
 
@@ -103,7 +103,7 @@ Routes are currently unidirectional. There will be two routes per pair of nodes,
 | geom | GEOMETRY(LineString) | The line connecting the two nodes
 | distance_meters | f64 | The distance of this line segment.
 
-## :gun: PostgreSQL Triggers
+## PostgreSQL Triggers
 
 Trigger | Action | Description
 --- | --- | ---

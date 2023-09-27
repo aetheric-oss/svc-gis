@@ -92,7 +92,7 @@ async fn nearest_neighbor_vertiport_source(
     {
         Ok(results) => Ok(results),
         Err(e) => {
-            println!(
+            postgis_error!(
                 "(nearest_neighbor_vertiport_source) could not request routes: {}",
                 e
             );
@@ -121,7 +121,7 @@ async fn nearest_neighbor_aircraft_source(
     {
         Ok(results) => Ok(results),
         Err(e) => {
-            println!(
+            postgis_error!(
                 "(nearest_neighbor_aircraft_source) could not request routes: {}",
                 e
             );

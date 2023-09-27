@@ -138,7 +138,7 @@ async fn best_path_vertiport_source(
     {
         Ok(results) => Ok(results),
         Err(e) => {
-            println!(
+            postgis_error!(
                 "(best_path_vertiport_source) could not request routes: {}",
                 e
             );
@@ -167,7 +167,7 @@ async fn best_path_aircraft_source(
     {
         Ok(results) => Ok(results),
         Err(e) => {
-            println!(
+            postgis_error!(
                 "(best_path_aircraft_source) could not request routes: {}",
                 e
             );
@@ -195,8 +195,8 @@ pub async fn best_path(
     let client = match pool.get().await {
         Ok(client) => client,
         Err(e) => {
-            println!("(best_path) could not get client from pool.");
-            println!("(best_path) error: {:?}", e);
+            postgis_error!("(best_path) could not get client from pool.");
+            postgis_error!("(best_path) error: {:?}", e);
             return Err(PathError::Client);
         }
     };
