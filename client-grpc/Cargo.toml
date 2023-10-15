@@ -11,7 +11,7 @@ license-file.workspace = true
 repository.workspace   = true
 
 [features]
-dev       = ["mock", "tokio"]
+dev       = ["mock", "tokio", "chrono"]
 test_util = ["mock", "stub_backends"]
 # Will add a 'mock' module for the enabled resources, providing access to mock data generation functions
 mock = []
@@ -29,25 +29,24 @@ stub_client = ["svc-gis"]
 
 [dependencies]
 cfg-if            = "1.0"
-chrono            = "0.4"
-deadpool-postgres = { version = "0.10", optional = true }
+chrono            = { version = "0.4", optional = true }
+deadpool-postgres = { version = "0.11", optional = true }
 log               = { version = "0.4" }
-num-derive        = "0.3"
+num-derive        = "0.4"
 num-traits        = "0.2"
 postgres-types    = "0.2"
-prost             = "0.11"
-prost-types       = "0.11"
-prost-wkt-types   = "0.4"
+prost             = "0.12"
+prost-types       = "0.12"
 svc-gis           = { path = "../server", optional = true }
 tokio-postgres    = { version = "0.7", optional = true }
-tonic             = "0.8"
+tonic             = "0.10"
 tower             = { version = "0.4", optional = true }
-uuid              = { version = "1.3", features = ["v4"] }
+uuid              = { version = "1.4", features = ["v4"] }
 
 [dependencies.lib-common]
 features = ["grpc"]
 git      = "https://github.com/Arrow-air/lib-common.git"
-tag      = "v0.2.0"
+tag      = "v0.2.1-develop.0"
 
 [dev-dependencies]
 rand = "0.8"
@@ -55,7 +54,7 @@ rand = "0.8"
 [dependencies.tokio]
 features = ["macros", "rt-multi-thread"]
 optional = true
-version  = "1.28"
+version  = "1.33"
 
 # Make sure we enable the 'mock_services' features when running tests
 [dev-dependencies.svc-gis-client-grpc]

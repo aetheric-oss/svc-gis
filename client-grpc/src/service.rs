@@ -159,13 +159,14 @@ where
     /// # Examples
     /// ```
     /// use lib_common::grpc::get_endpoint_from_env;
+    /// use lib_common::time::{Utc, Timestamp};
     /// use svc_gis_client_grpc::prelude::*;
     ///
     /// async fn example () -> Result<(), Box<dyn std::error::Error>> {
     ///     let (host, port) = get_endpoint_from_env("SERVER_HOSTNAME", "SERVER_PORT_GRPC");
     ///     let client = GisClient::new_client(&host, port, "gis");
-    ///     let time_start: Timestamp = chrono::Utc::now().into();
-    ///     let time_end: Timestamp = chrono::Utc::now().into();
+    ///     let time_start: Timestamp = Utc::now().into();
+    ///     let time_end: Timestamp = Utc::now().into();
     ///     let request = gis::BestPathRequest {
     ///         node_start_id: "".to_string(),
     ///         node_uuid_end: "".to_string(),
