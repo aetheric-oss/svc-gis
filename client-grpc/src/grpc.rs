@@ -75,7 +75,7 @@ pub struct AircraftPosition {
     pub altitude_meters: f32,
     /// Telemetry Report Time
     #[prost(message, optional, tag = "4")]
-    pub time: ::core::option::Option<::prost_wkt_types::Timestamp>,
+    pub time: ::core::option::Option<::lib_common::time::Timestamp>,
     /// Aircraft UUID, if available
     #[prost(string, optional, tag = "5")]
     pub uuid: ::core::option::Option<::prost::alloc::string::String>,
@@ -109,10 +109,10 @@ pub struct NoFlyZone {
     pub vertices: ::prost::alloc::vec::Vec<Coordinates>,
     /// Start datetime for this zone
     #[prost(message, optional, tag = "3")]
-    pub time_start: ::core::option::Option<::prost_wkt_types::Timestamp>,
+    pub time_start: ::core::option::Option<::lib_common::time::Timestamp>,
     /// End datetime for this zone
     #[prost(message, optional, tag = "4")]
-    pub time_end: ::core::option::Option<::prost_wkt_types::Timestamp>,
+    pub time_end: ::core::option::Option<::lib_common::time::Timestamp>,
 }
 /// Update No Fly Zones Request object
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -178,10 +178,10 @@ pub struct BestPathRequest {
     pub start_type: i32,
     /// Time of departure
     #[prost(message, optional, tag = "4")]
-    pub time_start: ::core::option::Option<::prost_wkt_types::Timestamp>,
+    pub time_start: ::core::option::Option<::lib_common::time::Timestamp>,
     /// Time of arrival
     #[prost(message, optional, tag = "5")]
-    pub time_end: ::core::option::Option<::prost_wkt_types::Timestamp>,
+    pub time_end: ::core::option::Option<::lib_common::time::Timestamp>,
 }
 /// Best Path Response object
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -280,7 +280,7 @@ pub mod rpc_service_client {
         /// Attempt to create a new client by connecting to a given endpoint.
         pub async fn connect<D>(dst: D) -> Result<Self, tonic::transport::Error>
         where
-            D: std::convert::TryInto<tonic::transport::Endpoint>,
+            D: TryInto<tonic::transport::Endpoint>,
             D::Error: Into<StdError>,
         {
             let conn = tonic::transport::Endpoint::new(dst)?.connect().await?;
@@ -336,11 +336,27 @@ pub mod rpc_service_client {
             self.inner = self.inner.accept_compressed(encoding);
             self
         }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_decoding_message_size(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_encoding_message_size(limit);
+            self
+        }
         /// Common Interfaces
         pub async fn is_ready(
             &mut self,
             request: impl tonic::IntoRequest<super::ReadyRequest>,
-        ) -> Result<tonic::Response<super::ReadyResponse>, tonic::Status> {
+        ) -> std::result::Result<tonic::Response<super::ReadyResponse>, tonic::Status> {
             self.inner
                 .ready()
                 .await
@@ -352,12 +368,14 @@ pub mod rpc_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static("/grpc.RpcService/isReady");
-            self.inner.unary(request.into_request(), path, codec).await
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new("grpc.RpcService", "isReady"));
+            self.inner.unary(req, path, codec).await
         }
         pub async fn update_vertiports(
             &mut self,
             request: impl tonic::IntoRequest<super::UpdateVertiportsRequest>,
-        ) -> Result<tonic::Response<super::UpdateResponse>, tonic::Status> {
+        ) -> std::result::Result<tonic::Response<super::UpdateResponse>, tonic::Status> {
             self.inner
                 .ready()
                 .await
@@ -371,12 +389,15 @@ pub mod rpc_service_client {
             let path = http::uri::PathAndQuery::from_static(
                 "/grpc.RpcService/updateVertiports",
             );
-            self.inner.unary(request.into_request(), path, codec).await
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("grpc.RpcService", "updateVertiports"));
+            self.inner.unary(req, path, codec).await
         }
         pub async fn update_waypoints(
             &mut self,
             request: impl tonic::IntoRequest<super::UpdateWaypointsRequest>,
-        ) -> Result<tonic::Response<super::UpdateResponse>, tonic::Status> {
+        ) -> std::result::Result<tonic::Response<super::UpdateResponse>, tonic::Status> {
             self.inner
                 .ready()
                 .await
@@ -390,12 +411,15 @@ pub mod rpc_service_client {
             let path = http::uri::PathAndQuery::from_static(
                 "/grpc.RpcService/updateWaypoints",
             );
-            self.inner.unary(request.into_request(), path, codec).await
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("grpc.RpcService", "updateWaypoints"));
+            self.inner.unary(req, path, codec).await
         }
         pub async fn update_no_fly_zones(
             &mut self,
             request: impl tonic::IntoRequest<super::UpdateNoFlyZonesRequest>,
-        ) -> Result<tonic::Response<super::UpdateResponse>, tonic::Status> {
+        ) -> std::result::Result<tonic::Response<super::UpdateResponse>, tonic::Status> {
             self.inner
                 .ready()
                 .await
@@ -409,12 +433,15 @@ pub mod rpc_service_client {
             let path = http::uri::PathAndQuery::from_static(
                 "/grpc.RpcService/updateNoFlyZones",
             );
-            self.inner.unary(request.into_request(), path, codec).await
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("grpc.RpcService", "updateNoFlyZones"));
+            self.inner.unary(req, path, codec).await
         }
         pub async fn update_aircraft_position(
             &mut self,
             request: impl tonic::IntoRequest<super::UpdateAircraftPositionRequest>,
-        ) -> Result<tonic::Response<super::UpdateResponse>, tonic::Status> {
+        ) -> std::result::Result<tonic::Response<super::UpdateResponse>, tonic::Status> {
             self.inner
                 .ready()
                 .await
@@ -428,12 +455,18 @@ pub mod rpc_service_client {
             let path = http::uri::PathAndQuery::from_static(
                 "/grpc.RpcService/updateAircraftPosition",
             );
-            self.inner.unary(request.into_request(), path, codec).await
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("grpc.RpcService", "updateAircraftPosition"));
+            self.inner.unary(req, path, codec).await
         }
         pub async fn best_path(
             &mut self,
             request: impl tonic::IntoRequest<super::BestPathRequest>,
-        ) -> Result<tonic::Response<super::BestPathResponse>, tonic::Status> {
+        ) -> std::result::Result<
+            tonic::Response<super::BestPathResponse>,
+            tonic::Status,
+        > {
             self.inner
                 .ready()
                 .await
@@ -445,12 +478,17 @@ pub mod rpc_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static("/grpc.RpcService/bestPath");
-            self.inner.unary(request.into_request(), path, codec).await
+            let mut req = request.into_request();
+            req.extensions_mut().insert(GrpcMethod::new("grpc.RpcService", "bestPath"));
+            self.inner.unary(req, path, codec).await
         }
         pub async fn nearest_neighbors(
             &mut self,
             request: impl tonic::IntoRequest<super::NearestNeighborRequest>,
-        ) -> Result<tonic::Response<super::NearestNeighborResponse>, tonic::Status> {
+        ) -> std::result::Result<
+            tonic::Response<super::NearestNeighborResponse>,
+            tonic::Status,
+        > {
             self.inner
                 .ready()
                 .await
@@ -464,7 +502,10 @@ pub mod rpc_service_client {
             let path = http::uri::PathAndQuery::from_static(
                 "/grpc.RpcService/nearestNeighbors",
             );
-            self.inner.unary(request.into_request(), path, codec).await
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("grpc.RpcService", "nearestNeighbors"));
+            self.inner.unary(req, path, codec).await
         }
     }
 }

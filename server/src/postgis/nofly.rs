@@ -136,9 +136,10 @@ pub async fn update_nofly(
         return Err(NoFlyZoneError::Unknown);
     };
 
-    let Ok(stmt) = transaction.prepare_cached(
-        "SELECT arrow.update_nofly($1, $2, $3, $4)"
-    ).await else {
+    let Ok(stmt) = transaction
+        .prepare_cached("SELECT arrow.update_nofly($1, $2, $3, $4)")
+        .await
+    else {
         postgis_error!("(postgis update_nofly) error preparing cached statement.");
         return Err(NoFlyZoneError::Unknown);
     };

@@ -114,9 +114,10 @@ pub async fn update_vertiports(
         return Err(VertiportError::Unknown);
     };
 
-    let Ok(stmt) = transaction.prepare_cached(
-        "SELECT arrow.update_vertiport($1, $2, $3)"
-    ).await else {
+    let Ok(stmt) = transaction
+        .prepare_cached("SELECT arrow.update_vertiport($1, $2, $3)")
+        .await
+    else {
         postgis_error!("(postgis update_vertiports) error preparing cached statement.");
         return Err(VertiportError::Unknown);
     };

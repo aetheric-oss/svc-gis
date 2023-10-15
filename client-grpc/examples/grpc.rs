@@ -1,8 +1,9 @@
 //! gRPC client implementation
 //! Helps to use https://www.keene.edu/campus/maps/tool/ to create polygons on a map
 
-use chrono::{Duration, Utc};
+use chrono::Duration;
 use lib_common::grpc::get_endpoint_from_env;
+use lib_common::time::Utc;
 use svc_gis_client_grpc::prelude::{gis::*, *};
 use uuid::Uuid;
 

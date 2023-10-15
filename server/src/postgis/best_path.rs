@@ -1,7 +1,8 @@
 //! This module contains functions for routing between nodes.
 use crate::grpc::server::grpc_server::{BestPathRequest, NodeType, PathSegment};
 use crate::postgis::PathType;
-use chrono::{DateTime, Utc};
+use chrono::Duration;
+use lib_common::time::*;
 use uuid::Uuid;
 
 // TODO(R4): Include altitude, lanes, corridors
@@ -87,12 +88,12 @@ impl TryFrom<BestPathRequest> for PathRequest {
         };
 
         let time_start: DateTime<Utc> = match request.time_start {
-            None => chrono::Utc::now(),
+            None => Utc::now(),
             Some(time) => time.into(),
         };
 
         let time_end: DateTime<Utc> = match request.time_end {
-            None => chrono::Utc::now() + chrono::Duration::days(1),
+            None => Utc::now() + Duration::days(1),
             Some(time) => time.into(),
         };
 
@@ -120,7 +121,10 @@ async fn best_path_vertiport_source(
     request: PathRequest,
 ) -> Result<Vec<tokio_postgres::Row>, PathError> {
     let Ok(node_start_id) = Uuid::parse_str(&request.node_start_id) else {
-        postgis_error!("(best_path_vertiport_source) could not parse start node id into UUID: {}", request.node_start_id);
+        postgis_error!(
+            "(best_path_vertiport_source) could not parse start node id into UUID: {}",
+            request.node_start_id
+        );
         return Err(PathError::InvalidStartNode);
     };
 
@@ -203,9 +207,10 @@ pub async fn best_path(
 
     let rows = match path_type {
         PathType::PortToPort => {
-            let Ok(stmt) = client.prepare_cached(
-                "SELECT * FROM arrow.best_path_p2p($1, $2, $3, $4);"
-            ).await else {
+            let Ok(stmt) = client
+                .prepare_cached("SELECT * FROM arrow.best_path_p2p($1, $2, $3, $4);")
+                .await
+            else {
                 postgis_error!("(best_path) could not prepare statement.");
                 return Err(PathError::Unknown);
             };
@@ -213,9 +218,10 @@ pub async fn best_path(
             best_path_vertiport_source(stmt, client, request).await?
         }
         PathType::AircraftToPort => {
-            let Ok(stmt) = client.prepare_cached(
-                "SELECT * FROM arrow.best_path_a2p($1, $2, $3, $4);"
-            ).await else {
+            let Ok(stmt) = client
+                .prepare_cached("SELECT * FROM arrow.best_path_a2p($1, $2, $3, $4);")
+                .await
+            else {
                 postgis_error!("(best_path) could not prepare statement.");
                 return Err(PathError::Unknown);
             };
@@ -257,8 +263,6 @@ pub async fn best_path(
 mod tests {
     use super::*;
     use crate::grpc::server::grpc_server;
-    use chrono::{Duration, Utc};
-    use prost_wkt_types::Timestamp;
 
     #[test]
     fn ut_request_valid() {

@@ -75,7 +75,10 @@ async fn nearest_neighbor_vertiport_source(
     request: NearestNeighborRequest,
 ) -> Result<Vec<tokio_postgres::Row>, NNError> {
     let Ok(start_node_id) = Uuid::parse_str(&request.start_node_id) else {
-        postgis_error!("(nearest_neighbor_vertiport_source) could not parse start node id into UUID: {}", request.start_node_id);
+        postgis_error!(
+            "(nearest_neighbor_vertiport_source) could not parse start node id into UUID: {}",
+            request.start_node_id
+        );
         return Err(NNError::InvalidStartNode);
     };
 
@@ -177,9 +180,10 @@ pub async fn nearest_neighbors(
     let target_type = request.end_type;
     let rows = match (start_type, end_type) {
         (NodeType::Vertiport, NodeType::Vertiport) => {
-            let Ok(stmt) = client.prepare_cached(
-                "SELECT * FROM arrow.nearest_vertiports_to_vertiport($1, $2, $3);",
-            ).await else {
+            let Ok(stmt) = client
+                .prepare_cached("SELECT * FROM arrow.nearest_vertiports_to_vertiport($1, $2, $3);")
+                .await
+            else {
                 postgis_error!("(nearest_neighbors) could not prepare statement.");
                 return Err(NNError::Unknown);
             };
@@ -187,9 +191,10 @@ pub async fn nearest_neighbors(
             nearest_neighbor_vertiport_source(stmt, client, request).await?
         }
         (NodeType::Aircraft, NodeType::Vertiport) => {
-            let Ok(stmt) = client.prepare_cached(
-                "SELECT * FROM arrow.nearest_vertiports_to_aircraft($1, $2, $3);",
-            ).await else {
+            let Ok(stmt) = client
+                .prepare_cached("SELECT * FROM arrow.nearest_vertiports_to_aircraft($1, $2, $3);")
+                .await
+            else {
                 postgis_error!("(nearest_neighbors) could not prepare statement.");
                 return Err(NNError::Unknown);
             };
