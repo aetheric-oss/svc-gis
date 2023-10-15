@@ -1,8 +1,8 @@
 //! Example for writing an integration test.
 //! More information: https://doc.rust-lang.org/book/testing-rust.html#integration-tests
 
-use chrono::Utc;
 use lib_common::grpc::get_endpoint_from_env;
+use lib_common::time::Utc;
 use svc_gis_client_grpc::prelude::{gis::*, *};
 use uuid::Uuid;
 

@@ -55,9 +55,7 @@ impl TryFrom<RequestWaypoint> for Waypoint {
         }
 
         let Some(location) = waypoint.location else {
-            postgis_error!(
-                "(try_from RequestWaypoint) Waypoint has no location."
-            );
+            postgis_error!("(try_from RequestWaypoint) Waypoint has no location.");
             return Err(WaypointError::Location);
         };
 
@@ -103,9 +101,10 @@ pub async fn update_waypoints(
         return Err(WaypointError::Unknown);
     };
 
-    let Ok(stmt) = transaction.prepare_cached(
-        "SELECT arrow.update_waypoint($1, $2)"
-    ).await else {
+    let Ok(stmt) = transaction
+        .prepare_cached("SELECT arrow.update_waypoint($1, $2)")
+        .await
+    else {
         postgis_error!("(postgis update_waypoints) error preparing cached statement.");
         return Err(WaypointError::Unknown);
     };

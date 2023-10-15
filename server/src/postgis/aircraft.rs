@@ -86,9 +86,7 @@ impl TryFrom<ReqAircraftPos> for AircraftPosition {
         };
 
         let Some(location) = craft.location else {
-            postgis_error!(
-                "(try_from ReqAircraftPos) Aircraft location is invalid."
-            );
+            postgis_error!("(try_from ReqAircraftPos) Aircraft location is invalid.");
             return Err(AircraftError::Location);
         };
 
@@ -104,9 +102,7 @@ impl TryFrom<ReqAircraftPos> for AircraftPosition {
         };
 
         let Some(time) = craft.time else {
-            postgis_error!(
-                "(try_from ReqAircraftPos) Aircraft time is invalid."
-            );
+            postgis_error!("(try_from ReqAircraftPos) Aircraft time is invalid.");
             return Err(AircraftError::Time);
         };
 
@@ -147,9 +143,10 @@ pub async fn update_aircraft_position(
         return Err(AircraftError::Unknown);
     };
 
-    let Ok(stmt) = transaction.prepare_cached(
-        "SELECT arrow.update_aircraft_position($1, $2, $3, $4, $5::TIMESTAMPTZ)"
-    ).await else {
+    let Ok(stmt) = transaction
+        .prepare_cached("SELECT arrow.update_aircraft_position($1, $2, $3, $4, $5::TIMESTAMPTZ)")
+        .await
+    else {
         postgis_error!("(postgis update_aircraft_position) error preparing cached statement.");
         return Err(AircraftError::Unknown);
     };
@@ -192,9 +189,8 @@ mod tests {
     use crate::grpc::server::grpc_server::Coordinates;
     use crate::postgis::utils;
     use crate::{init_logger, Config};
-    use chrono::Utc;
     use deadpool_postgres::{ManagerConfig, Pool, RecyclingMethod, Runtime};
-    use prost_wkt_types::Timestamp;
+    use lib_common::time::*;
     use rand::{thread_rng, Rng};
     use tokio_postgres::NoTls;
 

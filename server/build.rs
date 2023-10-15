@@ -6,7 +6,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let proto_file = &format!("{}/grpc.proto", proto_dir);
 
     let server_config = tonic_build::configure()
-        .extern_path(".google.protobuf.Timestamp", "::prost_wkt_types::Timestamp")
+        .extern_path(
+            ".google.protobuf.Timestamp",
+            "::lib_common::time::Timestamp",
+        )
         .type_attribute("ReadyRequest", "#[derive(Eq, Copy)]")
         .type_attribute("ReadyResponse", "#[derive(Eq, Copy)]")
         .type_attribute("UpdateResponse", "#[derive(Eq, Copy)]")
