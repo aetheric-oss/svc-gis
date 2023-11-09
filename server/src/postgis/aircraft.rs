@@ -121,9 +121,9 @@ impl TryFrom<ReqAircraftPos> for AircraftPosition {
 /// Updates aircraft in the PostGIS database.
 pub async fn update_aircraft_position(
     aircraft: Vec<ReqAircraftPos>,
-    pool: deadpool_postgres::Pool,
+    pool: &deadpool_postgres::Pool,
 ) -> Result<(), AircraftError> {
-    postgis_debug!("(postgis update_aircraft_position) entry.");
+    postgis_debug!("(update_aircraft_position) entry.");
     if aircraft.is_empty() {
         return Err(AircraftError::NoAircraft);
     }
@@ -134,12 +134,12 @@ pub async fn update_aircraft_position(
         .collect::<Result<Vec<_>, _>>()?;
 
     let Ok(mut client) = pool.get().await else {
-        postgis_error!("(postgis update_aircraft_position) error getting client.");
+        postgis_error!("(update_aircraft_position) error getting client.");
         return Err(AircraftError::Unknown);
     };
 
     let Ok(transaction) = client.transaction().await else {
-        postgis_error!("(postgis update_aircraft_position) error creating transaction.");
+        postgis_error!("(update_aircraft_position) error creating transaction.");
         return Err(AircraftError::Unknown);
     };
 
@@ -147,7 +147,7 @@ pub async fn update_aircraft_position(
         .prepare_cached("SELECT arrow.update_aircraft_position($1, $2, $3, $4, $5::TIMESTAMPTZ)")
         .await
     else {
-        postgis_error!("(postgis update_aircraft_position) error preparing cached statement.");
+        postgis_error!("(update_aircraft_position) error preparing cached statement.");
         return Err(AircraftError::Unknown);
     };
 
@@ -165,17 +165,17 @@ pub async fn update_aircraft_position(
             )
             .await
         {
-            postgis_error!("(postgis update_aircraft_position) error: {}", e);
+            postgis_error!("(update_aircraft_position) error: {}", e);
             return Err(AircraftError::Unknown);
         }
     }
 
     match transaction.commit().await {
         Ok(_) => {
-            postgis_debug!("(postgis update_aircraft_position) success.");
+            postgis_debug!("(update_aircraft_position) success.");
         }
         Err(e) => {
-            postgis_error!("(postgis update_aircraft_position) error: {}", e);
+            postgis_error!("(update_aircraft_position) error: {}", e);
             return Err(AircraftError::Unknown);
         }
     }
@@ -188,25 +188,14 @@ mod tests {
     use super::*;
     use crate::grpc::server::grpc_server::Coordinates;
     use crate::postgis::utils;
-    use crate::{init_logger, Config};
-    use deadpool_postgres::{ManagerConfig, Pool, RecyclingMethod, Runtime};
+    use crate::test_util::get_psql_pool;
     use lib_common::time::*;
     use rand::{thread_rng, Rng};
-    use tokio_postgres::NoTls;
 
-    fn get_pool() -> Pool {
-        let mut cfg = deadpool_postgres::Config::default();
-        cfg.dbname = Some("deadpool".to_string());
-        cfg.manager = Some(ManagerConfig {
-            recycling_method: RecyclingMethod::Fast,
-        });
-        cfg.create_pool(Some(Runtime::Tokio1), NoTls).unwrap()
-    }
-
-    #[test]
-    fn ut_request_valid() {
-        init_logger(&Config::try_from_env().unwrap_or_default());
-        unit_test_info!("(ut_request_valid) start");
+    #[tokio::test]
+    async fn ut_request_valid() {
+        crate::get_log_handle().await;
+        ut_info!("(ut_request_valid) start");
 
         let mut rng = thread_rng();
         let nodes = vec![
@@ -264,13 +253,13 @@ mod tests {
             assert_eq!(time, converted);
         }
 
-        unit_test_info!("(ut_request_valid) success");
+        ut_info!("(ut_request_valid) success");
     }
 
     #[tokio::test]
     async fn ut_client_failure() {
-        init_logger(&Config::try_from_env().unwrap_or_default());
-        unit_test_info!("(ut_client_failure) start");
+        crate::get_log_handle().await;
+        ut_info!("(ut_client_failure) start");
 
         let nodes = vec![("aircraft", 52.3745905, 4.9160036)];
         let aircraft: Vec<ReqAircraftPos> = nodes
@@ -287,18 +276,18 @@ mod tests {
             })
             .collect();
 
-        let result = update_aircraft_position(aircraft, get_pool())
+        let result = update_aircraft_position(aircraft, get_psql_pool().await)
             .await
             .unwrap_err();
         assert_eq!(result, AircraftError::Unknown);
 
-        unit_test_info!("(ut_client_failure) success");
+        ut_info!("(ut_client_failure) success");
     }
 
     #[tokio::test]
     async fn ut_aircraft_request_to_gis_invalid_label() {
-        init_logger(&Config::try_from_env().unwrap_or_default());
-        unit_test_info!("(ut_aircraft_request_to_gis_invalid_label) start");
+        crate::get_log_handle().await;
+        ut_info!("(ut_aircraft_request_to_gis_invalid_label) start");
 
         for label in &[
             "NULL",
@@ -313,33 +302,33 @@ mod tests {
                 ..Default::default()
             }];
 
-            let result = update_aircraft_position(aircraft, get_pool())
+            let result = update_aircraft_position(aircraft, get_psql_pool().await)
                 .await
                 .unwrap_err();
             assert_eq!(result, AircraftError::Label);
         }
 
-        unit_test_info!("(ut_aircraft_request_to_gis_invalid_label) success");
+        ut_info!("(ut_aircraft_request_to_gis_invalid_label) success");
     }
 
     #[tokio::test]
     async fn ut_aircraft_request_to_gis_invalid_no_nodes() {
-        init_logger(&Config::try_from_env().unwrap_or_default());
-        unit_test_info!("(ut_aircraft_request_to_gis_invalid_no_nodes) start");
+        crate::get_log_handle().await;
+        ut_info!("(ut_aircraft_request_to_gis_invalid_no_nodes) start");
 
         let aircraft: Vec<ReqAircraftPos> = vec![];
-        let result = update_aircraft_position(aircraft, get_pool())
+        let result = update_aircraft_position(aircraft, get_psql_pool().await)
             .await
             .unwrap_err();
         assert_eq!(result, AircraftError::NoAircraft);
 
-        unit_test_info!("(ut_aircraft_request_to_gis_invalid_no_nodes) success");
+        ut_info!("(ut_aircraft_request_to_gis_invalid_no_nodes) success");
     }
 
     #[tokio::test]
     async fn ut_aircraft_request_to_gis_invalid_location() {
-        init_logger(&Config::try_from_env().unwrap_or_default());
-        unit_test_info!("(ut_aircraft_request_to_gis_invalid_location) start");
+        crate::get_log_handle().await;
+        ut_info!("(ut_aircraft_request_to_gis_invalid_location) start");
 
         let coords = vec![(-90.1, 0.0), (90.1, 0.0), (0.0, -180.1), (0.0, 180.1)];
         for coord in coords {
@@ -352,7 +341,7 @@ mod tests {
                 ..Default::default()
             }];
 
-            let result = update_aircraft_position(aircraft, get_pool())
+            let result = update_aircraft_position(aircraft, get_psql_pool().await)
                 .await
                 .unwrap_err();
             assert_eq!(result, AircraftError::Location);
@@ -365,16 +354,19 @@ mod tests {
             ..Default::default()
         }];
 
-        let result = update_aircraft_position(aircraft, get_pool())
+        let result = update_aircraft_position(aircraft, get_psql_pool().await)
             .await
             .unwrap_err();
         assert_eq!(result, AircraftError::Location);
 
-        unit_test_info!("(ut_aircraft_request_to_gis_invalid_location) success");
+        ut_info!("(ut_aircraft_request_to_gis_invalid_location) success");
     }
 
     #[tokio::test]
     async fn ut_aircraft_request_to_gis_invalid_time() {
+        crate::get_log_handle().await;
+        ut_info!("(ut_aircraft_request_to_gis_invalid_time) start");
+
         // No location
         let aircraft: Vec<ReqAircraftPos> = vec![ReqAircraftPos {
             time: None,
@@ -386,9 +378,11 @@ mod tests {
             ..Default::default()
         }];
 
-        let result = update_aircraft_position(aircraft, get_pool())
+        let result = update_aircraft_position(aircraft, get_psql_pool().await)
             .await
             .unwrap_err();
         assert_eq!(result, AircraftError::Time);
+
+        ut_info!("(ut_aircraft_request_to_gis_invalid_time) success");
     }
 }
