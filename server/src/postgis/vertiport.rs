@@ -92,9 +92,9 @@ impl TryFrom<RequestVertiport> for Vertiport {
 /// Update vertiports in the PostGIS database
 pub async fn update_vertiports(
     vertiports: Vec<RequestVertiport>,
-    pool: deadpool_postgres::Pool,
+    pool: &deadpool_postgres::Pool,
 ) -> Result<(), VertiportError> {
-    postgis_debug!("(postgis update_vertiports) entry.");
+    postgis_debug!("(update_vertiports) entry.");
     if vertiports.is_empty() {
         return Err(VertiportError::NoVertiports);
     }
@@ -105,12 +105,12 @@ pub async fn update_vertiports(
         .collect::<Result<Vec<_>, _>>()?;
 
     let Ok(mut client) = pool.get().await else {
-        postgis_error!("(postgis update_vertiports) error getting client.");
+        postgis_error!("(update_vertiports) error getting client.");
         return Err(VertiportError::Unknown);
     };
 
     let Ok(transaction) = client.transaction().await else {
-        postgis_error!("(postgis update_vertiports) error creating transaction.");
+        postgis_error!("(update_vertiports) error creating transaction.");
         return Err(VertiportError::Unknown);
     };
 
@@ -118,7 +118,7 @@ pub async fn update_vertiports(
         .prepare_cached("SELECT arrow.update_vertiport($1, $2, $3)")
         .await
     else {
-        postgis_error!("(postgis update_vertiports) error preparing cached statement.");
+        postgis_error!("(update_vertiports) error preparing cached statement.");
         return Err(VertiportError::Unknown);
     };
 
@@ -127,17 +127,17 @@ pub async fn update_vertiports(
             .execute(&stmt, &[&vertiport.uuid, &vertiport.geom, &vertiport.label])
             .await
         {
-            postgis_error!("(postgis update_vertiports) error: {}", e);
+            postgis_error!("(update_vertiports) error: {}", e);
             return Err(VertiportError::Unknown);
         }
     }
 
     match transaction.commit().await {
         Ok(_) => {
-            postgis_debug!("(postgis update_vertiports) success.");
+            postgis_debug!("(update_vertiports) success.");
         }
         Err(e) => {
-            postgis_error!("(postgis update_vertiports) error: {}", e);
+            postgis_error!("(update_vertiports) error: {}", e);
             return Err(VertiportError::Unknown);
         }
     }
@@ -150,17 +150,7 @@ mod tests {
     use super::*;
     use crate::grpc::server::grpc_server::Coordinates;
     use crate::postgis::utils;
-    use deadpool_postgres::{Config, ManagerConfig, Pool, RecyclingMethod, Runtime};
-    use tokio_postgres::NoTls;
-
-    fn get_pool() -> Pool {
-        let mut cfg = Config::default();
-        cfg.dbname = Some("deadpool".to_string());
-        cfg.manager = Some(ManagerConfig {
-            recycling_method: RecyclingMethod::Fast,
-        });
-        cfg.create_pool(Some(Runtime::Tokio1), NoTls).unwrap()
-    }
+    use crate::test_util::get_psql_pool;
 
     fn square(latitude: f32, longitude: f32) -> Vec<(f32, f32)> {
         vec![
@@ -232,7 +222,9 @@ mod tests {
             })
             .collect();
 
-        let result = update_vertiports(vertiports, get_pool()).await.unwrap_err();
+        let result = update_vertiports(vertiports, get_psql_pool().await)
+            .await
+            .unwrap_err();
         assert_eq!(result, VertiportError::Unknown);
     }
 
@@ -250,7 +242,9 @@ mod tests {
             ..Default::default()
         }];
 
-        let result = update_vertiports(vertiports, get_pool()).await.unwrap_err();
+        let result = update_vertiports(vertiports, get_psql_pool().await)
+            .await
+            .unwrap_err();
         assert_eq!(result, VertiportError::VertiportId);
     }
 
@@ -275,7 +269,9 @@ mod tests {
                 uuid: Uuid::new_v4().to_string(),
             }];
 
-            let result = update_vertiports(vertiports, get_pool()).await.unwrap_err();
+            let result = update_vertiports(vertiports, get_psql_pool().await)
+                .await
+                .unwrap_err();
             assert_eq!(result, VertiportError::Label);
         }
     }
@@ -283,7 +279,9 @@ mod tests {
     #[tokio::test]
     async fn ut_vertiports_request_to_gis_invalid_no_nodes() {
         let vertiports: Vec<RequestVertiport> = vec![];
-        let result = update_vertiports(vertiports, get_pool()).await.unwrap_err();
+        let result = update_vertiports(vertiports, get_psql_pool().await)
+            .await
+            .unwrap_err();
         assert_eq!(result, VertiportError::NoVertiports);
     }
 
@@ -309,7 +307,9 @@ mod tests {
                 ..Default::default()
             }];
 
-            let result = update_vertiports(vertiports, get_pool()).await.unwrap_err();
+            let result = update_vertiports(vertiports, get_psql_pool().await)
+                .await
+                .unwrap_err();
             assert_eq!(result, VertiportError::Location);
         }
 
@@ -340,7 +340,9 @@ mod tests {
                 ..Default::default()
             }];
 
-            let result = update_vertiports(vertiports, get_pool()).await.unwrap_err();
+            let result = update_vertiports(vertiports, get_psql_pool().await)
+                .await
+                .unwrap_err();
             assert_eq!(result, VertiportError::Location);
         }
     }
