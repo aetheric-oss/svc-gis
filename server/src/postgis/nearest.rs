@@ -138,7 +138,7 @@ async fn nearest_neighbor_aircraft_source(
 #[cfg(not(tarpaulin_include))]
 pub async fn nearest_neighbors(
     request: NearestNeighborRequest,
-    pool: deadpool_postgres::Pool,
+    pool: &deadpool_postgres::Pool,
 ) -> Result<Vec<DistanceTo>, NNError> {
     request.validate()?;
 
@@ -226,17 +226,7 @@ pub async fn nearest_neighbors(
 mod tests {
     use super::*;
     use crate::grpc::server::grpc_server;
-    use deadpool_postgres::{Config, ManagerConfig, Pool, RecyclingMethod, Runtime};
-    use tokio_postgres::NoTls;
-
-    fn get_pool() -> Pool {
-        let mut cfg = Config::default();
-        cfg.dbname = Some("deadpool".to_string());
-        cfg.manager = Some(ManagerConfig {
-            recycling_method: RecyclingMethod::Fast,
-        });
-        cfg.create_pool(Some(Runtime::Tokio1), NoTls).unwrap()
-    }
+    use crate::test_util::get_psql_pool;
 
     #[tokio::test]
     async fn ut_client_failure() {
@@ -248,7 +238,9 @@ mod tests {
             max_range_meters: 1000.0,
         };
 
-        let result = nearest_neighbors(request, get_pool()).await.unwrap_err();
+        let result = nearest_neighbors(request, get_psql_pool().await)
+            .await
+            .unwrap_err();
         assert_eq!(result, NNError::Client);
     }
 
@@ -262,7 +254,9 @@ mod tests {
             max_range_meters: 1000.0,
         };
 
-        let result = nearest_neighbors(request, get_pool()).await.unwrap_err();
+        let result = nearest_neighbors(request, get_psql_pool().await)
+            .await
+            .unwrap_err();
         assert_eq!(result, NNError::InvalidStartNode);
     }
 
@@ -276,7 +270,9 @@ mod tests {
             max_range_meters: 1000.0,
         };
 
-        let result = nearest_neighbors(request, get_pool()).await.unwrap_err();
+        let result = nearest_neighbors(request, get_psql_pool().await)
+            .await
+            .unwrap_err();
         assert_eq!(result, NNError::InvalidStartNode);
     }
 
@@ -290,7 +286,9 @@ mod tests {
             max_range_meters: 1000.0,
         };
 
-        let result = nearest_neighbors(request, get_pool()).await.unwrap_err();
+        let result = nearest_neighbors(request, get_psql_pool().await)
+            .await
+            .unwrap_err();
         assert_eq!(result, NNError::Unsupported);
     }
 
@@ -304,7 +302,9 @@ mod tests {
             max_range_meters: 1000.0,
         };
 
-        let result = nearest_neighbors(request, get_pool()).await.unwrap_err();
+        let result = nearest_neighbors(request, get_psql_pool().await)
+            .await
+            .unwrap_err();
         assert_eq!(result, NNError::Unsupported);
     }
 
@@ -318,7 +318,9 @@ mod tests {
             max_range_meters: 1000.0,
         };
 
-        let result = nearest_neighbors(request, get_pool()).await.unwrap_err();
+        let result = nearest_neighbors(request, get_psql_pool().await)
+            .await
+            .unwrap_err();
         assert_eq!(result, NNError::InvalidLimit);
     }
 
@@ -332,7 +334,9 @@ mod tests {
             max_range_meters: -1.0,
         };
 
-        let result = nearest_neighbors(request, get_pool()).await.unwrap_err();
+        let result = nearest_neighbors(request, get_psql_pool().await)
+            .await
+            .unwrap_err();
         assert_eq!(result, NNError::InvalidRange);
     }
 
@@ -346,7 +350,9 @@ mod tests {
             max_range_meters: 1000.0,
         };
 
-        let result = nearest_neighbors(request, get_pool()).await.unwrap_err();
+        let result = nearest_neighbors(request, get_psql_pool().await)
+            .await
+            .unwrap_err();
         assert_eq!(result, NNError::Unsupported);
     }
 }

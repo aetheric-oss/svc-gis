@@ -193,7 +193,7 @@ async fn best_path_aircraft_source(
 pub async fn best_path(
     path_type: PathType,
     request: BestPathRequest,
-    pool: deadpool_postgres::Pool,
+    pool: &deadpool_postgres::Pool,
 ) -> Result<Vec<PathSegment>, PathError> {
     let request = PathRequest::try_from(request)?;
     let client = match pool.get().await {

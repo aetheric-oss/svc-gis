@@ -113,11 +113,11 @@ impl TryFrom<RequestNoFlyZone> for NoFlyZone {
 /// Updates no-fly zones in the PostGIS database.
 pub async fn update_nofly(
     zones: Vec<RequestNoFlyZone>,
-    pool: deadpool_postgres::Pool,
+    pool: &deadpool_postgres::Pool,
 ) -> Result<(), NoFlyZoneError> {
-    postgis_debug!("(postgis update_nofly) entry.");
+    postgis_debug!("(update_nofly) entry.");
     if zones.is_empty() {
-        postgis_error!("(postgis update_nofly) no no-fly zones provided.");
+        postgis_error!("(update_nofly) no no-fly zones provided.");
         return Err(NoFlyZoneError::NoZones);
     }
 
@@ -127,12 +127,12 @@ pub async fn update_nofly(
         .collect::<Result<Vec<_>, _>>()?;
 
     let Ok(mut client) = pool.get().await else {
-        postgis_error!("(postgis update_nofly) error getting client.");
+        postgis_error!("(update_nofly) error getting client.");
         return Err(NoFlyZoneError::Unknown);
     };
 
     let Ok(transaction) = client.transaction().await else {
-        postgis_error!("(postgis update_nofly) error creating transaction.");
+        postgis_error!("(update_nofly) error creating transaction.");
         return Err(NoFlyZoneError::Unknown);
     };
 
@@ -140,7 +140,7 @@ pub async fn update_nofly(
         .prepare_cached("SELECT arrow.update_nofly($1, $2, $3, $4)")
         .await
     else {
-        postgis_error!("(postgis update_nofly) error preparing cached statement.");
+        postgis_error!("(update_nofly) error preparing cached statement.");
         return Err(NoFlyZoneError::Unknown);
     };
 
@@ -152,17 +152,17 @@ pub async fn update_nofly(
             )
             .await
         {
-            postgis_error!("(postgis update_nofly) error: {}", e);
+            postgis_error!("(update_nofly) error: {}", e);
             return Err(NoFlyZoneError::Unknown);
         }
     }
 
     match transaction.commit().await {
         Ok(_) => {
-            postgis_debug!("(postgis update_nofly) success.");
+            postgis_debug!("(update_nofly) success.");
         }
         Err(e) => {
-            postgis_error!("(postgis update_nofly) error: {}", e);
+            postgis_error!("(update_nofly) error: {}", e);
             return Err(NoFlyZoneError::Unknown);
         }
     }
@@ -175,17 +175,7 @@ mod tests {
     use super::*;
     use crate::grpc::server::grpc_server::Coordinates;
     use crate::postgis::utils;
-    use deadpool_postgres::{Config, ManagerConfig, Pool, RecyclingMethod, Runtime};
-    use tokio_postgres::NoTls;
-
-    fn get_pool() -> Pool {
-        let mut cfg = Config::default();
-        cfg.dbname = Some("deadpool".to_string());
-        cfg.manager = Some(ManagerConfig {
-            recycling_method: RecyclingMethod::Fast,
-        });
-        cfg.create_pool(Some(Runtime::Tokio1), NoTls).unwrap()
-    }
+    use crate::test_util::get_psql_pool;
 
     fn square(latitude: f32, longitude: f32) -> Vec<(f32, f32)> {
         vec![
@@ -256,7 +246,9 @@ mod tests {
             })
             .collect();
 
-        let result = update_nofly(nofly_zone, get_pool()).await.unwrap_err();
+        let result = update_nofly(nofly_zone, get_psql_pool().await)
+            .await
+            .unwrap_err();
         assert_eq!(result, NoFlyZoneError::Unknown);
     }
 
@@ -281,7 +273,9 @@ mod tests {
                 ..Default::default()
             }];
 
-            let result = update_nofly(nofly_zones, get_pool()).await.unwrap_err();
+            let result = update_nofly(nofly_zones, get_psql_pool().await)
+                .await
+                .unwrap_err();
             assert_eq!(result, NoFlyZoneError::Label);
         }
     }
@@ -289,7 +283,9 @@ mod tests {
     #[tokio::test]
     async fn ut_nofly_request_to_gis_invalid_no_nodes() {
         let nofly_zones: Vec<RequestNoFlyZone> = vec![];
-        let result = update_nofly(nofly_zones, get_pool()).await.unwrap_err();
+        let result = update_nofly(nofly_zones, get_psql_pool().await)
+            .await
+            .unwrap_err();
         assert_eq!(result, NoFlyZoneError::NoZones);
     }
 
@@ -315,7 +311,9 @@ mod tests {
                 ..Default::default()
             }];
 
-            let result = update_nofly(nofly_zones, get_pool()).await.unwrap_err();
+            let result = update_nofly(nofly_zones, get_psql_pool().await)
+                .await
+                .unwrap_err();
             assert_eq!(result, NoFlyZoneError::Location);
         }
 
@@ -346,7 +344,9 @@ mod tests {
                 ..Default::default()
             }];
 
-            let result = update_nofly(nofly_zones, get_pool()).await.unwrap_err();
+            let result = update_nofly(nofly_zones, get_psql_pool().await)
+                .await
+                .unwrap_err();
             assert_eq!(result, NoFlyZoneError::Location);
         }
     }

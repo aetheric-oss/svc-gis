@@ -80,9 +80,9 @@ impl TryFrom<RequestWaypoint> for Waypoint {
 /// Update waypoints in the PostGIS database
 pub async fn update_waypoints(
     waypoints: Vec<RequestWaypoint>,
-    pool: deadpool_postgres::Pool,
+    pool: &deadpool_postgres::Pool,
 ) -> Result<(), WaypointError> {
-    postgis_debug!("(postgis update_waypoints) entry.");
+    postgis_debug!("(update_waypoints) entry.");
     if waypoints.is_empty() {
         return Err(WaypointError::NoWaypoints);
     }
@@ -92,12 +92,12 @@ pub async fn update_waypoints(
         .map(Waypoint::try_from)
         .collect::<Result<Vec<_>, _>>()?;
     let Ok(mut client) = pool.get().await else {
-        postgis_error!("(postgis update_waypoints) error getting client.");
+        postgis_error!("(update_waypoints) error getting client.");
         return Err(WaypointError::Unknown);
     };
 
     let Ok(transaction) = client.transaction().await else {
-        postgis_error!("(postgis update_waypoints) error creating transaction.");
+        postgis_error!("(update_waypoints) error creating transaction.");
         return Err(WaypointError::Unknown);
     };
 
@@ -105,7 +105,7 @@ pub async fn update_waypoints(
         .prepare_cached("SELECT arrow.update_waypoint($1, $2)")
         .await
     else {
-        postgis_error!("(postgis update_waypoints) error preparing cached statement.");
+        postgis_error!("(update_waypoints) error preparing cached statement.");
         return Err(WaypointError::Unknown);
     };
 
@@ -114,17 +114,17 @@ pub async fn update_waypoints(
             .execute(&stmt, &[&waypoint.label, &waypoint.geom])
             .await
         {
-            postgis_error!("(postgis update_waypoints) error: {}", e);
+            postgis_error!("(update_waypoints) error: {}", e);
             return Err(WaypointError::Unknown);
         }
     }
 
     match transaction.commit().await {
         Ok(_) => {
-            postgis_debug!("(postgis update_waypoints) success.");
+            postgis_debug!("(update_waypoints) success.");
         }
         Err(e) => {
-            postgis_error!("(postgis update_waypoints) error: {}", e);
+            postgis_error!("(update_waypoints) error: {}", e);
             return Err(WaypointError::Unknown);
         }
     }
@@ -137,17 +137,7 @@ mod tests {
     use super::*;
     use crate::grpc::server::grpc_server::Coordinates;
     use crate::postgis::utils;
-    use deadpool_postgres::{Config, ManagerConfig, Pool, RecyclingMethod, Runtime};
-    use tokio_postgres::NoTls;
-
-    fn get_pool() -> Pool {
-        let mut cfg = Config::default();
-        cfg.dbname = Some("deadpool".to_string());
-        cfg.manager = Some(ManagerConfig {
-            recycling_method: RecyclingMethod::Fast,
-        });
-        cfg.create_pool(Some(Runtime::Tokio1), NoTls).unwrap()
-    }
+    use crate::test_util::get_psql_pool;
 
     #[test]
     fn ut_request_valid() {
@@ -204,7 +194,9 @@ mod tests {
             })
             .collect();
 
-        let result = update_waypoints(waypoints, get_pool()).await.unwrap_err();
+        let result = update_waypoints(waypoints, get_psql_pool().await)
+            .await
+            .unwrap_err();
         assert_eq!(result, WaypointError::Unknown);
     }
 
@@ -226,7 +218,9 @@ mod tests {
                 }),
             }];
 
-            let result = update_waypoints(waypoints, get_pool()).await.unwrap_err();
+            let result = update_waypoints(waypoints, get_psql_pool().await)
+                .await
+                .unwrap_err();
             assert_eq!(result, WaypointError::Label);
         }
     }
@@ -234,7 +228,9 @@ mod tests {
     #[tokio::test]
     async fn ut_waypoints_request_to_gis_invalid_no_nodes() {
         let waypoints: Vec<RequestWaypoint> = vec![];
-        let result = update_waypoints(waypoints, get_pool()).await.unwrap_err();
+        let result = update_waypoints(waypoints, get_psql_pool().await)
+            .await
+            .unwrap_err();
         assert_eq!(result, WaypointError::NoWaypoints);
     }
 
@@ -251,7 +247,9 @@ mod tests {
                 }),
             }];
 
-            let result = update_waypoints(waypoints, get_pool()).await.unwrap_err();
+            let result = update_waypoints(waypoints, get_psql_pool().await)
+                .await
+                .unwrap_err();
             assert_eq!(result, WaypointError::Location);
         }
     }
