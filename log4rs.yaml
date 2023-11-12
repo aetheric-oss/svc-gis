@@ -19,16 +19,16 @@ appenders:
         base: 1
     encoder:
       kind: json
-  postgis:
+  backend_requests:
     kind: rolling_file
-    path: "logs/postgis.log"
+    path: "logs/backend_requests.log"
     policy:
       trigger:
         kind: size
         limit: 20mb
       roller:
         kind: fixed_window
-        pattern: logs/postgis_{}.gz
+        pattern: logs/backend_requests_{}.gz
         count: 5
         base: 1
     encoder:
@@ -54,14 +54,14 @@ root:
     - stdout
 
 loggers:
+  backend::postgis:
+    level: info
+    appenders:
+      - backend_requests
   app::grpc:
     level: info
     appenders:
       - grpc_requests
-  app::postgis:
-    level: info
-    appenders:
-      - postgis
   test::ut:
     level: info
     appenders:

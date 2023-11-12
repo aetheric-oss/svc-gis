@@ -21,8 +21,11 @@ pub enum WaypointError {
     /// No Location
     Location,
 
-    /// Unknown error
-    Unknown,
+    /// Could not get client
+    Client,
+
+    /// DBError error
+    DBError,
 }
 
 impl std::fmt::Display for WaypointError {
@@ -31,7 +34,8 @@ impl std::fmt::Display for WaypointError {
             WaypointError::NoWaypoints => write!(f, "No waypoints were provided."),
             WaypointError::Label => write!(f, "Invalid label provided."),
             WaypointError::Location => write!(f, "Invalid location provided."),
-            WaypointError::Unknown => write!(f, "Unknown error."),
+            WaypointError::Client => write!(f, "Could not get backend client."),
+            WaypointError::DBError => write!(f, "Unknown backend error."),
         }
     }
 }
@@ -63,7 +67,7 @@ impl TryFrom<RequestWaypoint> for Waypoint {
             Ok(geom) => geom,
             Err(e) => {
                 postgis_error!(
-                    "(try_from RequestWaypoint) Error creating point from vertex: {:?}",
+                    "(try_from RequestWaypoint) Error creating point from vertex: {}",
                     e
                 );
                 return Err(WaypointError::Location);
@@ -91,45 +95,50 @@ pub async fn update_waypoints(
         .into_iter()
         .map(Waypoint::try_from)
         .collect::<Result<Vec<_>, _>>()?;
-    let Ok(mut client) = pool.get().await else {
-        postgis_error!("(update_waypoints) error getting client.");
-        return Err(WaypointError::Unknown);
-    };
 
-    let Ok(transaction) = client.transaction().await else {
-        postgis_error!("(update_waypoints) error creating transaction.");
-        return Err(WaypointError::Unknown);
-    };
+    let mut client = pool.get().await.map_err(|e| {
+        postgis_error!(
+            "(update_waypoints) could not get client from psql connection pool: {}",
+            e
+        );
+        WaypointError::Client
+    })?;
+    let transaction = client.transaction().await.map_err(|e| {
+        postgis_error!("(update_waypoints) could not create transaction: {}", e);
+        WaypointError::DBError
+    })?;
 
-    let Ok(stmt) = transaction
+    let stmt = transaction
         .prepare_cached("SELECT arrow.update_waypoint($1, $2)")
         .await
-    else {
-        postgis_error!("(update_waypoints) error preparing cached statement.");
-        return Err(WaypointError::Unknown);
-    };
+        .map_err(|e| {
+            postgis_error!(
+                "(update_waypoints) could not prepare cached statement: {}",
+                e
+            );
+            WaypointError::DBError
+        })?;
 
     for waypoint in &waypoints {
-        if let Err(e) = transaction
+        transaction
             .execute(&stmt, &[&waypoint.label, &waypoint.geom])
             .await
-        {
-            postgis_error!("(update_waypoints) error: {}", e);
-            return Err(WaypointError::Unknown);
-        }
+            .map_err(|e| {
+                postgis_error!("(update_waypoints) could not execute transaction: {}", e);
+                WaypointError::DBError
+            })?;
     }
 
     match transaction.commit().await {
         Ok(_) => {
             postgis_debug!("(update_waypoints) success.");
+            Ok(())
         }
         Err(e) => {
-            postgis_error!("(update_waypoints) error: {}", e);
-            return Err(WaypointError::Unknown);
+            postgis_error!("(update_waypoints) could not commit transaction: {}", e);
+            Err(WaypointError::DBError)
         }
     }
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -197,7 +206,7 @@ mod tests {
         let result = update_waypoints(waypoints, get_psql_pool().await)
             .await
             .unwrap_err();
-        assert_eq!(result, WaypointError::Unknown);
+        assert_eq!(result, WaypointError::Client);
     }
 
     #[tokio::test]
