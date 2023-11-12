@@ -33,7 +33,7 @@ impl RpcService for ServerImpl {
         &self,
         _request: Request<ReadyRequest>,
     ) -> Result<Response<ReadyResponse>, Status> {
-        grpc_debug!("(grpc is_ready) entry.");
+        grpc_debug!("(is_ready) entry.");
         let response = ReadyResponse { ready: true };
         Ok(Response::new(response))
     }
@@ -43,13 +43,13 @@ impl RpcService for ServerImpl {
         &self,
         request: Request<grpc_server::UpdateVertiportsRequest>,
     ) -> Result<Response<grpc_server::UpdateResponse>, Status> {
-        grpc_debug!("(grpc update_vertiports) entry.");
+        grpc_debug!("(update_vertiports) entry.");
 
         // Update nodes in PostGIS
         match vertiport::update_vertiports(request.into_inner().vertiports, &self.pool).await {
             Ok(_) => Ok(Response::new(grpc_server::UpdateResponse { updated: true })),
             Err(e) => {
-                grpc_error!("(grpc update_vertiports) error updating vertiports.");
+                grpc_error!("(update_vertiports) error updating vertiports.");
                 Err(Status::internal(e.to_string()))
             }
         }
@@ -60,13 +60,13 @@ impl RpcService for ServerImpl {
         &self,
         request: Request<grpc_server::UpdateWaypointsRequest>,
     ) -> Result<Response<grpc_server::UpdateResponse>, Status> {
-        grpc_debug!("(grpc update_waypoints) entry.");
+        grpc_debug!("(update_waypoints) entry.");
 
         // Update nodes in PostGIS
         match waypoint::update_waypoints(request.into_inner().waypoints, &self.pool).await {
             Ok(_) => Ok(Response::new(grpc_server::UpdateResponse { updated: true })),
             Err(e) => {
-                grpc_error!("(grpc update_waypoints) error updating nodes.");
+                grpc_error!("(update_waypoints) error updating nodes: {}", e);
                 Err(Status::internal(e.to_string()))
             }
         }
@@ -77,14 +77,14 @@ impl RpcService for ServerImpl {
         &self,
         request: Request<grpc_server::UpdateNoFlyZonesRequest>,
     ) -> Result<Response<grpc_server::UpdateResponse>, Status> {
-        grpc_debug!("(grpc update_no_fly_zones) entry.");
+        grpc_debug!("(update_no_fly_zones) entry.");
 
         // Update nodes in PostGIS
         match nofly::update_nofly(request.into_inner().zones, &self.pool).await {
             Ok(_) => Ok(Response::new(grpc_server::UpdateResponse { updated: true })),
             Err(e) => {
-                grpc_error!("(grpc update_no_fly_zones) error updating zones.");
-                Err(Status::invalid_argument(e.to_string()))
+                grpc_error!("(update_no_fly_zones) error updating zones: {}", e);
+                Err(Status::internal(e.to_string()))
             }
         }
     }
@@ -94,12 +94,12 @@ impl RpcService for ServerImpl {
         &self,
         request: Request<grpc_server::UpdateAircraftPositionRequest>,
     ) -> Result<Response<grpc_server::UpdateResponse>, Status> {
-        grpc_debug!("(grpc update_aircraft_position) entry.");
+        grpc_debug!("(update_aircraft_position) entry.");
         // Update aircraft in PostGIS
         match aircraft::update_aircraft_position(request.into_inner().aircraft, &self.pool).await {
             Ok(_) => Ok(Response::new(grpc_server::UpdateResponse { updated: true })),
             Err(e) => {
-                grpc_error!("(grpc update_aircraft_position) error updating aircraft.");
+                grpc_error!("(update_aircraft_position) error updating aircraft: {}", e);
                 Err(Status::internal(e.to_string()))
             }
         }
@@ -110,14 +110,14 @@ impl RpcService for ServerImpl {
         &self,
         request: Request<grpc_server::BestPathRequest>,
     ) -> Result<Response<grpc_server::BestPathResponse>, Status> {
-        grpc_debug!("(grpc best_path) entry.");
+        grpc_debug!("(best_path) entry.");
         let request = request.into_inner();
 
         let path_type = match num::FromPrimitive::from_i32(request.start_type) {
             Some(NodeType::Vertiport) => PathType::PortToPort,
             Some(NodeType::Aircraft) => PathType::AircraftToPort,
             _ => {
-                grpc_error!("(grpc best_path) invalid start node type.");
+                grpc_error!("(best_path) invalid start node type.");
                 return Err(Status::invalid_argument(
                     "Invalid start node type. Must be vertiport or aircraft.",
                 ));
@@ -130,7 +130,7 @@ impl RpcService for ServerImpl {
                 Ok(Response::new(response))
             }
             Err(e) => {
-                grpc_error!("(grpc best_path) error getting best path.");
+                grpc_error!("(best_path) error getting best path: {}", e);
                 Err(Status::internal(e.to_string()))
             }
         }
@@ -141,7 +141,7 @@ impl RpcService for ServerImpl {
         &self,
         request: Request<grpc_server::NearestNeighborRequest>,
     ) -> Result<Response<grpc_server::NearestNeighborResponse>, Status> {
-        grpc_debug!("(grpc nearest_neighbors) entry.");
+        grpc_debug!("(nearest_neighbors) entry.");
 
         match nearest::nearest_neighbors(request.into_inner(), &self.pool).await {
             Ok(distances) => {
@@ -149,7 +149,7 @@ impl RpcService for ServerImpl {
                 Ok(Response::new(response))
             }
             Err(e) => {
-                grpc_error!("(grpc nearest_neighbors) error getting nearest neighbors.");
+                grpc_error!("(nearest_neighbors) error getting nearest neighbors: {}", e);
                 Err(Status::internal(e.to_string()))
             }
         }
@@ -219,7 +219,7 @@ impl RpcService for ServerImpl {
         &self,
         _request: Request<ReadyRequest>,
     ) -> Result<Response<ReadyResponse>, Status> {
-        grpc_warn!("(grpc is_ready MOCK) entry.");
+        grpc_warn!("(is_ready MOCK) entry.");
         let response = ReadyResponse { ready: true };
         Ok(Response::new(response))
     }
@@ -229,7 +229,7 @@ impl RpcService for ServerImpl {
         &self,
         _request: Request<grpc_server::UpdateVertiportsRequest>,
     ) -> Result<Response<grpc_server::UpdateResponse>, Status> {
-        grpc_warn!("(grpc update_vertiports MOCK) entry.");
+        grpc_warn!("(update_vertiports MOCK) entry.");
 
         Ok(Response::new(grpc_server::UpdateResponse { updated: true }))
     }
@@ -239,7 +239,7 @@ impl RpcService for ServerImpl {
         &self,
         _request: Request<grpc_server::UpdateWaypointsRequest>,
     ) -> Result<Response<grpc_server::UpdateResponse>, Status> {
-        grpc_warn!("(grpc update_waypoints MOCK) entry.");
+        grpc_warn!("(update_waypoints MOCK) entry.");
 
         Ok(Response::new(grpc_server::UpdateResponse { updated: true }))
     }
@@ -249,7 +249,7 @@ impl RpcService for ServerImpl {
         &self,
         _request: Request<grpc_server::UpdateNoFlyZonesRequest>,
     ) -> Result<Response<grpc_server::UpdateResponse>, Status> {
-        grpc_warn!("(grpc update_no_fly_zones MOCK) entry.");
+        grpc_warn!("(update_no_fly_zones MOCK) entry.");
 
         Ok(Response::new(grpc_server::UpdateResponse { updated: true }))
     }
@@ -259,7 +259,7 @@ impl RpcService for ServerImpl {
         &self,
         _request: Request<grpc_server::UpdateAircraftPositionRequest>,
     ) -> Result<Response<grpc_server::UpdateResponse>, Status> {
-        grpc_warn!("(grpc update_aircraft_position MOCK) entry.");
+        grpc_warn!("(update_aircraft_position MOCK) entry.");
 
         Ok(Response::new(grpc_server::UpdateResponse { updated: true }))
     }
@@ -269,14 +269,14 @@ impl RpcService for ServerImpl {
         &self,
         request: Request<grpc_server::BestPathRequest>,
     ) -> Result<Response<grpc_server::BestPathResponse>, Status> {
-        grpc_warn!("(grpc best_path MOCK) entry.");
+        grpc_warn!("(best_path MOCK) entry.");
         let request = request.into_inner();
 
         let path_type = match num::FromPrimitive::from_i32(request.start_type) {
             Some(NodeType::Vertiport) => PathType::PortToPort,
             Some(NodeType::Aircraft) => PathType::AircraftToPort,
             _ => {
-                grpc_error!("(grpc best_path MOCK) invalid start node type.");
+                grpc_error!("(best_path MOCK) invalid start node type.");
                 return Err(Status::invalid_argument(
                     "Invalid start node type. Must be vertiport or aircraft.",
                 ));
@@ -289,7 +289,7 @@ impl RpcService for ServerImpl {
                 Ok(Response::new(response))
             }
             Err(e) => {
-                grpc_error!("(grpc best_path MOCK) error getting best path.");
+                grpc_error!("(best_path MOCK) error getting best path.");
                 Err(Status::internal(e.to_string()))
             }
         }
@@ -300,14 +300,14 @@ impl RpcService for ServerImpl {
         &self,
         request: Request<grpc_server::NearestNeighborRequest>,
     ) -> Result<Response<grpc_server::NearestNeighborResponse>, Status> {
-        grpc_warn!("(grpc nearest_neighbors MOCK) entry.");
+        grpc_warn!("(nearest_neighbors MOCK) entry.");
         match nearest::nearest_neighbors(request.into_inner(), &self.pool).await {
             Ok(distances) => {
                 let response = grpc_server::NearestNeighborResponse { distances };
                 Ok(Response::new(response))
             }
             Err(e) => {
-                grpc_error!("(grpc nearest_neighbors MOCK) error getting nearest neighbors.");
+                grpc_error!("(nearest_neighbors MOCK) error getting nearest neighbors.");
                 Err(Status::internal(e.to_string()))
             }
         }

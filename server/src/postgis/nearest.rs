@@ -27,8 +27,8 @@ pub enum NNError {
     /// Could not get client
     Client,
 
-    /// Unknown error
-    Unknown,
+    /// DBError error
+    DBError,
 }
 
 impl std::fmt::Display for NNError {
@@ -40,8 +40,8 @@ impl std::fmt::Display for NNError {
             NNError::InvalidLimit => write!(f, "Invalid limit."),
             NNError::InvalidRange => write!(f, "Invalid range."),
             NNError::Unsupported => write!(f, "Unsupported path type."),
-            NNError::Client => write!(f, "Could not get client."),
-            NNError::Unknown => write!(f, "Unknown error."),
+            NNError::Client => write!(f, "Could not get backend client."),
+            NNError::DBError => write!(f, "Unknown backend error."),
         }
     }
 }
@@ -49,16 +49,13 @@ impl std::fmt::Display for NNError {
 impl NearestNeighborRequest {
     fn validate(&self) -> Result<(), NNError> {
         if self.limit < 1 {
-            postgis_error!(
-                "(validate NearestNeighborRequest) invalid limit: {}",
-                self.limit
-            );
+            postgis_error!("(validate) invalid limit: {}", self.limit);
             return Err(NNError::InvalidLimit);
         }
 
         if self.max_range_meters < 0.0 {
             postgis_error!(
-                "(validate NearestNeighborRequest) invalid max range meters: {}",
+                "(validate) invalid max range meters: {}",
                 self.max_range_meters
             );
             return Err(NNError::InvalidRange);
@@ -82,7 +79,7 @@ async fn nearest_neighbor_vertiport_source(
         return Err(NNError::InvalidStartNode);
     };
 
-    match client
+    client
         .query(
             &stmt,
             &[
@@ -92,17 +89,13 @@ async fn nearest_neighbor_vertiport_source(
             ],
         )
         .await
-    {
-        Ok(results) => Ok(results),
-        Err(e) => {
+        .map_err(|e| {
             postgis_error!(
                 "(nearest_neighbor_vertiport_source) could not request routes: {}",
                 e
             );
-
-            Err(NNError::Unknown)
-        }
-    }
+            NNError::DBError
+        })
 }
 
 /// Get the nearest neighboring vertiports to an aircraft
@@ -111,7 +104,7 @@ async fn nearest_neighbor_aircraft_source(
     client: deadpool_postgres::Client,
     request: NearestNeighborRequest,
 ) -> Result<Vec<tokio_postgres::Row>, NNError> {
-    match client
+    client
         .query(
             &stmt,
             &[
@@ -121,17 +114,13 @@ async fn nearest_neighbor_aircraft_source(
             ],
         )
         .await
-    {
-        Ok(results) => Ok(results),
-        Err(e) => {
+        .map_err(|e| {
             postgis_error!(
                 "(nearest_neighbor_aircraft_source) could not request routes: {}",
                 e
             );
-
-            Err(NNError::Unknown)
-        }
-    }
+            NNError::DBError
+        })
 }
 
 /// Nearest neighbor query for nodes
@@ -172,37 +161,43 @@ pub async fn nearest_neighbors(
         }
     };
 
-    let Ok(client) = pool.get().await else {
-        println!("(nearest_neighbors) could not get client from pool.");
-        return Err(NNError::Client);
-    };
+    let client = pool.get().await.map_err(|e| {
+        postgis_error!(
+            "(nearest_neighbors) could not get client from psql connection pool: {}",
+            e
+        );
+        NNError::Client
+    })?;
 
     let target_type = request.end_type;
     let rows = match (start_type, end_type) {
         (NodeType::Vertiport, NodeType::Vertiport) => {
-            let Ok(stmt) = client
-                .prepare_cached("SELECT * FROM arrow.nearest_vertiports_to_vertiport($1, $2, $3);")
-                .await
-            else {
-                postgis_error!("(nearest_neighbors) could not prepare statement.");
-                return Err(NNError::Unknown);
-            };
+            let query = "SELECT * FROM arrow.nearest_vertiports_to_vertiport($1, $2, $3);";
+            postgis_debug!("(nearest_neighbors) query [{}]", query);
+
+            let stmt = client.prepare_cached(query).await.map_err(|e| {
+                postgis_error!("(nearest_neighbors) could not prepare statement: {}", e);
+                NNError::DBError
+            })?;
 
             nearest_neighbor_vertiport_source(stmt, client, request).await?
         }
         (NodeType::Aircraft, NodeType::Vertiport) => {
-            let Ok(stmt) = client
-                .prepare_cached("SELECT * FROM arrow.nearest_vertiports_to_aircraft($1, $2, $3);")
-                .await
-            else {
-                postgis_error!("(nearest_neighbors) could not prepare statement.");
-                return Err(NNError::Unknown);
-            };
+            let query = "SELECT * FROM arrow.nearest_vertiports_to_aircraft($1, $2, $3);";
+            postgis_debug!("(nearest_neighbors) query [{}]", query);
+
+            let stmt = client.prepare_cached(query).await.map_err(|e| {
+                postgis_error!("(nearest_neighbors) could not prepare statement: {}", e);
+                NNError::DBError
+            })?;
 
             nearest_neighbor_aircraft_source(stmt, client, request).await?
         }
         _ => {
-            postgis_error!("(grpc nearest_neighbors) unsupported path type.");
+            postgis_error!(
+                "(nearest_neighbors) unsupported path types: {:?}",
+                (start_type, end_type)
+            );
             return Err(NNError::Unsupported);
         }
     };
