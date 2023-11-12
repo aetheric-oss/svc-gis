@@ -25,8 +25,11 @@ pub enum VertiportError {
     /// Location of one or more vertices is invalid
     Location,
 
-    /// Unknown error
-    Unknown,
+    /// Could not get client
+    Client,
+
+    /// DBError error
+    DBError,
 }
 
 impl std::fmt::Display for VertiportError {
@@ -36,7 +39,8 @@ impl std::fmt::Display for VertiportError {
             VertiportError::NoVertiports => write!(f, "No vertiports were provided."),
             VertiportError::Label => write!(f, "Invalid label provided."),
             VertiportError::Location => write!(f, "Invalid vertices provided."),
-            VertiportError::Unknown => write!(f, "Unknown error."),
+            VertiportError::Client => write!(f, "Could not get backend client."),
+            VertiportError::DBError => write!(f, "Unknown backend error."),
         }
     }
 }
@@ -63,7 +67,8 @@ impl TryFrom<RequestVertiport> for Vertiport {
             Some(label) => {
                 if let Err(e) = super::utils::check_string(label, LABEL_REGEX, LABEL_MAX_LENGTH) {
                     postgis_error!(
-                        "(try_from RequestVertiport) Vertiport {} has invalid label: {}",
+                        "(try_from RequestVertiport) Vertiport {} has invalid label {}: {}",
+                        label,
                         vertiport.uuid,
                         e
                     );
@@ -104,45 +109,49 @@ pub async fn update_vertiports(
         .map(Vertiport::try_from)
         .collect::<Result<Vec<_>, _>>()?;
 
-    let Ok(mut client) = pool.get().await else {
-        postgis_error!("(update_vertiports) error getting client.");
-        return Err(VertiportError::Unknown);
-    };
+    let mut client = pool.get().await.map_err(|e| {
+        postgis_error!(
+            "(update_vertiports) could not get client from psql connection pool: {}",
+            e
+        );
+        VertiportError::Client
+    })?;
+    let transaction = client.transaction().await.map_err(|e| {
+        postgis_error!("(update_vertiports) could not create transaction: {}", e);
+        VertiportError::DBError
+    })?;
 
-    let Ok(transaction) = client.transaction().await else {
-        postgis_error!("(update_vertiports) error creating transaction.");
-        return Err(VertiportError::Unknown);
-    };
-
-    let Ok(stmt) = transaction
+    let stmt = transaction
         .prepare_cached("SELECT arrow.update_vertiport($1, $2, $3)")
         .await
-    else {
-        postgis_error!("(update_vertiports) error preparing cached statement.");
-        return Err(VertiportError::Unknown);
-    };
+        .map_err(|e| {
+            postgis_error!(
+                "(update_vertiports) could not prepare cached statement: {}",
+                e
+            );
+            VertiportError::DBError
+        })?;
 
     for vertiport in &vertiports {
-        if let Err(e) = transaction
+        transaction
             .execute(&stmt, &[&vertiport.uuid, &vertiport.geom, &vertiport.label])
             .await
-        {
-            postgis_error!("(update_vertiports) error: {}", e);
-            return Err(VertiportError::Unknown);
-        }
+            .map_err(|e| {
+                postgis_error!("(update_vertiports) could not execute transaction: {}", e);
+                VertiportError::DBError
+            })?;
     }
 
     match transaction.commit().await {
         Ok(_) => {
             postgis_debug!("(update_vertiports) success.");
+            Ok(())
         }
         Err(e) => {
-            postgis_error!("(update_vertiports) error: {}", e);
-            return Err(VertiportError::Unknown);
+            postgis_error!("(update_vertiports) could not commit transaction: {}", e);
+            Err(VertiportError::DBError)
         }
     }
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -225,7 +234,7 @@ mod tests {
         let result = update_vertiports(vertiports, get_psql_pool().await)
             .await
             .unwrap_err();
-        assert_eq!(result, VertiportError::Unknown);
+        assert_eq!(result, VertiportError::Client);
     }
 
     #[tokio::test]

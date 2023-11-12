@@ -31,8 +31,11 @@ pub enum AircraftError {
     /// Invalid Label
     Label,
 
-    /// Unknown error
-    Unknown,
+    /// Could not get client
+    Client,
+
+    /// DBError error
+    DBError,
 }
 
 impl std::fmt::Display for AircraftError {
@@ -40,10 +43,11 @@ impl std::fmt::Display for AircraftError {
         match self {
             AircraftError::NoAircraft => write!(f, "No aircraft were provided."),
             AircraftError::AircraftId => write!(f, "Invalid aircraft ID provided."),
-            AircraftError::Label => write!(f, "Invalid label provided."),
             AircraftError::Location => write!(f, "Invalid location provided."),
             AircraftError::Time => write!(f, "Invalid time provided."),
-            AircraftError::Unknown => write!(f, "Unknown error."),
+            AircraftError::Label => write!(f, "Invalid label provided."),
+            AircraftError::Client => write!(f, "Could not get backend client."),
+            AircraftError::DBError => write!(f, "Unknown backend error."),
         }
     }
 }
@@ -132,27 +136,34 @@ pub async fn update_aircraft_position(
         .into_iter()
         .map(AircraftPosition::try_from)
         .collect::<Result<Vec<_>, _>>()?;
+    let mut client = pool.get().await.map_err(|e| {
+        postgis_error!(
+            "(update_aircraft_position) could not get client from psql connection pool: {}",
+            e
+        );
+        AircraftError::Client
+    })?;
+    let transaction = client.transaction().await.map_err(|e| {
+        postgis_error!(
+            "(update_aircraft_position) could not create transaction: {}",
+            e
+        );
+        AircraftError::DBError
+    })?;
 
-    let Ok(mut client) = pool.get().await else {
-        postgis_error!("(update_aircraft_position) error getting client.");
-        return Err(AircraftError::Unknown);
-    };
-
-    let Ok(transaction) = client.transaction().await else {
-        postgis_error!("(update_aircraft_position) error creating transaction.");
-        return Err(AircraftError::Unknown);
-    };
-
-    let Ok(stmt) = transaction
+    let stmt = transaction
         .prepare_cached("SELECT arrow.update_aircraft_position($1, $2, $3, $4, $5::TIMESTAMPTZ)")
         .await
-    else {
-        postgis_error!("(update_aircraft_position) error preparing cached statement.");
-        return Err(AircraftError::Unknown);
-    };
+        .map_err(|e| {
+            postgis_error!(
+                "(update_aircraft_position) could not prepare cached statement: {}",
+                e
+            );
+            AircraftError::DBError
+        })?;
 
     for craft in &aircraft {
-        if let Err(e) = transaction
+        transaction
             .execute(
                 &stmt,
                 &[
@@ -164,23 +175,28 @@ pub async fn update_aircraft_position(
                 ],
             )
             .await
-        {
-            postgis_error!("(update_aircraft_position) error: {}", e);
-            return Err(AircraftError::Unknown);
-        }
+            .map_err(|e| {
+                postgis_error!(
+                    "(update_aircraft_position) could not execute transaction: {}",
+                    e
+                );
+                AircraftError::DBError
+            })?;
     }
 
     match transaction.commit().await {
         Ok(_) => {
             postgis_debug!("(update_aircraft_position) success.");
+            Ok(())
         }
         Err(e) => {
-            postgis_error!("(update_aircraft_position) error: {}", e);
-            return Err(AircraftError::Unknown);
+            postgis_error!(
+                "(update_aircraft_position) could not commit transaction: {}",
+                e
+            );
+            Err(AircraftError::DBError)
         }
     }
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -279,7 +295,7 @@ mod tests {
         let result = update_aircraft_position(aircraft, get_psql_pool().await)
             .await
             .unwrap_err();
-        assert_eq!(result, AircraftError::Unknown);
+        assert_eq!(result, AircraftError::Client);
 
         ut_info!("(ut_client_failure) success");
     }

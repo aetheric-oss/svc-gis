@@ -32,8 +32,8 @@ pub enum PathError {
     /// Could not get client
     Client,
 
-    /// Unknown error
-    Unknown,
+    /// DBError error
+    DBError,
 }
 
 impl std::fmt::Display for PathError {
@@ -45,8 +45,8 @@ impl std::fmt::Display for PathError {
             PathError::InvalidStartTime => write!(f, "Invalid start time."),
             PathError::InvalidEndTime => write!(f, "Invalid end time."),
             PathError::InvalidTimeWindow => write!(f, "Invalid time window."),
-            PathError::Client => write!(f, "Could not get client."),
-            PathError::Unknown => write!(f, "Unknown error."),
+            PathError::Client => write!(f, "Could not get backend client."),
+            PathError::DBError => write!(f, "Unknown backend error."),
         }
     }
 }
@@ -128,7 +128,7 @@ async fn best_path_vertiport_source(
         return Err(PathError::InvalidStartNode);
     };
 
-    match client
+    client
         .query(
             &stmt,
             &[
@@ -139,16 +139,13 @@ async fn best_path_vertiport_source(
             ],
         )
         .await
-    {
-        Ok(results) => Ok(results),
-        Err(e) => {
+        .map_err(|e| {
             postgis_error!(
                 "(best_path_vertiport_source) could not request routes: {}",
                 e
             );
-            Err(PathError::Unknown)
-        }
-    }
+            PathError::DBError
+        })
 }
 
 /// Get the best path from a aircraft to another vertiport
@@ -157,7 +154,7 @@ async fn best_path_aircraft_source(
     client: deadpool_postgres::Client,
     request: PathRequest,
 ) -> Result<Vec<tokio_postgres::Row>, PathError> {
-    match client
+    client
         .query(
             &stmt,
             &[
@@ -168,17 +165,13 @@ async fn best_path_aircraft_source(
             ],
         )
         .await
-    {
-        Ok(results) => Ok(results),
-        Err(e) => {
+        .map_err(|e| {
             postgis_error!(
                 "(best_path_aircraft_source) could not request routes: {}",
                 e
             );
-
-            Err(PathError::Unknown)
-        }
-    }
+            PathError::DBError
+        })
 }
 
 /// The purpose of this initial search is to verify that a flight between two
@@ -196,35 +189,35 @@ pub async fn best_path(
     pool: &deadpool_postgres::Pool,
 ) -> Result<Vec<PathSegment>, PathError> {
     let request = PathRequest::try_from(request)?;
-    let client = match pool.get().await {
-        Ok(client) => client,
-        Err(e) => {
-            postgis_error!("(best_path) could not get client from pool.");
-            postgis_error!("(best_path) error: {:?}", e);
-            return Err(PathError::Client);
-        }
-    };
+
+    let client = pool.get().await.map_err(|e| {
+        postgis_error!(
+            "(best_path) could not get client from psql connection pool: {}",
+            e
+        );
+        PathError::Client
+    })?;
 
     let rows = match path_type {
         PathType::PortToPort => {
-            let Ok(stmt) = client
+            let stmt = client
                 .prepare_cached("SELECT * FROM arrow.best_path_p2p($1, $2, $3, $4);")
                 .await
-            else {
-                postgis_error!("(best_path) could not prepare statement.");
-                return Err(PathError::Unknown);
-            };
+                .map_err(|e| {
+                    postgis_error!("(best_path) could not prepare cached statement: {}", e);
+                    PathError::DBError
+                })?;
 
             best_path_vertiport_source(stmt, client, request).await?
         }
         PathType::AircraftToPort => {
-            let Ok(stmt) = client
+            let stmt = client
                 .prepare_cached("SELECT * FROM arrow.best_path_a2p($1, $2, $3, $4);")
                 .await
-            else {
-                postgis_error!("(best_path) could not prepare statement.");
-                return Err(PathError::Unknown);
-            };
+                .map_err(|e| {
+                    postgis_error!("(best_path) could not prepare cached statement: {}", e);
+                    PathError::DBError
+                })?;
 
             best_path_aircraft_source(stmt, client, request).await?
         }
@@ -263,6 +256,7 @@ pub async fn best_path(
 mod tests {
     use super::*;
     use crate::grpc::server::grpc_server;
+    use crate::test_util::get_psql_pool;
 
     #[test]
     fn ut_request_valid() {
@@ -276,6 +270,30 @@ mod tests {
 
         let result = PathRequest::try_from(request);
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn ut_client_failure() {
+        crate::get_log_handle().await;
+        ut_info!("(ut_client_failure) start");
+
+        let time_start: Timestamp = Utc::now().into();
+        let time_end: Timestamp = (Utc::now() + Duration::minutes(10)).into();
+
+        let request = BestPathRequest {
+            node_start_id: uuid::Uuid::new_v4().to_string(),
+            node_uuid_end: uuid::Uuid::new_v4().to_string(),
+            start_type: grpc_server::NodeType::Aircraft as i32,
+            time_start: Some(time_start),
+            time_end: Some(time_end),
+        };
+
+        let result = best_path(PathType::AircraftToPort, request, get_psql_pool().await)
+            .await
+            .unwrap_err();
+        assert_eq!(result, PathError::Client);
+
+        ut_info!("(ut_client_failure) success");
     }
 
     #[test]

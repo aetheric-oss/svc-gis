@@ -45,8 +45,11 @@ pub enum NoFlyZoneError {
     /// No No-Fly Zones
     NoZones,
 
-    /// Unknown error
-    Unknown,
+    /// Could not get client
+    Client,
+
+    /// DBError error
+    DBError,
 }
 
 impl std::fmt::Display for NoFlyZoneError {
@@ -56,7 +59,8 @@ impl std::fmt::Display for NoFlyZoneError {
             NoFlyZoneError::TimeOrder => write!(f, "Start time is later than end time."),
             NoFlyZoneError::NoZones => write!(f, "No No-Fly Zones were provided."),
             NoFlyZoneError::Location => write!(f, "Invalid location provided."),
-            NoFlyZoneError::Unknown => write!(f, "Unknown error."),
+            NoFlyZoneError::Client => write!(f, "Could not get backend client."),
+            NoFlyZoneError::DBError => write!(f, "Unknown backend error."),
             NoFlyZoneError::Label => write!(f, "Invalid label provided."),
         }
     }
@@ -126,48 +130,49 @@ pub async fn update_nofly(
         .map(NoFlyZone::try_from)
         .collect::<Result<Vec<_>, _>>()?;
 
-    let Ok(mut client) = pool.get().await else {
-        postgis_error!("(update_nofly) error getting client.");
-        return Err(NoFlyZoneError::Unknown);
-    };
+    let mut client = pool.get().await.map_err(|e| {
+        postgis_error!(
+            "(update_nofly) could not get client from psql connection pool: {}",
+            e
+        );
+        NoFlyZoneError::Client
+    })?;
+    let transaction = client.transaction().await.map_err(|e| {
+        postgis_error!("(update_nofly) could not create transaction: {}", e);
+        NoFlyZoneError::DBError
+    })?;
 
-    let Ok(transaction) = client.transaction().await else {
-        postgis_error!("(update_nofly) error creating transaction.");
-        return Err(NoFlyZoneError::Unknown);
-    };
-
-    let Ok(stmt) = transaction
+    let stmt = transaction
         .prepare_cached("SELECT arrow.update_nofly($1, $2, $3, $4)")
         .await
-    else {
-        postgis_error!("(update_nofly) error preparing cached statement.");
-        return Err(NoFlyZoneError::Unknown);
-    };
+        .map_err(|e| {
+            postgis_error!("(update_nofly) could not prepare cached statement: {}", e);
+            NoFlyZoneError::DBError
+        })?;
 
     for zone in &zones {
-        if let Err(e) = transaction
+        transaction
             .execute(
                 &stmt,
                 &[&zone.label, &zone.geom, &zone.time_start, &zone.time_end],
             )
             .await
-        {
-            postgis_error!("(update_nofly) error: {}", e);
-            return Err(NoFlyZoneError::Unknown);
-        }
+            .map_err(|e| {
+                postgis_error!("(update_nofly) could not execute transaction: {}", e);
+                NoFlyZoneError::DBError
+            })?;
     }
 
     match transaction.commit().await {
         Ok(_) => {
             postgis_debug!("(update_nofly) success.");
+            Ok(())
         }
         Err(e) => {
-            postgis_error!("(update_nofly) error: {}", e);
-            return Err(NoFlyZoneError::Unknown);
+            postgis_error!("(update_nofly) could not commit transaction: {}", e);
+            Err(NoFlyZoneError::DBError)
         }
     }
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -249,7 +254,7 @@ mod tests {
         let result = update_nofly(nofly_zone, get_psql_pool().await)
             .await
             .unwrap_err();
-        assert_eq!(result, NoFlyZoneError::Unknown);
+        assert_eq!(result, NoFlyZoneError::Client);
     }
 
     #[tokio::test]
