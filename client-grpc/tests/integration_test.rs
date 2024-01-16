@@ -37,15 +37,16 @@ async fn test_add_aircraft() -> Result<(), Box<dyn std::error::Error>> {
 
     let aircraft: Vec<AircraftPosition> = aircraft
         .iter()
-        .map(|(uuid, callsign, latitude, longitude)| AircraftPosition {
+        .map(|(uuid, identifier, latitude, longitude)| AircraftPosition {
             uuid: uuid.clone(),
-            callsign: callsign.to_string(),
+            identifier: identifier.to_string(),
             altitude_meters: 1000.0,
             location: Some(Coordinates {
                 latitude: *latitude,
                 longitude: *longitude,
             }),
-            time: Some(Into::<Timestamp>::into(Utc::now())),
+            timestamp_network: Some(Into::<Timestamp>::into(Utc::now())),
+            timestamp_aircraft: Some(Into::<Timestamp>::into(Utc::now())),
         })
         .collect();
 
