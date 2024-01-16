@@ -137,7 +137,7 @@ pub async fn nearest_neighbors(
             NodeType::Vertiport
         }
         Some(NodeType::Aircraft) => {
-            crate::postgis::aircraft::check_callsign(&request.start_node_id)
+            crate::postgis::aircraft::check_identifier(&request.start_node_id)
                 .map_err(|_| NNError::InvalidStartNode)?;
             NodeType::Aircraft
         }

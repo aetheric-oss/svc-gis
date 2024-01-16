@@ -37,10 +37,10 @@ message UpdateResponse {
 // Geospatial Coordinates
 message Coordinates {
     // Latitude Coordinate
-    float latitude = 1;
+    double latitude = 1;
 
     // Longitude Coordinate
-    float longitude = 2;
+    double longitude = 2;
 }
 
 // Vertiport Type
@@ -65,22 +65,78 @@ message Waypoint {
 }
 
 // Aircraft Type
-message AircraftPosition {
+enum AircraftType {
+    // Undeclared aircraft type
+    UNDECLARED = 0;
 
-    // Aircraft Callsign
-    string callsign = 1;
+    // Fixed Wing Aircraft
+    AEROPLANE = 1;
+
+    // Rotary Wing Aircraft
+    ROTORCRAFT = 2;
+
+    // Gyroplane
+    GYROPLANE = 3;
+
+    // Hybrid Lift
+    HYBRIDLIFT = 4;
+
+    // Ornithopter
+    ORNITHOPTER = 5;
+
+    // Glider
+    GLIDER = 6;
+
+    // Kite
+    KITE = 7;
+
+    // Free Balloon
+    FREEBALLOON = 8;
+
+    // Captive Balloon
+    CAPTIVEBALLOON = 9;
+
+    // Airship
+    AIRSHIP = 10;
+
+    // Unpowered aircraft (free fall or parachute)
+    UNPOWERED = 11;
+
+    // Rocket
+    ROCKET = 12;
+
+    // Tethered Powered Aircraft
+    TETHERED = 13;
+
+    // Ground Obstacle
+    GROUNDOBSTACLE = 14;
+
+    // Other
+    OTHER = 15;
+}
+
+// Aircraft Type
+message AircraftPosition {
+    // Aircraft Identifier
+    string identifier = 1;
+
+    // Aircraft Type
+    AircraftType aircraft_type = 2;
 
     // Aircraft Location
-    Coordinates location = 2;
+    Coordinates location = 3;
 
     // Aircraft Altitude
-    float altitude_meters = 3;
+    float altitude_meters = 4;
 
-    // Telemetry Report Time
-    google.protobuf.Timestamp time = 4;
+    // Telemetry Self-Report Time
+    google.protobuf.Timestamp timestamp_aircraft = 5;
 
-    // Aircraft UUID, if available
-    optional string uuid = 5;
+    // Network Timestamp at Receipt
+    google.protobuf.Timestamp timestamp_network = 6;
+
+    // network UUID (optional)
+    optional string uuid = 7;
 }
 
 // Update Vertiports Request object
@@ -168,7 +224,7 @@ message PathSegment {
 
 // Best Path Request object
 message BestPathRequest {
-    // Start Node - UUID for Vertiports, Callsigns for Aircraft
+    // Start Node - UUID for Vertiports, identifiers for Aircraft
     string node_start_id = 1;
 
     // End Node (Vertiport UUID)
@@ -192,7 +248,7 @@ message BestPathResponse {
 
 // Nearest Neighbor Request object
 message NearestNeighborRequest {
-    // Start Node - UUID for Vertiports, Callsigns for Aircraft
+    // Start Node - UUID for Vertiports, identifiers for Aircraft
     string start_node_id = 1;
 
     // Start Node Type (Vertiport or Aircraft Allowed)

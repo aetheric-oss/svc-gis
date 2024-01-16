@@ -96,7 +96,7 @@ CREATE TABLE arrow.waypoints (
 CREATE TABLE arrow.aircraft (
     node_id INTEGER UNIQUE,
     arrow_id UUID UNIQUE,
-    callsign VARCHAR(255) UNIQUE NOT NULL PRIMARY KEY,
+    identifier VARCHAR(255) UNIQUE NOT NULL PRIMARY KEY,
     altitude_meters FLOAT NOT NULL,
     last_updated TIMESTAMPTZ NOT NULL,
     CONSTRAINT fk_node_id
@@ -226,21 +226,21 @@ CREATE OR REPLACE FUNCTION arrow.update_aircraft_position(
     craft_uuid UUID,
     craft_geom GEOMETRY(Point),
     craft_altitude_m FLOAT,
-    craft_callsign VARCHAR(255),
+    craft_identifier VARCHAR(255),
     craft_time TIMESTAMPTZ
 )
 RETURNS VOID AS $$
 DECLARE
     node_id INTEGER;
 BEGIN
-    IF craft_callsign IN (SELECT callsign FROM arrow.aircraft) THEN
+    IF craft_identifier IN (SELECT identifier FROM arrow.aircraft) THEN
         -- Don't overwrite with older information
-        IF craft_time < (SELECT last_updated FROM arrow.aircraft WHERE callsign = craft_callsign) THEN
+        IF craft_time < (SELECT last_updated FROM arrow.aircraft WHERE identifier = craft_identifier) THEN
             RETURN;
         END IF;
 
         SELECT air.node_id INTO node_id
-            FROM arrow.aircraft air WHERE callsign = craft_callsign;
+            FROM arrow.aircraft air WHERE identifier = craft_identifier;
 
         UPDATE arrow.nodes
             SET geom = craft_geom WHERE id = node_id;
@@ -249,7 +249,7 @@ BEGIN
             SET altitude_meters = craft_altitude_m,
                 last_updated = craft_time,
                 arrow_id = craft_uuid
-            WHERE callsign = craft_callsign;
+            WHERE identifier = craft_identifier;
 
         RETURN;
     END IF;
@@ -263,13 +263,13 @@ BEGIN
     INSERT INTO arrow.aircraft (
         node_id,
         arrow_id,
-        callsign,
+        identifier,
         altitude_meters,
         last_updated
     ) VALUES (
         node_id,
         craft_uuid,
-        craft_callsign,
+        craft_identifier,
         craft_altitude_m,
         craft_time
     );
@@ -566,7 +566,7 @@ BEGIN
     --- Get Node and Nofly IDs for start and end nodes
     SELECT node_id
         INTO start_node_id
-        FROM arrow.aircraft WHERE callsign = $1;
+        FROM arrow.aircraft WHERE identifier = $1;
 
     SELECT node_id, nofly_id
         INTO end_node_id, end_nofly_id
@@ -667,7 +667,7 @@ BEGIN
     -- Get Node ID of starting vertiport
     SELECT node_id
         INTO start_node_id
-        FROM arrow.aircraft WHERE callsign = start_label;
+        FROM arrow.aircraft WHERE identifier = start_label;
 
     -- Plug the geometry into a nearest-neighbor query
     RETURN QUERY

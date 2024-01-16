@@ -29,11 +29,11 @@ pub struct UpdateResponse {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Coordinates {
     /// Latitude Coordinate
-    #[prost(float, tag = "1")]
-    pub latitude: f32,
+    #[prost(double, tag = "1")]
+    pub latitude: f64,
     /// Longitude Coordinate
-    #[prost(float, tag = "2")]
-    pub longitude: f32,
+    #[prost(double, tag = "2")]
+    pub longitude: f64,
 }
 /// Vertiport Type
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -64,20 +64,26 @@ pub struct Waypoint {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AircraftPosition {
-    /// Aircraft Callsign
+    /// Aircraft Identifier
     #[prost(string, tag = "1")]
-    pub callsign: ::prost::alloc::string::String,
+    pub identifier: ::prost::alloc::string::String,
+    /// Aircraft Type
+    #[prost(enumeration = "AircraftType", tag = "2")]
+    pub aircraft_type: i32,
     /// Aircraft Location
-    #[prost(message, optional, tag = "2")]
+    #[prost(message, optional, tag = "3")]
     pub location: ::core::option::Option<Coordinates>,
     /// Aircraft Altitude
-    #[prost(float, tag = "3")]
+    #[prost(float, tag = "4")]
     pub altitude_meters: f32,
-    /// Telemetry Report Time
-    #[prost(message, optional, tag = "4")]
-    pub time: ::core::option::Option<::lib_common::time::Timestamp>,
-    /// Aircraft UUID, if available
-    #[prost(string, optional, tag = "5")]
+    /// Telemetry Self-Report Time
+    #[prost(message, optional, tag = "5")]
+    pub timestamp_aircraft: ::core::option::Option<::lib_common::time::Timestamp>,
+    /// Network Timestamp at Receipt
+    #[prost(message, optional, tag = "6")]
+    pub timestamp_network: ::core::option::Option<::lib_common::time::Timestamp>,
+    /// network UUID (optional)
+    #[prost(string, optional, tag = "7")]
     pub uuid: ::core::option::Option<::prost::alloc::string::String>,
 }
 /// Update Vertiports Request object
@@ -167,7 +173,7 @@ pub struct PathSegment {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct BestPathRequest {
-    /// Start Node - UUID for Vertiports, Callsigns for Aircraft
+    /// Start Node - UUID for Vertiports, identifiers for Aircraft
     #[prost(string, tag = "1")]
     pub node_start_id: ::prost::alloc::string::String,
     /// End Node (Vertiport UUID)
@@ -195,7 +201,7 @@ pub struct BestPathResponse {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct NearestNeighborRequest {
-    /// Start Node - UUID for Vertiports, Callsigns for Aircraft
+    /// Start Node - UUID for Vertiports, identifiers for Aircraft
     #[prost(string, tag = "1")]
     pub start_node_id: ::prost::alloc::string::String,
     /// Start Node Type (Vertiport or Aircraft Allowed)
@@ -232,6 +238,91 @@ pub struct NearestNeighborResponse {
     /// Distances to nearby objects
     #[prost(message, repeated, tag = "1")]
     pub distances: ::prost::alloc::vec::Vec<DistanceTo>,
+}
+/// Aircraft Type
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum AircraftType {
+    /// Undeclared aircraft type
+    Undeclared = 0,
+    /// Fixed Wing Aircraft
+    Aeroplane = 1,
+    /// Rotary Wing Aircraft
+    Rotorcraft = 2,
+    /// Gyroplane
+    Gyroplane = 3,
+    /// Hybrid Lift
+    Hybridlift = 4,
+    /// Ornithopter
+    Ornithopter = 5,
+    /// Glider
+    Glider = 6,
+    /// Kite
+    Kite = 7,
+    /// Free Balloon
+    Freeballoon = 8,
+    /// Captive Balloon
+    Captiveballoon = 9,
+    /// Airship
+    Airship = 10,
+    /// Unpowered aircraft (free fall or parachute)
+    Unpowered = 11,
+    /// Rocket
+    Rocket = 12,
+    /// Tethered Powered Aircraft
+    Tethered = 13,
+    /// Ground Obstacle
+    Groundobstacle = 14,
+    /// Other
+    Other = 15,
+}
+impl AircraftType {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            AircraftType::Undeclared => "UNDECLARED",
+            AircraftType::Aeroplane => "AEROPLANE",
+            AircraftType::Rotorcraft => "ROTORCRAFT",
+            AircraftType::Gyroplane => "GYROPLANE",
+            AircraftType::Hybridlift => "HYBRIDLIFT",
+            AircraftType::Ornithopter => "ORNITHOPTER",
+            AircraftType::Glider => "GLIDER",
+            AircraftType::Kite => "KITE",
+            AircraftType::Freeballoon => "FREEBALLOON",
+            AircraftType::Captiveballoon => "CAPTIVEBALLOON",
+            AircraftType::Airship => "AIRSHIP",
+            AircraftType::Unpowered => "UNPOWERED",
+            AircraftType::Rocket => "ROCKET",
+            AircraftType::Tethered => "TETHERED",
+            AircraftType::Groundobstacle => "GROUNDOBSTACLE",
+            AircraftType::Other => "OTHER",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "UNDECLARED" => Some(Self::Undeclared),
+            "AEROPLANE" => Some(Self::Aeroplane),
+            "ROTORCRAFT" => Some(Self::Rotorcraft),
+            "GYROPLANE" => Some(Self::Gyroplane),
+            "HYBRIDLIFT" => Some(Self::Hybridlift),
+            "ORNITHOPTER" => Some(Self::Ornithopter),
+            "GLIDER" => Some(Self::Glider),
+            "KITE" => Some(Self::Kite),
+            "FREEBALLOON" => Some(Self::Freeballoon),
+            "CAPTIVEBALLOON" => Some(Self::Captiveballoon),
+            "AIRSHIP" => Some(Self::Airship),
+            "UNPOWERED" => Some(Self::Unpowered),
+            "ROCKET" => Some(Self::Rocket),
+            "TETHERED" => Some(Self::Tethered),
+            "GROUNDOBSTACLE" => Some(Self::Groundobstacle),
+            "OTHER" => Some(Self::Other),
+            _ => None,
+        }
+    }
 }
 /// Types of nodes in itinerary
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]

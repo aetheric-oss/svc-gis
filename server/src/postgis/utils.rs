@@ -124,8 +124,8 @@ pub fn polygon_from_vertices(
             points: vertices
                 .iter()
                 .map(|vertex| postgis::ewkb::Point {
-                    x: vertex.longitude as f64,
-                    y: vertex.latitude as f64,
+                    x: vertex.longitude,
+                    y: vertex.latitude,
                     srid: Some(4326),
                 })
                 .collect(),
@@ -148,8 +148,8 @@ pub fn point_from_vertex(vertex: &Coordinates) -> Result<postgis::ewkb::Point, P
     }
 
     Ok(postgis::ewkb::Point {
-        x: vertex.longitude as f64,
-        y: vertex.latitude as f64,
+        x: vertex.longitude,
+        y: vertex.latitude,
         srid: Some(4326),
     })
 }

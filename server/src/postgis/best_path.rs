@@ -69,7 +69,7 @@ impl TryFrom<BestPathRequest> for PathRequest {
                     .map_err(|_| PathError::InvalidStartNode)?;
             }
             Some(NodeType::Aircraft) => {
-                crate::postgis::aircraft::check_callsign(&request.node_start_id)
+                crate::postgis::aircraft::check_identifier(&request.node_start_id)
                     .map_err(|_| PathError::InvalidStartNode)?;
             }
             _ => {

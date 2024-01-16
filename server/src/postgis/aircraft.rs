@@ -7,11 +7,11 @@ use uuid::Uuid;
 
 use super::utils::StringError;
 
-/// Maximum length of a callsign
+/// Maximum length of a identifier
 const LABEL_MAX_LENGTH: usize = 100;
 
-/// Allowed characters in a callsign
-const CALLSIGN_REGEX: &str = r"^[a-zA-Z0-9_\s-]+$";
+/// Allowed characters in a identifier
+const IDENTIFIER_REGEX: &str = r"^[a-zA-Z0-9_\s-.]+$";
 
 /// Possible errors with aircraft requests
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -54,25 +54,25 @@ impl std::fmt::Display for AircraftError {
 
 struct AircraftPosition {
     uuid: Option<Uuid>,
-    callsign: String,
+    identifier: String,
     geom: postgis::ewkb::Point,
     altitude_meters: f32,
-    time: DateTime<Utc>,
+    timestamp: DateTime<Utc>,
 }
 
-/// Verifies that a callsign is valid
-pub fn check_callsign(callsign: &str) -> Result<(), StringError> {
-    super::utils::check_string(callsign, CALLSIGN_REGEX, LABEL_MAX_LENGTH)
+/// Verifies that a identifier is valid
+pub fn check_identifier(identifier: &str) -> Result<(), StringError> {
+    super::utils::check_string(identifier, IDENTIFIER_REGEX, LABEL_MAX_LENGTH)
 }
 
 impl TryFrom<ReqAircraftPos> for AircraftPosition {
     type Error = AircraftError;
 
     fn try_from(craft: ReqAircraftPos) -> Result<Self, Self::Error> {
-        if let Err(e) = check_callsign(&craft.callsign) {
+        if let Err(e) = check_identifier(&craft.identifier) {
             postgis_error!(
-                "(try_from ReqAircraftPos) Invalid aircraft callsign: {}; {}",
-                craft.callsign,
+                "(try_from ReqAircraftPos) Invalid aircraft identifier: {}; {}",
+                craft.identifier,
                 e
             );
             return Err(AircraftError::Label);
@@ -105,19 +105,17 @@ impl TryFrom<ReqAircraftPos> for AircraftPosition {
             }
         };
 
-        let Some(time) = craft.time else {
+        let Some(timestamp) = craft.timestamp_network else {
             postgis_error!("(try_from ReqAircraftPos) Aircraft time is invalid.");
             return Err(AircraftError::Time);
         };
 
-        let time: DateTime<Utc> = time.into();
-
         Ok(AircraftPosition {
             uuid,
-            callsign: craft.callsign,
+            identifier: craft.identifier,
             geom,
             altitude_meters: craft.altitude_meters,
-            time,
+            timestamp: timestamp.into(),
         })
     }
 }
@@ -170,8 +168,8 @@ pub async fn update_aircraft_position(
                     &craft.uuid,
                     &craft.geom,
                     &(craft.altitude_meters as f64),
-                    &craft.callsign,
-                    &craft.time,
+                    &craft.identifier,
+                    &craft.timestamp,
                 ],
             )
             .await
@@ -225,7 +223,7 @@ mod tests {
         let aircraft: Vec<ReqAircraftPos> = nodes
             .iter()
             .map(|(label, latitude, longitude)| ReqAircraftPos {
-                callsign: label.to_string(),
+                identifier: label.to_string(),
                 location: Some(Coordinates {
                     latitude: *latitude,
                     longitude: *longitude,
@@ -245,7 +243,7 @@ mod tests {
         assert_eq!(aircraft.len(), converted.len());
 
         for (i, aircraft) in aircraft.iter().enumerate() {
-            assert_eq!(aircraft.callsign, converted[i].callsign);
+            assert_eq!(aircraft.identifier, converted[i].identifier);
             let location = aircraft.location.unwrap();
             assert_eq!(
                 utils::point_from_vertex(&location).unwrap(),
@@ -281,7 +279,7 @@ mod tests {
         let aircraft: Vec<ReqAircraftPos> = nodes
             .iter()
             .map(|(label, latitude, longitude)| ReqAircraftPos {
-                callsign: label.to_string(),
+                identifier: label.to_string(),
                 location: Some(Coordinates {
                     latitude: *latitude,
                     longitude: *longitude,
@@ -313,7 +311,7 @@ mod tests {
             &"X".repeat(LABEL_MAX_LENGTH + 1),
         ] {
             let aircraft: Vec<ReqAircraftPos> = vec![ReqAircraftPos {
-                callsign: label.to_string(),
+                identifier: label.to_string(),
                 uuid: Some(Uuid::new_v4().to_string()),
                 ..Default::default()
             }];
@@ -353,7 +351,7 @@ mod tests {
                     latitude: coord.0,
                     longitude: coord.1,
                 }),
-                callsign: "Aircraft".to_string(),
+                identifier: "Aircraft".to_string(),
                 ..Default::default()
             }];
 
@@ -366,7 +364,7 @@ mod tests {
         // No location
         let aircraft: Vec<ReqAircraftPos> = vec![ReqAircraftPos {
             location: None,
-            callsign: "Aircraft".to_string(),
+            identifier: "Aircraft".to_string(),
             ..Default::default()
         }];
 
@@ -390,7 +388,7 @@ mod tests {
                 latitude: 0.0,
                 longitude: 0.0,
             }),
-            callsign: "Aircraft".to_string(),
+            identifier: "Aircraft".to_string(),
             ..Default::default()
         }];
 

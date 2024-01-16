@@ -60,9 +60,9 @@ VARCHAR
 timestamptz
 plpgsql
 consts
-callsign
+identifier
 nodetype
 oneshot
 ewkb
-callsigns
+identifiers
 anstyle

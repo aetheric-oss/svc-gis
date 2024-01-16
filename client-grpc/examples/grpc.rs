@@ -132,9 +132,9 @@ async fn add_aircraft(client: &GisClient) -> Result<(), Box<dyn std::error::Erro
 
     let aircraft: Vec<AircraftPosition> = aircraft
         .iter()
-        .map(|(uuid, callsign, latitude, longitude)| AircraftPosition {
+        .map(|(uuid, identifier, latitude, longitude)| AircraftPosition {
             uuid: uuid.clone(),
-            callsign: callsign.to_string(),
+            identifier: identifier.to_string(),
             altitude_meters: 1000.0,
             location: Some(Coordinates {
                 latitude: *latitude,

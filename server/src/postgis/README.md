@@ -71,7 +71,7 @@ The `arrow` schema defines the following tables:
 | Column | Type | Description |
 | ---- | ---- | --- | 
 | id | SERIAL | Unique integer identifier of the node, required for pgRouting. |
-| callsign | VARCHAR UNIQUE | A unique identifier for this aircraft. |
+| identifier | VARCHAR UNIQUE | A unique identifier for this aircraft. |
 | node_id | INTEGER FK(arrow.nodes) | The ID of the entry in the node table associated with this aircraft. | 
 | arrow_id | UUID UNIQUE | The Arrow UUID for this aircraft. 
 | altitude_meters | FLOAT | The altitude of this aircraft.
