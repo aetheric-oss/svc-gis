@@ -20,6 +20,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create pool from PostgreSQL environment variables
     let pool = postgis::pool::create_pool(config.clone());
+    postgis::psql_init(&pool).await?;
 
     // Start GRPC Server
     tokio::spawn(grpc::server::grpc_server(config, None, pool.clone())).await?;

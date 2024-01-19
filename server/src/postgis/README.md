@@ -86,10 +86,10 @@ The `arrow` schema defines the following tables:
 | ---- | ---- | --- | 
 | id | SERIAL | Unique integer identifier of the node, required for pgRouting. |
 | label | VARCHAR | The NOTAM identifier or other label unique to this no-fly zone.
-| geom | GEOMETRY(Polygon) | The polygon defining the bounds of this no-fly zone
+| geom | GEOMETRY(POLYGON) | The polygon defining the bounds of this no-fly zone
 | time_start | TIMESTAMPTZ | The time that this no-fly zone becomes active. NULL if active by default, starting the moment it is created.
 | time_end | TIMESTAMPTZ | The time that this no-fly zone becomes inactive. NULL if no scheduled end date.
-| nofly_type | Enum NoFlyType | 'nofly', 'vertiport'
+| nofly_type | Enum ZoneType | 'nofly', 'vertiport'
 
 ## `routes`
 

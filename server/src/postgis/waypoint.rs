@@ -3,11 +3,11 @@
 use crate::grpc::server::grpc_server;
 use grpc_server::Waypoint as RequestWaypoint;
 
-/// Maximum length of a waypoint label
-const LABEL_MAX_LENGTH: usize = 20;
+/// Maximum length of a waypoint identifier
+const IDENTIFIER_MAX_LENGTH: usize = 20;
 
-/// Allowed characters in a waypoint label
-const LABEL_REGEX: &str = r"^[a-zA-Z0-9_-]+$";
+/// Allowed characters in a waypoint identifier
+const IDENTIFIER_REGEX: &str = r"^[a-zA-Z0-9_-]+$";
 
 /// Possible conversion errors from the GRPC type to GIS type
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -15,8 +15,8 @@ pub enum WaypointError {
     /// No Waypoints
     NoWaypoints,
 
-    /// Invalid Label
-    Label,
+    /// Invalid Identifier
+    Identifier,
 
     /// No Location
     Location,
@@ -32,7 +32,7 @@ impl std::fmt::Display for WaypointError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             WaypointError::NoWaypoints => write!(f, "No waypoints were provided."),
-            WaypointError::Label => write!(f, "Invalid label provided."),
+            WaypointError::Identifier => write!(f, "Invalid identifier provided."),
             WaypointError::Location => write!(f, "Invalid location provided."),
             WaypointError::Client => write!(f, "Could not get backend client."),
             WaypointError::DBError => write!(f, "Unknown backend error."),
@@ -41,7 +41,7 @@ impl std::fmt::Display for WaypointError {
 }
 
 struct Waypoint {
-    label: String,
+    identifier: String,
     geom: postgis::ewkb::Point,
 }
 
@@ -49,13 +49,17 @@ impl TryFrom<RequestWaypoint> for Waypoint {
     type Error = WaypointError;
 
     fn try_from(waypoint: RequestWaypoint) -> Result<Self, Self::Error> {
-        if let Err(e) = super::utils::check_string(&waypoint.label, LABEL_REGEX, LABEL_MAX_LENGTH) {
+        if let Err(e) = super::utils::check_string(
+            &waypoint.identifier,
+            IDENTIFIER_REGEX,
+            IDENTIFIER_MAX_LENGTH,
+        ) {
             postgis_error!(
-                "(try_from RequestWaypoint) Invalid waypoint label: {}; {}",
-                waypoint.label,
+                "(try_from RequestWaypoint) Invalid waypoint identifier: {}; {}",
+                waypoint.identifier,
                 e
             );
-            return Err(WaypointError::Label);
+            return Err(WaypointError::Identifier);
         }
 
         let Some(location) = waypoint.location else {
@@ -75,10 +79,27 @@ impl TryFrom<RequestWaypoint> for Waypoint {
         };
 
         Ok(Waypoint {
-            label: waypoint.label,
+            identifier: waypoint.identifier,
             geom,
         })
     }
+}
+
+/// Initialize the vertiports table in the PostGIS database
+pub async fn psql_init(pool: &deadpool_postgres::Pool) -> Result<(), super::PsqlError> {
+    // Create Aircraft Table
+    let table_name = "arrow.waypoints";
+    let statements = vec![
+        format!(
+            "CREATE TABLE IF NOT EXISTS {table_name} (
+            identifier VARCHAR(255) UNIQUE NOT NULL,
+            geom GEOMETRY(POINT) NOT NULL
+        );"
+        ),
+        format!("CREATE INDEX waypoints_geom_idx ON {table_name} USING GIST (geom);"),
+    ];
+
+    super::psql_transaction(statements, pool).await
 }
 
 /// Update waypoints in the PostGIS database
@@ -109,7 +130,12 @@ pub async fn update_waypoints(
     })?;
 
     let stmt = transaction
-        .prepare_cached("SELECT arrow.update_waypoint($1, $2)")
+        .prepare_cached(
+            "\
+        INSERT INTO arrow.waypoints(identifier, geom)
+        VALUES ($1, $2)
+        ON CONFLICT (identifier) DO UPDATE SET geom = $2;",
+        )
         .await
         .map_err(|e| {
             postgis_error!(
@@ -121,7 +147,7 @@ pub async fn update_waypoints(
 
     for waypoint in &waypoints {
         transaction
-            .execute(&stmt, &[&waypoint.label, &waypoint.geom])
+            .execute(&stmt, &[&waypoint.identifier, &waypoint.geom])
             .await
             .map_err(|e| {
                 postgis_error!("(update_waypoints) could not execute transaction: {}", e);
@@ -160,8 +186,8 @@ mod tests {
 
         let waypoints: Vec<RequestWaypoint> = nodes
             .iter()
-            .map(|(label, latitude, longitude)| RequestWaypoint {
-                label: label.to_string(),
+            .map(|(identifier, latitude, longitude)| RequestWaypoint {
+                identifier: identifier.to_string(),
                 location: Some(Coordinates {
                     latitude: *latitude,
                     longitude: *longitude,
@@ -179,7 +205,7 @@ mod tests {
         assert_eq!(waypoints.len(), converted.len());
 
         for (i, waypoint) in waypoints.iter().enumerate() {
-            assert_eq!(waypoint.label, converted[i].label);
+            assert_eq!(waypoint.identifier, converted[i].identifier);
             let location = waypoint.location.unwrap();
             assert_eq!(
                 utils::point_from_vertex(&location).unwrap(),
@@ -194,8 +220,8 @@ mod tests {
 
         let waypoints: Vec<RequestWaypoint> = nodes
             .iter()
-            .map(|(label, latitude, longitude)| RequestWaypoint {
-                label: label.to_string(),
+            .map(|(identifier, latitude, longitude)| RequestWaypoint {
+                identifier: identifier.to_string(),
                 location: Some(Coordinates {
                     latitude: *latitude,
                     longitude: *longitude,
@@ -210,17 +236,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ut_waypoints_request_to_gis_invalid_label() {
-        for label in &[
+    async fn ut_waypoints_request_to_gis_invalid_identifier() {
+        for identifier in &[
             "NULL",
             "Waypoint;",
             "'Waypoint'",
             "Waypoint A",
             "Waypoint \'",
-            &"X".repeat(LABEL_MAX_LENGTH + 1),
+            &"X".repeat(IDENTIFIER_MAX_LENGTH + 1),
         ] {
             let waypoints: Vec<RequestWaypoint> = vec![RequestWaypoint {
-                label: label.to_string(),
+                identifier: identifier.to_string(),
                 location: Some(Coordinates {
                     latitude: 0.0,
                     longitude: 0.0,
@@ -230,7 +256,7 @@ mod tests {
             let result = update_waypoints(waypoints, get_psql_pool().await)
                 .await
                 .unwrap_err();
-            assert_eq!(result, WaypointError::Label);
+            assert_eq!(result, WaypointError::Identifier);
         }
     }
 
@@ -249,7 +275,7 @@ mod tests {
 
         for (i, coord) in coords.iter().enumerate() {
             let waypoints: Vec<RequestWaypoint> = vec![RequestWaypoint {
-                label: format!("Waypoint-{}", i),
+                identifier: format!("Waypoint-{}", i),
                 location: Some(Coordinates {
                     latitude: coord.0,
                     longitude: coord.1,

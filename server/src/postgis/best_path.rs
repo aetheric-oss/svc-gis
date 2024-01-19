@@ -1,12 +1,16 @@
 //! This module contains functions for routing between nodes.
 use crate::grpc::server::grpc_server::{BestPathRequest, NodeType, PathSegment};
-use crate::postgis::PathType;
 use chrono::Duration;
 use lib_common::time::*;
-use uuid::Uuid;
+use num_traits::FromPrimitive;
+use postgis::ewkb::Geometry;
 
 // TODO(R4): Include altitude, lanes, corridors
-const ALTITUDE_HARDCODE: f32 = 1000.0;
+// const ALTITUDE_HARDCODE: f32 = 100.0;
+
+/// Look for waypoints within N meters when routing between two points
+///  Saves computation time by doing shortest path on a smaller graph
+const WAYPOINT_RANGE_METERS: f64 = 1000.0;
 
 /// Possible errors with path requests
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -53,8 +57,10 @@ impl std::fmt::Display for PathError {
 
 #[derive(Debug)]
 struct PathRequest {
-    node_start_id: String,
-    node_uuid_end: Uuid,
+    origin_identifier: String,
+    target_identifier: String,
+    origin_type: NodeType,
+    target_type: NodeType,
     time_start: DateTime<Utc>,
     time_end: DateTime<Utc>,
 }
@@ -63,28 +69,40 @@ impl TryFrom<BestPathRequest> for PathRequest {
     type Error = PathError;
 
     fn try_from(request: BestPathRequest) -> Result<Self, Self::Error> {
-        match num::FromPrimitive::from_i32(request.start_type) {
+        match num::FromPrimitive::from_i32(request.origin_type) {
             Some(NodeType::Vertiport) => {
-                uuid::Uuid::parse_str(&request.node_start_id)
+                uuid::Uuid::parse_str(&request.origin_identifier)
                     .map_err(|_| PathError::InvalidStartNode)?;
             }
             Some(NodeType::Aircraft) => {
-                crate::postgis::aircraft::check_identifier(&request.node_start_id)
+                crate::postgis::aircraft::check_identifier(&request.origin_identifier)
                     .map_err(|_| PathError::InvalidStartNode)?;
             }
             _ => {
                 postgis_error!(
                     "(try_from BestPathRequest) invalid start node type: {:?}",
-                    request.start_type
+                    request.origin_type
                 );
                 return Err(PathError::InvalidStartNode);
             }
         }
 
-        let node_start_id = request.node_start_id;
-        let node_uuid_end = match uuid::Uuid::parse_str(&request.node_uuid_end) {
-            Ok(uuid) => uuid,
-            Err(_) => return Err(PathError::InvalidEndNode),
+        let origin_identifier = request.origin_identifier;
+        let Some(origin_type) = FromPrimitive::from_i32(request.origin_type) else {
+            postgis_error!(
+                "(try_from BestPathRequest) invalid start node type: {:?}",
+                request.origin_type
+            );
+            return Err(PathError::InvalidStartNode);
+        };
+
+        let target_identifier = request.target_identifier;
+        let Some(target_type) = FromPrimitive::from_i32(request.target_type) else {
+            postgis_error!(
+                "(try_from BestPathRequest) invalid end node type: {:?}",
+                request.target_type
+            );
+            return Err(PathError::InvalidEndNode);
         };
 
         let time_start: DateTime<Utc> = match request.time_start {
@@ -106,72 +124,14 @@ impl TryFrom<BestPathRequest> for PathRequest {
         }
 
         Ok(PathRequest {
-            node_start_id,
-            node_uuid_end,
+            origin_identifier,
+            target_identifier,
+            origin_type,
+            target_type,
             time_start,
             time_end,
         })
     }
-}
-
-/// Get the best path from a vertiport to another vertiport
-async fn best_path_vertiport_source(
-    stmt: tokio_postgres::Statement,
-    client: deadpool_postgres::Client,
-    request: PathRequest,
-) -> Result<Vec<tokio_postgres::Row>, PathError> {
-    let Ok(node_start_id) = Uuid::parse_str(&request.node_start_id) else {
-        postgis_error!(
-            "(best_path_vertiport_source) could not parse start node id into UUID: {}",
-            request.node_start_id
-        );
-        return Err(PathError::InvalidStartNode);
-    };
-
-    client
-        .query(
-            &stmt,
-            &[
-                &node_start_id,
-                &request.node_uuid_end,
-                &request.time_start,
-                &request.time_end,
-            ],
-        )
-        .await
-        .map_err(|e| {
-            postgis_error!(
-                "(best_path_vertiport_source) could not request routes: {}",
-                e
-            );
-            PathError::DBError
-        })
-}
-
-/// Get the best path from a aircraft to another vertiport
-async fn best_path_aircraft_source(
-    stmt: tokio_postgres::Statement,
-    client: deadpool_postgres::Client,
-    request: PathRequest,
-) -> Result<Vec<tokio_postgres::Row>, PathError> {
-    client
-        .query(
-            &stmt,
-            &[
-                &request.node_start_id,
-                &request.node_uuid_end,
-                &request.time_start,
-                &request.time_end,
-            ],
-        )
-        .await
-        .map_err(|e| {
-            postgis_error!(
-                "(best_path_aircraft_source) could not request routes: {}",
-                e
-            );
-            PathError::DBError
-        })
 }
 
 /// The purpose of this initial search is to verify that a flight between two
@@ -184,11 +144,23 @@ async fn best_path_aircraft_source(
 /// No-Fly zones can extend flights, isolate aircraft, or disable vertiports entirely.
 #[cfg(not(tarpaulin_include))]
 pub async fn best_path(
-    path_type: PathType,
     request: BestPathRequest,
     pool: &deadpool_postgres::Pool,
 ) -> Result<Vec<PathSegment>, PathError> {
     let request = PathRequest::try_from(request)?;
+
+    let (origin_table, target_table) = match (request.origin_type, request.target_type) {
+        (NodeType::Vertiport, NodeType::Vertiport) => ("vertiports", "vertiports"),
+        (NodeType::Aircraft, NodeType::Vertiport) => ("aircraft", "vertiports"),
+        _ => {
+            postgis_error!(
+                "(best_path) invalid node types: {:?} -> {:?}",
+                request.origin_type,
+                request.target_type
+            );
+            return Err(PathError::InvalidStartNode);
+        }
+    };
 
     let client = pool.get().await.map_err(|e| {
         postgis_error!(
@@ -198,56 +170,113 @@ pub async fn best_path(
         PathError::Client
     })?;
 
-    let rows = match path_type {
-        PathType::PortToPort => {
-            let stmt = client
-                .prepare_cached("SELECT * FROM arrow.best_path_p2p($1, $2, $3, $4);")
-                .await
-                .map_err(|e| {
-                    postgis_error!("(best_path) could not prepare cached statement: {}", e);
-                    PathError::DBError
-                })?;
+    let stmt = client
+        .prepare_cached("SELECT arrow.centroid(geom) FROM arrow.$1 WHERE identifier = $2;")
+        .await
+        .map_err(|e| {
+            postgis_error!("(best_path) could not prepare cached statement: {}", e);
+            PathError::DBError
+        })?;
 
-            best_path_vertiport_source(stmt, client, request).await?
-        }
-        PathType::AircraftToPort => {
-            let stmt = client
-                .prepare_cached("SELECT * FROM arrow.best_path_a2p($1, $2, $3, $4);")
-                .await
-                .map_err(|e| {
-                    postgis_error!("(best_path) could not prepare cached statement: {}", e);
-                    PathError::DBError
-                })?;
+    let Ok(origin_geom) = client
+        .query_one(&stmt, &[&origin_table, &request.origin_identifier])
+        .await
+        .map_err(|e| {
+            postgis_error!("(best_path) could not query origin node: {}", e);
+            PathError::DBError
+        })?
+        .try_get::<_, Geometry>(0)
+    else {
+        postgis_error!("(best_path) could not get origin node geometry");
 
-            best_path_aircraft_source(stmt, client, request).await?
-        }
+        return Err(PathError::DBError);
     };
 
-    let mut results: Vec<PathSegment> = vec![];
-    for r in &rows {
-        let start_type: NodeType = r.get(1);
-        let start_latitude: f64 = r.get(2);
-        let start_longitude: f64 = r.get(3);
-        let end_type: NodeType = r.get(4);
-        let end_latitude: f64 = r.get(5);
-        let end_longitude: f64 = r.get(6);
-        let distance_meters: f64 = r.get(7);
+    let Ok(target_geom) = client
+        .query_one(&stmt, &[&target_table, &request.target_identifier])
+        .await
+        .map_err(|e| {
+            postgis_error!("(best_path) could not query target node: {}", e);
+            PathError::DBError
+        })?
+        .try_get::<_, Geometry>(0)
+    else {
+        postgis_error!("(best_path) could not get target node geometry");
 
-        let start_type = Into::<NodeType>::into(start_type) as i32;
-        let end_type = Into::<NodeType>::into(end_type) as i32;
+        return Err(PathError::DBError);
+    };
 
-        results.push(PathSegment {
-            index: r.get(0),
-            start_type,
-            start_latitude: start_latitude as f32,
-            start_longitude: start_longitude as f32,
-            end_type,
-            end_latitude: end_latitude as f32,
-            end_longitude: end_longitude as f32,
-            distance_meters: distance_meters as f32,
-            altitude_meters: ALTITUDE_HARDCODE, // TODO(R4): Corridors
-        });
+    // Get a subset of waypoints within N meters of the line between the origin and target
+    //  This saves computation time by doing shortest path on a smaller graph
+    let stmt = client
+        .prepare_cached(
+            "SELECT identifer, geom FROM arrow.waypoints
+            WHERE
+                ST_DWithin(
+                    geo,
+                    ST_MakeLine($1, $2),
+                    $3,
+                    false
+                );",
+        )
+        .await
+        .map_err(|e| {
+            postgis_error!("(best_path) could not prepare cached statement: {}", e);
+            PathError::DBError
+        })?;
+
+    let waypoints = client
+        .query(&stmt, &[&origin_geom, &target_geom, &WAYPOINT_RANGE_METERS])
+        .await
+        .map_err(|e| {
+            postgis_error!("(best_path) could not query waypoints: {}", e);
+            PathError::DBError
+        })?;
+
+    if waypoints.is_empty() {
+        postgis_warn!(
+            "(best_path) no waypoints found within {} meters between {:?} ({}) and {:?} {}",
+            WAYPOINT_RANGE_METERS,
+            request.origin_identifier,
+            request.origin_type.to_string(),
+            request.target_identifier,
+            request.target_type.to_string()
+        );
+
+        return Err(PathError::NoPath);
     }
+
+    println!("(best_path) found {} waypoints", waypoints.len());
+    println!("(best_path) origin: {:?}", origin_geom);
+    println!("(best_path) target: {:?}", target_geom);
+    println!("(best_path) waypoints: {:?}", waypoints);
+
+    let results = vec![];
+    // let mut results: Vec<PathSegment> = vec![];
+    // for r in &rows {
+    //     let origin_type: NodeType = r.get(1);
+    //     let origin_latitude: f64 = r.get(2);
+    //     let origin_longitude: f64 = r.get(3);
+    //     let target_type: NodeType = r.get(4);
+    //     let target_latitude: f64 = r.get(5);
+    //     let target_longitude: f64 = r.get(6);
+    //     let distance_meters: f64 = r.get(7);
+
+    //     let origin_type = Into::<NodeType>::into(origin_type) as i32;
+    //     let target_type = Into::<NodeType>::into(target_type) as i32;
+
+    //     results.push(PathSegment {
+    //         index: r.get(0),
+    //         origin_type,
+    //         origin_latitude: origin_latitude as f32,
+    //         origin_longitude: origin_longitude as f32,
+    //         target_type,
+    //         target_latitude: target_latitude as f32,
+    //         target_longitude: target_longitude as f32,
+    //         distance_meters: distance_meters as f32,
+    //         altitude_meters: ALTITUDE_HARDCODE, // TODO(R4): Corridors
+    //     });
+    // }
 
     Ok(results)
 }
@@ -261,9 +290,10 @@ mod tests {
     #[test]
     fn ut_request_valid() {
         let request = BestPathRequest {
-            node_start_id: uuid::Uuid::new_v4().to_string(),
-            node_uuid_end: uuid::Uuid::new_v4().to_string(),
-            start_type: grpc_server::NodeType::Vertiport as i32,
+            origin_identifier: uuid::Uuid::new_v4().to_string(),
+            target_identifier: uuid::Uuid::new_v4().to_string(),
+            origin_type: grpc_server::NodeType::Vertiport as i32,
+            target_type: grpc_server::NodeType::Vertiport as i32,
             time_start: None,
             time_end: None,
         };
@@ -281,16 +311,15 @@ mod tests {
         let time_end: Timestamp = (Utc::now() + Duration::minutes(10)).into();
 
         let request = BestPathRequest {
-            node_start_id: uuid::Uuid::new_v4().to_string(),
-            node_uuid_end: uuid::Uuid::new_v4().to_string(),
-            start_type: grpc_server::NodeType::Aircraft as i32,
+            origin_identifier: uuid::Uuid::new_v4().to_string(),
+            target_identifier: uuid::Uuid::new_v4().to_string(),
+            origin_type: grpc_server::NodeType::Aircraft as i32,
+            target_type: grpc_server::NodeType::Vertiport as i32,
             time_start: Some(time_start),
             time_end: Some(time_end),
         };
 
-        let result = best_path(PathType::AircraftToPort, request, get_psql_pool().await)
-            .await
-            .unwrap_err();
+        let result = best_path(request, get_psql_pool().await).await.unwrap_err();
         assert_eq!(result, PathError::Client);
 
         ut_info!("(ut_client_failure) success");
@@ -299,9 +328,10 @@ mod tests {
     #[test]
     fn ut_request_invalid_uuids() {
         let request = BestPathRequest {
-            node_start_id: "Invalid".to_string(),
-            node_uuid_end: uuid::Uuid::new_v4().to_string(),
-            start_type: grpc_server::NodeType::Vertiport as i32,
+            origin_identifier: "Invalid".to_string(),
+            target_identifier: uuid::Uuid::new_v4().to_string(),
+            origin_type: grpc_server::NodeType::Vertiport as i32,
+            target_type: grpc_server::NodeType::Vertiport as i32,
             time_start: None,
             time_end: None,
         };
@@ -310,9 +340,10 @@ mod tests {
         assert_eq!(result, PathError::InvalidStartNode);
 
         let request = BestPathRequest {
-            node_start_id: uuid::Uuid::new_v4().to_string(),
-            node_uuid_end: "Invalid".to_string(),
-            start_type: grpc_server::NodeType::Vertiport as i32,
+            origin_identifier: uuid::Uuid::new_v4().to_string(),
+            target_identifier: "Invalid".to_string(),
+            origin_type: grpc_server::NodeType::Vertiport as i32,
+            target_type: grpc_server::NodeType::Vertiport as i32,
             time_start: None,
             time_end: None,
         };
@@ -324,9 +355,10 @@ mod tests {
     #[test]
     fn ut_request_invalid_aircraft() {
         let request = BestPathRequest {
-            node_start_id: "Test-123!".to_string(),
-            node_uuid_end: uuid::Uuid::new_v4().to_string(),
-            start_type: grpc_server::NodeType::Aircraft as i32,
+            origin_identifier: "Test-123!".to_string(),
+            target_identifier: uuid::Uuid::new_v4().to_string(),
+            origin_type: grpc_server::NodeType::Aircraft as i32,
+            target_type: grpc_server::NodeType::Vertiport as i32,
             time_start: None,
             time_end: None,
         };
@@ -336,11 +368,12 @@ mod tests {
     }
 
     #[test]
-    fn ut_request_invalid_start_node() {
+    fn ut_request_invalid_origin_node() {
         let request = BestPathRequest {
-            node_start_id: "test-123".to_string(),
-            node_uuid_end: uuid::Uuid::new_v4().to_string(),
-            start_type: grpc_server::NodeType::Waypoint as i32,
+            origin_identifier: "test-123".to_string(),
+            target_identifier: uuid::Uuid::new_v4().to_string(),
+            origin_type: grpc_server::NodeType::Waypoint as i32,
+            target_type: grpc_server::NodeType::Vertiport as i32,
             time_start: None,
             time_end: None,
         };
@@ -356,9 +389,10 @@ mod tests {
 
         // Start time is after end time
         let request = BestPathRequest {
-            node_start_id: uuid::Uuid::new_v4().to_string(),
-            node_uuid_end: uuid::Uuid::new_v4().to_string(),
-            start_type: grpc_server::NodeType::Vertiport as i32,
+            origin_identifier: uuid::Uuid::new_v4().to_string(),
+            target_identifier: uuid::Uuid::new_v4().to_string(),
+            origin_type: grpc_server::NodeType::Vertiport as i32,
+            target_type: grpc_server::NodeType::Vertiport as i32,
             time_start: Some(time_start),
             time_end: Some(time_end.clone()),
         };
@@ -368,9 +402,10 @@ mod tests {
 
         // Start time (assumed) is after current time
         let request = BestPathRequest {
-            node_start_id: uuid::Uuid::new_v4().to_string(),
-            node_uuid_end: uuid::Uuid::new_v4().to_string(),
-            start_type: grpc_server::NodeType::Vertiport as i32,
+            origin_identifier: uuid::Uuid::new_v4().to_string(),
+            target_identifier: uuid::Uuid::new_v4().to_string(),
+            origin_type: grpc_server::NodeType::Vertiport as i32,
+            target_type: grpc_server::NodeType::Vertiport as i32,
             time_start: None,
             time_end: Some(time_end),
         };
@@ -382,9 +417,10 @@ mod tests {
         let time_start: Timestamp = (Utc::now() + Duration::days(10)).into();
 
         let request = BestPathRequest {
-            node_start_id: uuid::Uuid::new_v4().to_string(),
-            node_uuid_end: uuid::Uuid::new_v4().to_string(),
-            start_type: grpc_server::NodeType::Vertiport as i32,
+            origin_identifier: uuid::Uuid::new_v4().to_string(),
+            target_identifier: uuid::Uuid::new_v4().to_string(),
+            origin_type: grpc_server::NodeType::Vertiport as i32,
+            target_type: grpc_server::NodeType::Vertiport as i32,
             time_start: Some(time_start),
             time_end: None,
         };
@@ -401,9 +437,10 @@ mod tests {
 
         // Won't route for a time in the past
         let request = BestPathRequest {
-            node_start_id: uuid::Uuid::new_v4().to_string(),
-            node_uuid_end: uuid::Uuid::new_v4().to_string(),
-            start_type: grpc_server::NodeType::Vertiport as i32,
+            origin_identifier: uuid::Uuid::new_v4().to_string(),
+            target_identifier: uuid::Uuid::new_v4().to_string(),
+            origin_type: grpc_server::NodeType::Vertiport as i32,
+            target_type: grpc_server::NodeType::Vertiport as i32,
             time_start: Some(time_start),
             time_end: Some(time_end),
         };

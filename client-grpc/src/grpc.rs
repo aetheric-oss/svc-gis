@@ -41,24 +41,44 @@ pub struct Coordinates {
 pub struct Vertiport {
     /// Unique Arrow ID
     #[prost(string, tag = "1")]
-    pub uuid: ::prost::alloc::string::String,
+    pub identifier: ::prost::alloc::string::String,
     /// Vertiport Polygon
     #[prost(message, repeated, tag = "2")]
     pub vertices: ::prost::alloc::vec::Vec<Coordinates>,
-    /// Vertiport Label
-    #[prost(string, optional, tag = "3")]
+    /// Altitude of this vertiport
+    #[prost(float, tag = "3")]
+    pub altitude_meters: f32,
+    /// Vertiport label
+    #[prost(string, optional, tag = "4")]
     pub label: ::core::option::Option<::prost::alloc::string::String>,
 }
 /// Waypoint Type
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Waypoint {
-    /// Unique label
+    /// Unique identifier
     #[prost(string, tag = "1")]
-    pub label: ::prost::alloc::string::String,
+    pub identifier: ::prost::alloc::string::String,
     /// Latitude Coordinate
     #[prost(message, optional, tag = "2")]
     pub location: ::core::option::Option<Coordinates>,
+}
+/// Aircraft Identification
+/// ADS-B issues an identification message separately from position
+/// at a different rate, indicating the type of aircraft.
+/// Remote ID uses basic ID
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AircraftId {
+    /// Aircraft Identifier
+    #[prost(string, tag = "1")]
+    pub identifier: ::prost::alloc::string::String,
+    /// Aircraft Type
+    #[prost(enumeration = "AircraftType", tag = "2")]
+    pub aircraft_type: i32,
+    /// Network Timestamp at Receipt
+    #[prost(message, optional, tag = "3")]
+    pub timestamp_network: ::core::option::Option<::lib_common::time::Timestamp>,
 }
 /// Aircraft Type
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -67,24 +87,49 @@ pub struct AircraftPosition {
     /// Aircraft Identifier
     #[prost(string, tag = "1")]
     pub identifier: ::prost::alloc::string::String,
-    /// Aircraft Type
-    #[prost(enumeration = "AircraftType", tag = "2")]
-    pub aircraft_type: i32,
     /// Aircraft Location
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag = "2")]
     pub location: ::core::option::Option<Coordinates>,
     /// Aircraft Altitude
-    #[prost(float, tag = "4")]
+    #[prost(float, tag = "3")]
     pub altitude_meters: f32,
     /// Telemetry Self-Report Time
-    #[prost(message, optional, tag = "5")]
+    #[prost(message, optional, tag = "4")]
     pub timestamp_aircraft: ::core::option::Option<::lib_common::time::Timestamp>,
     /// Network Timestamp at Receipt
-    #[prost(message, optional, tag = "6")]
+    #[prost(message, optional, tag = "5")]
     pub timestamp_network: ::core::option::Option<::lib_common::time::Timestamp>,
-    /// network UUID (optional)
-    #[prost(string, optional, tag = "7")]
-    pub uuid: ::core::option::Option<::prost::alloc::string::String>,
+}
+/// Aircraft Identification
+/// ADS-B issues an identification message separately from position
+/// at a different rate, indicating the type of aircraft.
+/// Remote ID includes velocity in location messages
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AircraftVelocity {
+    /// Aircraft Identifier
+    #[prost(string, tag = "1")]
+    pub identifier: ::prost::alloc::string::String,
+    /// Vertical Rate (meters/second)
+    #[prost(float, tag = "2")]
+    pub velocity_vertical_mps: f32,
+    /// Horizontal Rate (Ground, meters/second)
+    /// ADS-B and Remote ID Location message both report this
+    #[prost(float, tag = "3")]
+    pub velocity_horizontal_ground_mps: f32,
+    /// Horizontal Rate (Air, meters/second)
+    /// ADS-B may report this, Remote ID does not
+    #[prost(float, optional, tag = "4")]
+    pub velocity_horizontal_air_mps: ::core::option::Option<f32>,
+    /// Track Angle (degrees) from true North
+    #[prost(float, tag = "5")]
+    pub track_angle_degrees: f32,
+    /// Telemetry Self-Report Time
+    #[prost(message, optional, tag = "6")]
+    pub timestamp_aircraft: ::core::option::Option<::lib_common::time::Timestamp>,
+    /// Network Timestamp at Receipt
+    #[prost(message, optional, tag = "7")]
+    pub timestamp_network: ::core::option::Option<::lib_common::time::Timestamp>,
 }
 /// Update Vertiports Request object
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -105,28 +150,45 @@ pub struct UpdateWaypointsRequest {
 /// Points in space used for routing (waypoints, vertiports, etc.)
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct NoFlyZone {
-    /// Unique label (NOTAM id, etc.)
+pub struct Zone {
+    /// Unique identifier (NOTAM id, etc.)
     #[prost(string, tag = "1")]
-    pub label: ::prost::alloc::string::String,
+    pub identifier: ::prost::alloc::string::String,
+    /// Zone Type
+    #[prost(enumeration = "ZoneType", tag = "2")]
+    pub zone_type: i32,
     /// Vertices bounding the No-Fly Zone
     /// The first vertex should match the end vertex (closed shape)
-    #[prost(message, repeated, tag = "2")]
+    #[prost(message, repeated, tag = "3")]
     pub vertices: ::prost::alloc::vec::Vec<Coordinates>,
+    /// Minimum altitude for this zone
+    #[prost(float, tag = "4")]
+    pub altitude_meters_min: f32,
+    /// Maximum altitude for this zone
+    #[prost(float, tag = "5")]
+    pub altitude_meters_max: f32,
     /// Start datetime for this zone
-    #[prost(message, optional, tag = "3")]
+    #[prost(message, optional, tag = "6")]
     pub time_start: ::core::option::Option<::lib_common::time::Timestamp>,
     /// End datetime for this zone
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag = "7")]
     pub time_end: ::core::option::Option<::lib_common::time::Timestamp>,
 }
 /// Update No Fly Zones Request object
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct UpdateNoFlyZonesRequest {
+pub struct UpdateZonesRequest {
     /// Nodes to update
     #[prost(message, repeated, tag = "1")]
-    pub zones: ::prost::alloc::vec::Vec<NoFlyZone>,
+    pub zones: ::prost::alloc::vec::Vec<Zone>,
+}
+/// Update Aircraft Request Object
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct UpdateAircraftIdRequest {
+    /// List of aircraft to update
+    #[prost(message, repeated, tag = "1")]
+    pub aircraft: ::prost::alloc::vec::Vec<AircraftId>,
 }
 /// Update Aircraft Request Object
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -135,6 +197,14 @@ pub struct UpdateAircraftPositionRequest {
     /// List of aircraft to update
     #[prost(message, repeated, tag = "1")]
     pub aircraft: ::prost::alloc::vec::Vec<AircraftPosition>,
+}
+/// Update Aircraft Request Object
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct UpdateAircraftVelocityRequest {
+    /// List of aircraft to update
+    #[prost(message, repeated, tag = "1")]
+    pub aircraft: ::prost::alloc::vec::Vec<AircraftVelocity>,
 }
 /// A path between nodes has >= 1 straight segments
 #[derive(Copy)]
@@ -146,47 +216,53 @@ pub struct PathSegment {
     pub index: i32,
     /// Start Node Type (Waypoint, Aircraft, or Vertiport)
     #[prost(enumeration = "NodeType", tag = "2")]
-    pub start_type: i32,
-    /// Latitude
-    #[prost(float, tag = "3")]
-    pub start_latitude: f32,
-    /// Longitude
-    #[prost(float, tag = "4")]
-    pub start_longitude: f32,
+    pub origin_type: i32,
+    /// Start Latitude
+    #[prost(double, tag = "3")]
+    pub origin_latitude: f64,
+    /// Start Longitude
+    #[prost(double, tag = "4")]
+    pub origin_longitude: f64,
+    /// Start altitude
+    #[prost(float, tag = "5")]
+    pub origin_altitude_meters: f32,
     /// End Node Type (Vertiport or Waypoint)
-    #[prost(enumeration = "NodeType", tag = "5")]
-    pub end_type: i32,
-    /// Latitude
-    #[prost(float, tag = "6")]
-    pub end_latitude: f32,
-    /// Longitude
+    #[prost(enumeration = "NodeType", tag = "6")]
+    pub target_type: i32,
+    /// End Latitude
     #[prost(float, tag = "7")]
-    pub end_longitude: f32,
-    /// Distance
+    pub target_latitude: f32,
+    /// End Longitude
     #[prost(float, tag = "8")]
-    pub distance_meters: f32,
-    /// Altitude
+    pub target_longitude: f32,
+    /// End altitude
     #[prost(float, tag = "9")]
-    pub altitude_meters: f32,
+    pub target_altitude_meters: f32,
+    /// Total distance of this 3D segment
+    #[prost(float, tag = "10")]
+    pub distance_meters: f32,
 }
 /// Best Path Request object
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct BestPathRequest {
-    /// Start Node - UUID for Vertiports, identifiers for Aircraft
+    /// Start Node Identifier
     #[prost(string, tag = "1")]
-    pub node_start_id: ::prost::alloc::string::String,
+    pub origin_identifier: ::prost::alloc::string::String,
     /// End Node (Vertiport UUID)
     #[prost(string, tag = "2")]
-    pub node_uuid_end: ::prost::alloc::string::String,
-    /// Start Node Type (Vertiport or Aircraft Allowed)
+    pub target_identifier: ::prost::alloc::string::String,
+    /// Routing Type (Vertiport or Aircraft Allowed)
     #[prost(enumeration = "NodeType", tag = "3")]
-    pub start_type: i32,
+    pub origin_type: i32,
+    /// Routing Type (Vertiport or Aircraft Allowed)
+    #[prost(enumeration = "NodeType", tag = "4")]
+    pub target_type: i32,
     /// Time of departure
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag = "5")]
     pub time_start: ::core::option::Option<::lib_common::time::Timestamp>,
     /// Time of arrival
-    #[prost(message, optional, tag = "5")]
+    #[prost(message, optional, tag = "6")]
     pub time_end: ::core::option::Option<::lib_common::time::Timestamp>,
 }
 /// Best Path Response object
@@ -197,47 +273,38 @@ pub struct BestPathResponse {
     #[prost(message, repeated, tag = "1")]
     pub segments: ::prost::alloc::vec::Vec<PathSegment>,
 }
-/// Nearest Neighbor Request object
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct NearestNeighborRequest {
-    /// Start Node - UUID for Vertiports, identifiers for Aircraft
-    #[prost(string, tag = "1")]
-    pub start_node_id: ::prost::alloc::string::String,
-    /// Start Node Type (Vertiport or Aircraft Allowed)
-    #[prost(enumeration = "NodeType", tag = "2")]
-    pub start_type: i32,
-    /// End Node Type (Vertiport or Aircraft Allowed)
-    #[prost(enumeration = "NodeType", tag = "3")]
-    pub end_type: i32,
-    /// Limit to this many results
-    #[prost(int32, tag = "4")]
-    pub limit: i32,
-    /// Limit to this range
-    #[prost(float, tag = "5")]
-    pub max_range_meters: f32,
+/// The nodes involved in the best path request
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum NodeType {
+    /// Vertiport
+    Vertiport = 0,
+    /// Waypoint
+    Waypoint = 1,
+    /// Aircraft
+    Aircraft = 2,
 }
-/// Distance to a node
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct DistanceTo {
-    /// Vertiport or Aircraft ID
-    #[prost(string, tag = "1")]
-    pub label: ::prost::alloc::string::String,
-    /// Vertiport or Aircraft Type
-    #[prost(enumeration = "NodeType", tag = "2")]
-    pub target_type: i32,
-    /// Distance to vertiport
-    #[prost(float, tag = "3")]
-    pub distance_meters: f32,
-}
-/// Nearest Vertiports Request object
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct NearestNeighborResponse {
-    /// Distances to nearby objects
-    #[prost(message, repeated, tag = "1")]
-    pub distances: ::prost::alloc::vec::Vec<DistanceTo>,
+impl NodeType {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            NodeType::Vertiport => "VERTIPORT",
+            NodeType::Waypoint => "WAYPOINT",
+            NodeType::Aircraft => "AIRCRAFT",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "VERTIPORT" => Some(Self::Vertiport),
+            "WAYPOINT" => Some(Self::Waypoint),
+            "AIRCRAFT" => Some(Self::Aircraft),
+            _ => None,
+        }
+    }
 }
 /// Aircraft Type
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
@@ -324,35 +391,31 @@ impl AircraftType {
         }
     }
 }
-/// Types of nodes in itinerary
+/// Airspace Zone Type
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
-pub enum NodeType {
-    /// Vertiport node
-    Vertiport = 0,
-    /// Waypoint node
-    Waypoint = 1,
-    /// Aircraft node
-    Aircraft = 2,
+pub enum ZoneType {
+    /// Vertiport
+    Port = 0,
+    /// Restriction
+    Restriction = 1,
 }
-impl NodeType {
+impl ZoneType {
     /// String value of the enum field names used in the ProtoBuf definition.
     ///
     /// The values are not transformed in any way and thus are considered stable
     /// (if the ProtoBuf definition does not change) and safe for programmatic use.
     pub fn as_str_name(&self) -> &'static str {
         match self {
-            NodeType::Vertiport => "VERTIPORT",
-            NodeType::Waypoint => "WAYPOINT",
-            NodeType::Aircraft => "AIRCRAFT",
+            ZoneType::Port => "PORT",
+            ZoneType::Restriction => "RESTRICTION",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
     pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
         match value {
-            "VERTIPORT" => Some(Self::Vertiport),
-            "WAYPOINT" => Some(Self::Waypoint),
-            "AIRCRAFT" => Some(Self::Aircraft),
+            "PORT" => Some(Self::Port),
+            "RESTRICTION" => Some(Self::Restriction),
             _ => None,
         }
     }
@@ -507,9 +570,9 @@ pub mod rpc_service_client {
                 .insert(GrpcMethod::new("grpc.RpcService", "updateWaypoints"));
             self.inner.unary(req, path, codec).await
         }
-        pub async fn update_no_fly_zones(
+        pub async fn update_zones(
             &mut self,
-            request: impl tonic::IntoRequest<super::UpdateNoFlyZonesRequest>,
+            request: impl tonic::IntoRequest<super::UpdateZonesRequest>,
         ) -> std::result::Result<tonic::Response<super::UpdateResponse>, tonic::Status> {
             self.inner
                 .ready()
@@ -522,11 +585,33 @@ pub mod rpc_service_client {
                 })?;
             let codec = tonic::codec::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/grpc.RpcService/updateNoFlyZones",
+                "/grpc.RpcService/updateZones",
             );
             let mut req = request.into_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("grpc.RpcService", "updateNoFlyZones"));
+                .insert(GrpcMethod::new("grpc.RpcService", "updateZones"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn update_aircraft_id(
+            &mut self,
+            request: impl tonic::IntoRequest<super::UpdateAircraftIdRequest>,
+        ) -> std::result::Result<tonic::Response<super::UpdateResponse>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/grpc.RpcService/updateAircraftId",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("grpc.RpcService", "updateAircraftId"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn update_aircraft_position(
@@ -551,6 +636,28 @@ pub mod rpc_service_client {
                 .insert(GrpcMethod::new("grpc.RpcService", "updateAircraftPosition"));
             self.inner.unary(req, path, codec).await
         }
+        pub async fn update_aircraft_velocity(
+            &mut self,
+            request: impl tonic::IntoRequest<super::UpdateAircraftVelocityRequest>,
+        ) -> std::result::Result<tonic::Response<super::UpdateResponse>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/grpc.RpcService/updateAircraftVelocity",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("grpc.RpcService", "updateAircraftVelocity"));
+            self.inner.unary(req, path, codec).await
+        }
         pub async fn best_path(
             &mut self,
             request: impl tonic::IntoRequest<super::BestPathRequest>,
@@ -571,31 +678,6 @@ pub mod rpc_service_client {
             let path = http::uri::PathAndQuery::from_static("/grpc.RpcService/bestPath");
             let mut req = request.into_request();
             req.extensions_mut().insert(GrpcMethod::new("grpc.RpcService", "bestPath"));
-            self.inner.unary(req, path, codec).await
-        }
-        pub async fn nearest_neighbors(
-            &mut self,
-            request: impl tonic::IntoRequest<super::NearestNeighborRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::NearestNeighborResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
-            let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/grpc.RpcService/nearestNeighbors",
-            );
-            let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(GrpcMethod::new("grpc.RpcService", "nearestNeighbors"));
             self.inner.unary(req, path, codec).await
         }
     }

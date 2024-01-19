@@ -2,13 +2,16 @@
 
 use crate::grpc::server::grpc_server;
 use grpc_server::Vertiport as RequestVertiport;
-use uuid::Uuid;
+use grpc_server::ZoneType;
 
 /// Maximum length of a label
-const LABEL_MAX_LENGTH: usize = 100;
+const IDENTIFIER_MAX_LENGTH: usize = 255;
 
 /// Allowed characters in a label
-const LABEL_REGEX: &str = r"^[a-zA-Z0-9_\s-]+$";
+const IDENTIFIER_REGEX: &str = r"^[a-zA-Z0-9_\s-]+$";
+
+/// Vertiport overhead no-fly clearance
+const VERTIPORT_CLEARANCE_METERS: f64 = 200.0;
 
 /// Possible conversion errors from the GRPC type to GIS type
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -19,8 +22,8 @@ pub enum VertiportError {
     /// No Vertiports
     NoVertiports,
 
-    /// Invalid Label
-    Label,
+    /// Invalid Identifier
+    Identifier,
 
     /// Location of one or more vertices is invalid
     Location,
@@ -37,7 +40,7 @@ impl std::fmt::Display for VertiportError {
         match self {
             VertiportError::VertiportId => write!(f, "Invalid vertiport ID provided."),
             VertiportError::NoVertiports => write!(f, "No vertiports were provided."),
-            VertiportError::Label => write!(f, "Invalid label provided."),
+            VertiportError::Identifier => write!(f, "Invalid label provided."),
             VertiportError::Location => write!(f, "Invalid vertices provided."),
             VertiportError::Client => write!(f, "Could not get backend client."),
             VertiportError::DBError => write!(f, "Unknown backend error."),
@@ -45,39 +48,31 @@ impl std::fmt::Display for VertiportError {
     }
 }
 
+/// Helper Struct for Validating Requests
 struct Vertiport {
-    uuid: Uuid,
+    identifier: String,
     label: Option<String>,
     geom: postgis::ewkb::Polygon,
+    altitude_meters: f32,
 }
 
 impl TryFrom<RequestVertiport> for Vertiport {
     type Error = VertiportError;
 
     fn try_from(vertiport: RequestVertiport) -> Result<Self, Self::Error> {
-        let Ok(uuid) = Uuid::parse_str(&vertiport.uuid) else {
+        if let Err(e) = super::utils::check_string(
+            &vertiport.identifier,
+            IDENTIFIER_REGEX,
+            IDENTIFIER_MAX_LENGTH,
+        ) {
             postgis_error!(
-                "(try_from RequestVertiport) Invalid vertiport UUID: {}",
-                vertiport.uuid
+                "(try_from RequestVertiport) Vertiport {} has invalid label {:?}: {}",
+                vertiport.identifier,
+                vertiport.label,
+                e
             );
-            return Err(VertiportError::VertiportId);
-        };
-
-        let label = match &vertiport.label {
-            Some(label) => {
-                if let Err(e) = super::utils::check_string(label, LABEL_REGEX, LABEL_MAX_LENGTH) {
-                    postgis_error!(
-                        "(try_from RequestVertiport) Vertiport {} has invalid label {}: {}",
-                        label,
-                        vertiport.uuid,
-                        e
-                    );
-                    return Err(VertiportError::Label);
-                }
-                Some(label.to_string())
-            }
-            None => None,
-        };
+            return Err(VertiportError::Identifier);
+        }
 
         let geom = match super::utils::polygon_from_vertices(&vertiport.vertices) {
             Ok(geom) => geom,
@@ -90,8 +85,33 @@ impl TryFrom<RequestVertiport> for Vertiport {
             }
         };
 
-        Ok(Vertiport { uuid, label, geom })
+        // TODO(R4): Check altitude
+
+        Ok(Vertiport {
+            identifier: vertiport.identifier,
+            label: vertiport.label,
+            geom,
+            altitude_meters: vertiport.altitude_meters,
+        })
     }
+}
+
+/// Initialize the vertiports table in the PostGIS database
+pub async fn psql_init(pool: &deadpool_postgres::Pool) -> Result<(), super::PsqlError> {
+    // Create Aircraft Table
+    let table_name = "arrow.vertiports";
+    let statements = vec![format!(
+        "CREATE TABLE IF NOT EXISTS {table_name} (
+            identifier VARCHAR(255) NOT NULL UNIQUE PRIMARY KEY,
+            label VARCHAR(255) NOT NULL,
+            zone_id INTEGER NOT NULL,
+            CONSTRAINT fk_zone
+                FOREIGN KEY (zone_id)
+                REFERENCES arrow.zones(id)
+        );"
+    )];
+
+    super::psql_transaction(statements, pool).await
 }
 
 /// Update vertiports in the PostGIS database
@@ -116,13 +136,49 @@ pub async fn update_vertiports(
         );
         VertiportError::Client
     })?;
+
     let transaction = client.transaction().await.map_err(|e| {
         postgis_error!("(update_vertiports) could not create transaction: {}", e);
         VertiportError::DBError
     })?;
 
     let stmt = transaction
-        .prepare_cached("SELECT arrow.update_vertiport($1, $2, $3)")
+        .prepare_cached(&format!(
+            "\
+        BEGIN;
+            DO $$
+            DECLARE
+                zid INTEGER;
+            BEGIN
+                INSERT INTO arrow.zones(
+                    identifier,
+                    geom,
+                    altitude_meters_min,
+                    altitude_meters_max
+                )
+                VALUES ($1, $2, $3, $3 + {VERTIPORT_CLEARANCE_METERS})
+                    ON CONFLICT (identifier) DO UPDATE
+                    SET
+                        geom = $2,
+                        zone_type = $5
+                RETURNING id INTO zid;
+
+                INSERT INTO arrow.vertiports(identifier, zone_id, label)
+                VALUES (
+                    $1,
+                    zid,
+                    $4
+                ) ON CONFLICT (identifier) DO UPDATE (
+                    IF $4 IS NOT NULL THEN
+                        SET label = $4;
+                    END IF;
+
+                    SET zone_id = zid
+                );
+            END; $$;
+        COMMIT;
+        "
+        ))
         .await
         .map_err(|e| {
             postgis_error!(
@@ -134,7 +190,16 @@ pub async fn update_vertiports(
 
     for vertiport in &vertiports {
         transaction
-            .execute(&stmt, &[&vertiport.uuid, &vertiport.geom, &vertiport.label])
+            .execute(
+                &stmt,
+                &[
+                    &vertiport.identifier,
+                    &vertiport.geom,
+                    &vertiport.altitude_meters,
+                    &vertiport.label,
+                    &ZoneType::Port,
+                ],
+            )
             .await
             .map_err(|e| {
                 postgis_error!("(update_vertiports) could not execute transaction: {}", e);
@@ -160,8 +225,9 @@ mod tests {
     use crate::grpc::server::grpc_server::Coordinates;
     use crate::postgis::utils;
     use crate::test_util::get_psql_pool;
+    use uuid::Uuid;
 
-    fn square(latitude: f32, longitude: f32) -> Vec<(f32, f32)> {
+    fn square(latitude: f64, longitude: f64) -> Vec<(f64, f64)> {
         vec![
             (latitude - 0.0001, longitude - 0.0001),
             (latitude + 0.0001, longitude - 0.0001),
@@ -190,7 +256,8 @@ mod tests {
                         longitude: *longitude,
                     })
                     .collect(),
-                uuid: Uuid::new_v4().to_string(),
+                identifier: Uuid::new_v4().to_string(),
+                altitude_meters: 10.0,
             })
             .collect();
 
@@ -214,7 +281,7 @@ mod tests {
 
     #[tokio::test]
     async fn ut_client_failure() {
-        let nodes: Vec<(&str, Vec<(f32, f32)>)> =
+        let nodes: Vec<(&str, Vec<(f64, f64)>)> =
             vec![("Vertiport", square(52.3745905, 4.9160036))];
         let vertiports: Vec<RequestVertiport> = nodes
             .iter()
@@ -227,7 +294,8 @@ mod tests {
                         longitude: *longitude,
                     })
                     .collect(),
-                uuid: Uuid::new_v4().to_string(),
+                identifier: Uuid::new_v4().to_string(),
+                altitude_meters: 10.0,
             })
             .collect();
 
@@ -240,7 +308,7 @@ mod tests {
     #[tokio::test]
     async fn ut_vertiports_invalid_uuid() {
         let vertiports: Vec<RequestVertiport> = vec![RequestVertiport {
-            uuid: "".to_string(),
+            identifier: "".to_string(),
             vertices: square(52.3745905, 4.9160036)
                 .iter()
                 .map(|(latitude, longitude)| Coordinates {
@@ -264,7 +332,7 @@ mod tests {
             "Vertiport;",
             "'Vertiport'",
             "Vertiport \'",
-            &"X".repeat(LABEL_MAX_LENGTH + 1),
+            &"X".repeat(IDENTIFIER_MAX_LENGTH + 1),
         ] {
             let vertiports: Vec<RequestVertiport> = vec![RequestVertiport {
                 label: Some(label.to_string()),
@@ -275,13 +343,14 @@ mod tests {
                         longitude: *longitude,
                     })
                     .collect(),
-                uuid: Uuid::new_v4().to_string(),
+                identifier: Uuid::new_v4().to_string(),
+                altitude_meters: 10.0,
             }];
 
             let result = update_vertiports(vertiports, get_psql_pool().await)
                 .await
                 .unwrap_err();
-            assert_eq!(result, VertiportError::Label);
+            assert_eq!(result, VertiportError::Identifier);
         }
     }
 
@@ -312,7 +381,7 @@ mod tests {
                         longitude: *longitude,
                     })
                     .collect(),
-                uuid: Uuid::new_v4().to_string(),
+                identifier: Uuid::new_v4().to_string(),
                 ..Default::default()
             }];
 
@@ -345,7 +414,7 @@ mod tests {
                         longitude: *longitude,
                     })
                     .collect(),
-                uuid: Uuid::new_v4().to_string(),
+                identifier: Uuid::new_v4().to_string(),
                 ..Default::default()
             }];
 

@@ -25,9 +25,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Build the Server
     server_config
-        .type_attribute("NodeType", "#[derive(::postgres_types::FromSql)]")
         .type_attribute("NodeType", "#[derive(::num_derive::FromPrimitive)]")
-        .type_attribute("NodeType", r#"#[postgres(name = "nodetype")]"#)
+        .type_attribute("NodeType", "#[derive(::strum::EnumString)]")
+        .type_attribute("NodeType", "#[derive(::strum::Display)]")
+        .type_attribute("ZoneType", "#[derive(::strum::EnumString)]")
+        .type_attribute("ZoneType", "#[derive(::strum::Display)]")
+        .type_attribute("ZoneType", "#[derive(::strum::EnumIter)]")
+        .type_attribute("ZoneType", "#[derive(::postgres_types::FromSql)]")
+        .type_attribute("ZoneType", "#[derive(::postgres_types::ToSql)]")
+        .type_attribute("ZoneType", "#[derive(::num_derive::FromPrimitive)]")
+        .type_attribute("ZoneType", r#"#[postgres(name = "arrow.zonetype")]"#)
+        .type_attribute("AircraftType", "#[derive(::strum::EnumString)]")
+        .type_attribute("AircraftType", "#[derive(::strum::Display)]")
+        .type_attribute("AircraftType", "#[derive(::strum::EnumIter)]")
+        .type_attribute("AircraftType", "#[derive(::postgres_types::FromSql)]")
+        .type_attribute("AircraftType", "#[derive(::postgres_types::ToSql)]")
+        .type_attribute("AircraftType", "#[derive(::num_derive::FromPrimitive)]")
+        .type_attribute(
+            "AircraftType",
+            r#"#[postgres(name = "arrow.aircrafttype")]"#,
+        )
         .build_client(false)
         .compile(&[proto_file], &[proto_dir])?;
 

@@ -7,11 +7,9 @@ pub mod grpc_server {
 }
 
 use crate::postgis::*;
-pub use grpc_server::rpc_service_server::{RpcService, RpcServiceServer};
-pub use grpc_server::NodeType;
-use grpc_server::{ReadyRequest, ReadyResponse};
-
 use crate::shutdown_signal;
+pub use grpc_server::rpc_service_server::{RpcService, RpcServiceServer};
+use grpc_server::{ReadyRequest, ReadyResponse};
 use std::fmt::Debug;
 use std::net::SocketAddr;
 use tonic::transport::Server;
@@ -73,17 +71,33 @@ impl RpcService for ServerImpl {
     }
 
     #[cfg(not(tarpaulin_include))]
-    async fn update_no_fly_zones(
+    async fn update_zones(
         &self,
-        request: Request<grpc_server::UpdateNoFlyZonesRequest>,
+        request: Request<grpc_server::UpdateZonesRequest>,
     ) -> Result<Response<grpc_server::UpdateResponse>, Status> {
-        grpc_debug!("(update_no_fly_zones) entry.");
+        grpc_debug!("(update_zones) entry.");
 
         // Update nodes in PostGIS
-        match nofly::update_nofly(request.into_inner().zones, &self.pool).await {
+        match zone::update_zones(request.into_inner().zones, &self.pool).await {
             Ok(_) => Ok(Response::new(grpc_server::UpdateResponse { updated: true })),
             Err(e) => {
-                grpc_error!("(update_no_fly_zones) error updating zones: {}", e);
+                grpc_error!("(update_zones) error updating zones: {}", e);
+                Err(Status::internal(e.to_string()))
+            }
+        }
+    }
+
+    #[cfg(not(tarpaulin_include))]
+    async fn update_aircraft_id(
+        &self,
+        request: Request<grpc_server::UpdateAircraftIdRequest>,
+    ) -> Result<Response<grpc_server::UpdateResponse>, Status> {
+        grpc_debug!("(update_aircraft_id) entry.");
+        // Update aircraft in PostGIS
+        match aircraft::update_aircraft_id(request.into_inner().aircraft, &self.pool).await {
+            Ok(_) => Ok(Response::new(grpc_server::UpdateResponse { updated: true })),
+            Err(e) => {
+                grpc_error!("(update_aircraft_id) error updating aircraft: {}", e);
                 Err(Status::internal(e.to_string()))
             }
         }
@@ -106,25 +120,29 @@ impl RpcService for ServerImpl {
     }
 
     #[cfg(not(tarpaulin_include))]
+    async fn update_aircraft_velocity(
+        &self,
+        request: Request<grpc_server::UpdateAircraftVelocityRequest>,
+    ) -> Result<Response<grpc_server::UpdateResponse>, Status> {
+        grpc_debug!("(update_aircraft_velocity) entry.");
+        // Update aircraft in PostGIS
+        match aircraft::update_aircraft_velocity(request.into_inner().aircraft, &self.pool).await {
+            Ok(_) => Ok(Response::new(grpc_server::UpdateResponse { updated: true })),
+            Err(e) => {
+                grpc_error!("(update_aircraft_velocity) error updating aircraft: {}", e);
+                Err(Status::internal(e.to_string()))
+            }
+        }
+    }
+
+    #[cfg(not(tarpaulin_include))]
     async fn best_path(
         &self,
         request: Request<grpc_server::BestPathRequest>,
     ) -> Result<Response<grpc_server::BestPathResponse>, Status> {
         grpc_debug!("(best_path) entry.");
         let request = request.into_inner();
-
-        let path_type = match num::FromPrimitive::from_i32(request.start_type) {
-            Some(NodeType::Vertiport) => PathType::PortToPort,
-            Some(NodeType::Aircraft) => PathType::AircraftToPort,
-            _ => {
-                grpc_error!("(best_path) invalid start node type.");
-                return Err(Status::invalid_argument(
-                    "Invalid start node type. Must be vertiport or aircraft.",
-                ));
-            }
-        };
-
-        match best_path::best_path(path_type, request, &self.pool).await {
+        match best_path::best_path(request, &self.pool).await {
             Ok(segments) => {
                 let response = grpc_server::BestPathResponse { segments };
                 Ok(Response::new(response))
@@ -136,24 +154,24 @@ impl RpcService for ServerImpl {
         }
     }
 
-    #[cfg(not(tarpaulin_include))]
-    async fn nearest_neighbors(
-        &self,
-        request: Request<grpc_server::NearestNeighborRequest>,
-    ) -> Result<Response<grpc_server::NearestNeighborResponse>, Status> {
-        grpc_debug!("(nearest_neighbors) entry.");
+    // #[cfg(not(tarpaulin_include))]
+    // async fn nearest_neighbors(
+    //     &self,
+    //     request: Request<grpc_server::NearestNeighborRequest>,
+    // ) -> Result<Response<grpc_server::NearestNeighborResponse>, Status> {
+    //     grpc_debug!("(nearest_neighbors) entry.");
 
-        match nearest::nearest_neighbors(request.into_inner(), &self.pool).await {
-            Ok(distances) => {
-                let response = grpc_server::NearestNeighborResponse { distances };
-                Ok(Response::new(response))
-            }
-            Err(e) => {
-                grpc_error!("(nearest_neighbors) error getting nearest neighbors: {}", e);
-                Err(Status::internal(e.to_string()))
-            }
-        }
-    }
+    //     match nearest::nearest_neighbors(request.into_inner(), &self.pool).await {
+    //         Ok(distances) => {
+    //             let response = grpc_server::NearestNeighborResponse { distances };
+    //             Ok(Response::new(response))
+    //         }
+    //         Err(e) => {
+    //             grpc_error!("(nearest_neighbors) error getting nearest neighbors: {}", e);
+    //             Err(Status::internal(e.to_string()))
+    //         }
+    //     }
+    // }
 }
 
 /// Starts the grpc servers for this microservice using the provided configuration
@@ -245,11 +263,21 @@ impl RpcService for ServerImpl {
     }
 
     #[cfg(not(tarpaulin_include))]
-    async fn update_no_fly_zones(
+    async fn update_zones(
         &self,
-        _request: Request<grpc_server::UpdateNoFlyZonesRequest>,
+        _request: Request<grpc_server::UpdateZonesRequest>,
     ) -> Result<Response<grpc_server::UpdateResponse>, Status> {
-        grpc_warn!("(update_no_fly_zones MOCK) entry.");
+        grpc_warn!("(update_zones MOCK) entry.");
+
+        Ok(Response::new(grpc_server::UpdateResponse { updated: true }))
+    }
+
+    #[cfg(not(tarpaulin_include))]
+    async fn update_aircraft_id(
+        &self,
+        _request: Request<grpc_server::UpdateAircraftIdRequest>,
+    ) -> Result<Response<grpc_server::UpdateResponse>, Status> {
+        grpc_warn!("(update_aircraft_id MOCK) entry.");
 
         Ok(Response::new(grpc_server::UpdateResponse { updated: true }))
     }
@@ -265,6 +293,16 @@ impl RpcService for ServerImpl {
     }
 
     #[cfg(not(tarpaulin_include))]
+    async fn update_aircraft_velocity(
+        &self,
+        _request: Request<grpc_server::UpdateAircraftVelocityRequest>,
+    ) -> Result<Response<grpc_server::UpdateResponse>, Status> {
+        grpc_warn!("(update_aircraft_velocity MOCK) entry.");
+
+        Ok(Response::new(grpc_server::UpdateResponse { updated: true }))
+    }
+
+    #[cfg(not(tarpaulin_include))]
     async fn best_path(
         &self,
         request: Request<grpc_server::BestPathRequest>,
@@ -272,18 +310,7 @@ impl RpcService for ServerImpl {
         grpc_warn!("(best_path MOCK) entry.");
         let request = request.into_inner();
 
-        let path_type = match num::FromPrimitive::from_i32(request.start_type) {
-            Some(NodeType::Vertiport) => PathType::PortToPort,
-            Some(NodeType::Aircraft) => PathType::AircraftToPort,
-            _ => {
-                grpc_error!("(best_path MOCK) invalid start node type.");
-                return Err(Status::invalid_argument(
-                    "Invalid start node type. Must be vertiport or aircraft.",
-                ));
-            }
-        };
-
-        match best_path::best_path(path_type, request, &self.pool).await {
+        match best_path::best_path(request, &self.pool).await {
             Ok(segments) => {
                 let response = grpc_server::BestPathResponse { segments };
                 Ok(Response::new(response))
@@ -295,23 +322,23 @@ impl RpcService for ServerImpl {
         }
     }
 
-    #[cfg(not(tarpaulin_include))]
-    async fn nearest_neighbors(
-        &self,
-        request: Request<grpc_server::NearestNeighborRequest>,
-    ) -> Result<Response<grpc_server::NearestNeighborResponse>, Status> {
-        grpc_warn!("(nearest_neighbors MOCK) entry.");
-        match nearest::nearest_neighbors(request.into_inner(), &self.pool).await {
-            Ok(distances) => {
-                let response = grpc_server::NearestNeighborResponse { distances };
-                Ok(Response::new(response))
-            }
-            Err(e) => {
-                grpc_error!("(nearest_neighbors MOCK) error getting nearest neighbors.");
-                Err(Status::internal(e.to_string()))
-            }
-        }
-    }
+    // #[cfg(not(tarpaulin_include))]
+    // async fn nearest_neighbors(
+    //     &self,
+    //     request: Request<grpc_server::NearestNeighborRequest>,
+    // ) -> Result<Response<grpc_server::NearestNeighborResponse>, Status> {
+    //     grpc_warn!("(nearest_neighbors MOCK) entry.");
+    //     match nearest::nearest_neighbors(request.into_inner(), &self.pool).await {
+    //         Ok(distances) => {
+    //             let response = grpc_server::NearestNeighborResponse { distances };
+    //             Ok(Response::new(response))
+    //         }
+    //         Err(e) => {
+    //             grpc_error!("(nearest_neighbors MOCK) error getting nearest neighbors.");
+    //             Err(Status::internal(e.to_string()))
+    //         }
+    //     }
+    // }
 }
 
 #[cfg(test)]

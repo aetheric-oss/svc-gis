@@ -107,7 +107,7 @@ sequenceDiagram
     gis->>client: UpdateResponse
 ```
 
-### updateNoFlyZones
+### updateZones
 
 ```mermaid
 sequenceDiagram
@@ -116,14 +116,14 @@ sequenceDiagram
     participant postgis as PostGIS
 
     note over client: receive adsb data
-    client->>+gis: updateNoFlyZones
+    client->>+gis: updateZones
     note over gis: process
     alt invalid request
     gis->>+client: error
     end
     
     alt for_each no-fly zone
-    gis->>+postgis: update_nofly
+    gis->>+postgis: update_zones
     note over postgis: create or update no fly zone<br>time window and geometry
     
     postgis->>+gis: success or error
