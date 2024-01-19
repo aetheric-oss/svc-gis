@@ -30,7 +30,7 @@ cfg_if::cfg_if! {
 
                 let pool = cfg.create_pool(Some(Runtime::Tokio1), NoTls).unwrap();
                 let grpc_service = ServerImpl { pool };
-                lib_common::grpc::mock::start_mock_server(
+                lib_common::grpc::mock::origin_mock_server(
                     server,
                     RpcServiceServer::new(grpc_service),
                 )
@@ -112,13 +112,13 @@ impl crate::service::Client<RpcServiceClient<Channel>> for GisClient {
             .await
     }
 
-    async fn update_no_fly_zones(
+    async fn update_zones(
         &self,
-        request: UpdateNoFlyZonesRequest,
+        request: UpdateZonesRequest,
     ) -> Result<tonic::Response<UpdateResponse>, tonic::Status> {
-        grpc_info!("(update_no_fly_zones) {} client.", self.get_name());
-        grpc_debug!("(update_no_fly_zones) request: {:?}", request);
-        self.get_client().await?.update_no_fly_zones(request).await
+        grpc_info!("(update_zones) {} client.", self.get_name());
+        grpc_debug!("(update_zones) request: {:?}", request);
+        self.get_client().await?.update_zones(request).await
     }
 
     async fn best_path(
@@ -130,14 +130,14 @@ impl crate::service::Client<RpcServiceClient<Channel>> for GisClient {
         self.get_client().await?.best_path(request).await
     }
 
-    async fn nearest_neighbors(
-        &self,
-        request: NearestNeighborRequest,
-    ) -> Result<tonic::Response<NearestNeighborResponse>, tonic::Status> {
-        grpc_info!("(nearest_neighbors) {} client.", self.get_name());
-        grpc_debug!("(nearest_neighbors) request: {:?}", request);
-        self.get_client().await?.nearest_neighbors(request).await
-    }
+    // async fn nearest_neighbors(
+    //     &self,
+    //     request: NearestNeighborRequest,
+    // ) -> Result<tonic::Response<NearestNeighborResponse>, tonic::Status> {
+    //     grpc_info!("(nearest_neighbors) {} client.", self.get_name());
+    //     grpc_debug!("(nearest_neighbors) request: {:?}", request);
+    //     self.get_client().await?.nearest_neighbors(request).await
+    // }
 }
 
 #[cfg(feature = "stub_client")]
@@ -173,12 +173,12 @@ impl crate::service::Client<RpcServiceClient<Channel>> for GisClient {
         Ok(tonic::Response::new(UpdateResponse { updated: true }))
     }
 
-    async fn update_no_fly_zones(
+    async fn update_zones(
         &self,
-        request: UpdateNoFlyZonesRequest,
+        request: UpdateZonesRequest,
     ) -> Result<tonic::Response<UpdateResponse>, tonic::Status> {
-        grpc_warn!("(update_no_fly_zones MOCK) {} client.", self.get_name());
-        grpc_debug!("(update_no_fly_zones MOCK) request: {:?}", request);
+        grpc_warn!("(update_zones MOCK) {} client.", self.get_name());
+        grpc_debug!("(update_zones MOCK) request: {:?}", request);
         Ok(tonic::Response::new(UpdateResponse { updated: true }))
     }
 
@@ -203,32 +203,33 @@ impl crate::service::Client<RpcServiceClient<Channel>> for GisClient {
         Ok(tonic::Response::new(BestPathResponse {
             segments: vec![PathSegment {
                 index: 0,
-                start_type: NodeType::Vertiport as i32,
-                start_latitude: 52.374746487741156,
-                start_longitude: 4.916383166303402,
-                end_type: NodeType::Vertiport as i32,
-                end_latitude: 52.3751804160378,
-                end_longitude: 4.916396577348476,
+                origin_type: NodeType::Vertiport as i32,
+                origin_latitude: 52.374746487741156,
+                origin_longitude: 4.916383166303402,
+                origin_altitude_meters: 100.0,
+                target_type: NodeType::Vertiport as i32,
+                target_latitude: 52.3751804160378,
+                target_longitude: 4.916396577348476,
                 distance_meters: 50.0,
-                altitude_meters: 10.0,
+                target_altitude_meters: 100.0,
             }],
         }))
     }
 
-    async fn nearest_neighbors(
-        &self,
-        request: NearestNeighborRequest,
-    ) -> Result<tonic::Response<NearestNeighborResponse>, tonic::Status> {
-        grpc_info!("(nearest_neighbors MOCK) {} client.", self.get_name());
-        grpc_debug!("(nearest_neighbors MOCK) request: {:?}", request);
-        Ok(tonic::Response::new(NearestNeighborResponse {
-            distances: vec![DistanceTo {
-                label: "mock vertiport".to_string(),
-                target_type: request.start_type,
-                distance_meters: 500.0,
-            }],
-        }))
-    }
+    // async fn nearest_neighbors(
+    //     &self,
+    //     request: NearestNeighborRequest,
+    // ) -> Result<tonic::Response<NearestNeighborResponse>, tonic::Status> {
+    //     grpc_info!("(nearest_neighbors MOCK) {} client.", self.get_name());
+    //     grpc_debug!("(nearest_neighbors MOCK) request: {:?}", request);
+    //     Ok(tonic::Response::new(NearestNeighborResponse {
+    //         distances: vec![DistanceTo {
+    //             label: "mock vertiport".to_string(),
+    //             target_type: request.origin_type,
+    //             distance_meters: 500.0,
+    //         }],
+    //     }))
+    // }
 }
 
 #[cfg(test)]

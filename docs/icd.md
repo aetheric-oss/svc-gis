@@ -45,7 +45,7 @@ See the High-Level ICD.
 | `isReady` | Check if this microservice is ready to receive gRPC requests. |
 | `updateVertiports` | Add or update vertiports in the database. |
 | `updateWaypoints` | Add or update waypoints in the database. |
-| `updateNoFlyZones` | Add or update no fly zones in the database. |
+| `updateZones` | Add or update no fly zones in the database. |
 | `updateAircraftPosition` | Add or update the position of aircraft in the database. |
 | `bestPath` | Get the shortest path between two nodes. Currently supported is vertiport to vertiport and aircraft to vertiport routing. |
 | `nearestNeighbors` | Gets the nearest vertiport neighbors to an aircraft or vertiport. |

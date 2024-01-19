@@ -40,8 +40,8 @@ services:
       - 5432:5432
     healthcheck:
       test: "pg_isready -d gis -h localhost -p 5432 -U svc_gis"
-      interval: 2s
-      timeout: 10s
+      interval: 10s
+      timeout: 30s
       retries: 3
     volumes:
       - type: volume
@@ -63,7 +63,7 @@ services:
       -c ssl_key_file=${DB_CLIENT_KEY}
 
   web-server:
-    container_name: ${DOCKER_NAME}-example-server
+    container_name: ${DOCKER_NAME}-web-server
     image: ${PACKAGE_NAME}:latest
     depends_on:
       postgis:
@@ -116,7 +116,7 @@ services:
         source: "${SOURCE_PATH}/.cargo/registry"
         target: "/usr/local/cargo/registry"
     environment:
-      - SERVER_HOSTNAME
+      - SERVER_HOSTNAME=${DOCKER_NAME}-example-server
       - SERVER_PORT_GRPC
       - SERVER_PORT_REST
       - EXAMPLE_TARGET

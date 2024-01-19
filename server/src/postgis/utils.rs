@@ -53,20 +53,24 @@ impl std::fmt::Display for PointError {
 /// Errors validating a string
 pub enum StringError {
     /// Provided string is too long
-    InvalidLength,
+    Length,
 
-    /// Provided string does not match regex
-    InvalidRegex,
+    /// Regex is invalid
+    Regex,
 
     /// Provided string contains invalid keywords
     ContainsForbidden,
+
+    /// Provided string doesn't match regex
+    Mismatch,
 }
 
 impl std::fmt::Display for StringError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            StringError::InvalidLength => write!(f, "String is too long."),
-            StringError::InvalidRegex => write!(f, "String does not match regex."),
+            StringError::Length => write!(f, "String is too long."),
+            StringError::Regex => write!(f, "Regex is invalid."),
+            StringError::Mismatch => write!(f, "String does not match regex."),
             StringError::ContainsForbidden => write!(f, "String contains 'null'."),
         }
     }
@@ -75,19 +79,19 @@ impl std::fmt::Display for StringError {
 /// Check if a provided string argument is valid
 pub fn check_string(string: &str, regex: &str, allowed_length: usize) -> Result<(), StringError> {
     if string.len() > allowed_length {
-        return Err(StringError::InvalidLength);
+        return Err(StringError::Length);
     }
 
     let Ok(re) = regex::Regex::new(regex) else {
-        return Err(StringError::InvalidRegex);
+        return Err(StringError::Regex);
     };
-
-    if !re.is_match(string) {
-        return Err(StringError::InvalidRegex);
-    }
 
     if string.to_lowercase().contains("null") {
         return Err(StringError::ContainsForbidden);
+    }
+
+    if !re.is_match(string) {
+        return Err(StringError::Mismatch);
     }
 
     Ok(())
@@ -174,8 +178,8 @@ mod tests {
         assert_eq!(
             point,
             postgis::ewkb::Point {
-                x: longitude as f64,
-                y: latitude as f64,
+                x: longitude,
+                y: latitude,
                 srid: Some(4326)
             }
         );
@@ -233,8 +237,8 @@ mod tests {
                 points: vertices
                     .iter()
                     .map(|vertex| postgis::ewkb::Point {
-                        x: vertex.longitude as f64,
-                        y: vertex.latitude as f64,
+                        x: vertex.longitude,
+                        y: vertex.latitude,
                         srid: Some(4326),
                     })
                     .collect(),
@@ -282,7 +286,7 @@ mod tests {
     fn ut_check_string() {
         // Valid
         let string = "test";
-        let regex = r"^[a-zA-Z0-9_]+$";
+        let regex = r"^[a-zA-Z0-9_-.]+$";
         let allowed_length = 10;
 
         assert!(check_string(string, regex, allowed_length).is_ok());
@@ -293,7 +297,7 @@ mod tests {
         let allowed_length = 3;
         assert_eq!(
             check_string(string, regex, allowed_length).unwrap_err(),
-            StringError::InvalidLength,
+            StringError::Length,
         );
 
         // Breaks Regex
@@ -302,7 +306,7 @@ mod tests {
         let allowed_length = 10;
         assert_eq!(
             check_string(string, regex, allowed_length).unwrap_err(),
-            StringError::InvalidRegex,
+            StringError::Regex,
         );
 
         // Contains NULL

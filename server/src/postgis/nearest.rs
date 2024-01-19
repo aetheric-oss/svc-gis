@@ -204,11 +204,11 @@ pub async fn nearest_neighbors(
 
     let mut results: Vec<DistanceTo> = vec![];
     for r in &rows {
-        let label: Uuid = r.get(0);
+        let identifier: Uuid = r.get(0);
         let distance_meters: f64 = r.get(1);
 
         results.push(DistanceTo {
-            label: label.to_string(),
+            identifier: identifier.to_string(),
             target_type,
             distance_meters: distance_meters as f32,
         });

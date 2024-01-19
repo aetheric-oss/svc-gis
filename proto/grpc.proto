@@ -9,11 +9,27 @@ service RpcService {
     rpc isReady(ReadyRequest) returns (ReadyResponse);
     rpc updateVertiports(updateVertiportsRequest) returns (UpdateResponse);
     rpc updateWaypoints(updateWaypointsRequest) returns (UpdateResponse);
-    rpc updateNoFlyZones(UpdateNoFlyZonesRequest) returns (UpdateResponse);
+    rpc updateZones(UpdateZonesRequest) returns (UpdateResponse);
+    rpc updateAircraftId(UpdateAircraftIdRequest)
+        returns (UpdateResponse);
     rpc updateAircraftPosition(UpdateAircraftPositionRequest)
         returns (UpdateResponse);
+    rpc updateAircraftVelocity(UpdateAircraftVelocityRequest)
+        returns (UpdateResponse);
     rpc bestPath(BestPathRequest) returns (BestPathResponse);
-    rpc nearestNeighbors(NearestNeighborRequest) returns (NearestNeighborResponse);
+    // rpc nearestNeighbors(NearestNeighborRequest) returns (NearestNeighborResponse);
+}
+
+// The nodes involved in the best path request
+enum NodeType {
+    // Vertiport
+    VERTIPORT = 0;
+
+    // Waypoint
+    WAYPOINT = 1;
+
+    // Aircraft
+    AIRCRAFT = 2;
 }
 
 // Ready Request object
@@ -46,19 +62,22 @@ message Coordinates {
 // Vertiport Type
 message Vertiport {
     // Unique Arrow ID
-    string uuid = 1;
+    string identifier = 1;
 
     // Vertiport Polygon
     repeated Coordinates vertices = 2;
 
-    // Vertiport Label
-    optional string label = 3;
+    // Altitude of this vertiport
+    float altitude_meters = 3;
+
+    // Vertiport label
+    optional string label = 4;
 }
 
 // Waypoint Type
 message Waypoint {
-    // Unique label
-    string label = 1;
+    // Unique identifier
+    string identifier = 1;
 
     // Latitude Coordinate
     Coordinates location = 2;
@@ -115,28 +134,69 @@ enum AircraftType {
     OTHER = 15;
 }
 
-// Aircraft Type
-message AircraftPosition {
+// Aircraft Identification
+//  ADS-B issues an identification message separately from position
+//  at a different rate, indicating the type of aircraft.
+//  Remote ID uses basic ID
+message AircraftId {
     // Aircraft Identifier
     string identifier = 1;
 
     // Aircraft Type
     AircraftType aircraft_type = 2;
 
+    // Network Timestamp at Receipt
+    google.protobuf.Timestamp timestamp_network = 3;
+}
+
+// Aircraft Type
+message AircraftPosition {
+    // Aircraft Identifier
+    string identifier = 1;
+
     // Aircraft Location
-    Coordinates location = 3;
+    Coordinates location = 2;
 
     // Aircraft Altitude
-    float altitude_meters = 4;
+    float altitude_meters = 3;
 
     // Telemetry Self-Report Time
-    google.protobuf.Timestamp timestamp_aircraft = 5;
+    google.protobuf.Timestamp timestamp_aircraft = 4;
 
     // Network Timestamp at Receipt
-    google.protobuf.Timestamp timestamp_network = 6;
+    google.protobuf.Timestamp timestamp_network = 5;
+}
 
-    // network UUID (optional)
-    optional string uuid = 7;
+
+// Aircraft Identification
+//  ADS-B issues an identification message separately from position
+//  at a different rate, indicating the type of aircraft.
+//  Remote ID includes velocity in location messages
+message AircraftVelocity {
+    // Aircraft Identifier
+    string identifier = 1;
+
+    // Vertical Rate (meters/second)
+    float velocity_vertical_mps = 2;
+
+    // Horizontal Rate (Ground, meters/second)
+    // ADS-B and Remote ID Location message both report this
+    float velocity_horizontal_ground_mps = 3;
+
+    // Horizontal Rate (Air, meters/second)
+    // ADS-B may report this, Remote ID does not
+    optional float velocity_horizontal_air_mps = 4;
+
+    // Track Angle (degrees) from true North
+    float track_angle_degrees = 5;
+
+    // TODO(R5) - Uncertainty/Tolerance
+
+    // Telemetry Self-Report Time
+    google.protobuf.Timestamp timestamp_aircraft = 6;
+
+    // Network Timestamp at Receipt
+    google.protobuf.Timestamp timestamp_network = 7;
 }
 
 // Update Vertiports Request object
@@ -151,26 +211,50 @@ message updateWaypointsRequest {
     repeated Waypoint waypoints = 1;
 }
 
+// Airspace Zone Type
+enum ZoneType {
+    // Vertiport
+    PORT = 0;
+
+    // Restriction
+    RESTRICTION = 1;
+}
+
 // Points in space used for routing (waypoints, vertiports, etc.)
-message NoFlyZone {
-    // Unique label (NOTAM id, etc.)
-    string label = 1;
+message Zone {
+    // Unique identifier (NOTAM id, etc.)
+    string identifier = 1;
+
+    // Zone Type
+    ZoneType zone_type = 2;
 
     // Vertices bounding the No-Fly Zone
     // The first vertex should match the end vertex (closed shape)
-    repeated Coordinates vertices = 2;
+    repeated Coordinates vertices = 3;
+
+    // Minimum altitude for this zone
+    float altitude_meters_min = 4;
+
+    // Maximum altitude for this zone
+    float altitude_meters_max = 5;
 
     // Start datetime for this zone
-    google.protobuf.Timestamp time_start = 3;
+    google.protobuf.Timestamp time_start = 6;
 
     // End datetime for this zone
-    google.protobuf.Timestamp time_end = 4;
+    google.protobuf.Timestamp time_end = 7;
 }
 
 // Update No Fly Zones Request object
-message UpdateNoFlyZonesRequest {
+message UpdateZonesRequest {
     // Nodes to update
-    repeated NoFlyZone zones = 1;
+    repeated Zone zones = 1;
+}
+
+// Update Aircraft Request Object
+message UpdateAircraftIdRequest {
+    // List of aircraft to update
+    repeated AircraftId aircraft = 1;
 }
 
 // Update Aircraft Request Object
@@ -180,16 +264,10 @@ message UpdateAircraftPositionRequest {
     repeated AircraftPosition aircraft = 1;
 }
 
-// Types of nodes in itinerary
-enum NodeType {
-    // Vertiport node
-    VERTIPORT = 0;
-
-    // Waypoint node
-    WAYPOINT = 1;
-
-    // Aircraft node
-    AIRCRAFT = 2;
+// Update Aircraft Request Object
+message UpdateAircraftVelocityRequest {
+    // List of aircraft to update
+    repeated AircraftVelocity aircraft = 1;
 }
 
 // A path between nodes has >= 1 straight segments
@@ -198,46 +276,52 @@ message PathSegment {
     int32 index = 1;
 
     // Start Node Type (Waypoint, Aircraft, or Vertiport)
-    NodeType start_type = 2;
+    NodeType origin_type = 2;
 
-    // Latitude
-    float start_latitude = 3;
+    // Start Latitude
+    double origin_latitude = 3;
 
-    // Longitude
-    float start_longitude = 4;
+    // Start Longitude
+    double origin_longitude = 4;
+
+    // Start altitude
+    float origin_altitude_meters = 5;
 
     // End Node Type (Vertiport or Waypoint)
-    NodeType end_type = 5;
+    NodeType target_type = 6;
 
-    // Latitude
-    float end_latitude = 6;
+    // End Latitude
+    float target_latitude = 7;
 
-    // Longitude
-    float end_longitude = 7;
+    // End Longitude
+    float target_longitude = 8;
 
-    // Distance
-    float distance_meters = 8;
+    // End altitude
+    float target_altitude_meters = 9;
 
-    // Altitude
-    float altitude_meters = 9;
+    // Total distance of this 3D segment
+    float distance_meters = 10;
 }
 
 // Best Path Request object
 message BestPathRequest {
-    // Start Node - UUID for Vertiports, identifiers for Aircraft
-    string node_start_id = 1;
+    // Start Node Identifier
+    string origin_identifier = 1;
 
     // End Node (Vertiport UUID)
-    string node_uuid_end = 2;
+    string target_identifier = 2;
 
-    // Start Node Type (Vertiport or Aircraft Allowed)
-    NodeType start_type = 3;
+    // Routing Type (Vertiport or Aircraft Allowed)
+    NodeType origin_type = 3;
+
+    // Routing Type (Vertiport or Aircraft Allowed)
+    NodeType target_type = 4;
 
     // Time of departure
-    google.protobuf.Timestamp time_start = 4;
+    google.protobuf.Timestamp time_start = 5;
 
     // Time of arrival
-    google.protobuf.Timestamp time_end = 5;
+    google.protobuf.Timestamp time_end = 6;
 }
 
 // Best Path Response object
@@ -246,39 +330,39 @@ message BestPathResponse {
     repeated PathSegment segments = 1;
 }
 
-// Nearest Neighbor Request object
-message NearestNeighborRequest {
-    // Start Node - UUID for Vertiports, identifiers for Aircraft
-    string start_node_id = 1;
+// // Nearest Neighbor Request object
+// message NearestNeighborRequest {
+//     // Start Node - UUID for Vertiports, identifiers for Aircraft
+//     string start_node_id = 1;
 
-    // Start Node Type (Vertiport or Aircraft Allowed)
-    NodeType start_type = 2;
+//     // Start Node Type (Vertiport or Aircraft Allowed)
+//     NodeType start_type = 2;
 
-    // End Node Type (Vertiport or Aircraft Allowed)
-    NodeType end_type = 3;
+//     // End Node Type (Vertiport or Aircraft Allowed)
+//     NodeType end_type = 3;
 
-    // Limit to this many results
-    int32 limit = 4;
+//     // Limit to this many results
+//     int32 limit = 4;
 
-    // Limit to this range
-    float max_range_meters = 5;
-}
+//     // Limit to this range
+//     float max_range_meters = 5;
+// }
 
-// Distance to a node
-message DistanceTo {
-    // Vertiport or Aircraft ID
-    string label = 1;
+// // Distance to a node
+// message DistanceTo {
+//     // Vertiport or Aircraft ID
+//     string identifier = 1;
 
-    // Vertiport or Aircraft Type
-    NodeType target_type = 2;
+//     // Vertiport or Aircraft Type
+//     NodeType target_type = 2;
 
-    // Distance to vertiport
-    float distance_meters = 3;
-}
+//     // Distance to vertiport
+//     float distance_meters = 3;
+// }
 
-// Nearest Vertiports Request object
-message NearestNeighborResponse {
+// // Nearest Vertiports Request object
+// message NearestNeighborResponse {
 
-    // Distances to nearby objects
-    repeated DistanceTo distances = 1;
-}
+//     // Distances to nearby objects
+//     repeated DistanceTo distances = 1;
+// }

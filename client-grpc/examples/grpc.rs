@@ -5,19 +5,18 @@ use chrono::Duration;
 use lib_common::grpc::get_endpoint_from_env;
 use lib_common::time::Utc;
 use svc_gis_client_grpc::prelude::{gis::*, *};
-use uuid::Uuid;
 
-const VERTIPORT_1_UUID: &str = "00000000-0000-0000-0000-000000000000";
-const VERTIPORT_2_UUID: &str = "00000000-0000-0000-0000-000000000001";
-const VERTIPORT_3_UUID: &str = "00000000-0000-0000-0000-000000000003";
-const AIRCRAFT_1_UUID: &str = "00000000-0000-0000-0000-000000000002";
-const AIRCRAFT_1_LABEL: &str = "Marauder";
+const VERTIPORT_1_ID: &str = "Kamino";
+const VERTIPORT_2_ID: &str = "Bespin";
+const VERTIPORT_3_ID: &str = "Coruscant";
+const AIRCRAFT_1_ID: &str = "Marauder";
 
 async fn add_vertiports(client: &GisClient) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n\u{1F6EB} Add Vertiports");
     let vertiports = vec![
         Vertiport {
-            uuid: VERTIPORT_1_UUID.to_string(),
+            identifier: VERTIPORT_1_ID.to_string(),
+            altitude_meters: 10.0,
             vertices: vec![
                 (52.3746368, 4.9163718),
                 (52.3747387, 4.9162102),
@@ -34,7 +33,8 @@ async fn add_vertiports(client: &GisClient) -> Result<(), Box<dyn std::error::Er
             label: Some("VertiportA".to_string()),
         },
         Vertiport {
-            uuid: VERTIPORT_2_UUID.to_string(),
+            identifier: VERTIPORT_2_ID.to_string(),
+            altitude_meters: 10.0,
             vertices: vec![
                 (52.3751407, 4.916294),
                 (52.3752201, 4.9162611),
@@ -52,7 +52,8 @@ async fn add_vertiports(client: &GisClient) -> Result<(), Box<dyn std::error::Er
             label: Some("VertiportB".to_string()),
         },
         Vertiport {
-            uuid: VERTIPORT_3_UUID.to_string(),
+            identifier: VERTIPORT_3_ID.to_string(),
+            altitude_meters: 10.0,
             vertices: vec![
                 (52.3753536, 4.9157569),
                 (52.3752766, 4.9157193),
@@ -91,8 +92,8 @@ async fn add_waypoints(client: &GisClient) -> Result<(), Box<dyn std::error::Err
 
     let waypoints = nodes
         .iter()
-        .map(|(label, latitude, longitude)| Waypoint {
-            label: label.to_string(),
+        .map(|(identifier, latitude, longitude)| Waypoint {
+            identifier: identifier.to_string(),
             location: Some(Coordinates {
                 latitude: *latitude,
                 longitude: *longitude,
@@ -112,35 +113,25 @@ async fn add_waypoints(client: &GisClient) -> Result<(), Box<dyn std::error::Err
 async fn add_aircraft(client: &GisClient) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n\u{1F681} Add Aircraft");
 
-    let aircraft: Vec<(Option<String>, &str, f32, f32)> = vec![
-        (
-            Some(AIRCRAFT_1_UUID.to_string()),
-            AIRCRAFT_1_LABEL,
-            52.3746,
-            4.9160036,
-        ),
-        (
-            Some(Uuid::new_v4().to_string()),
-            "Mantis",
-            52.3749819,
-            4.9157,
-        ),
-        (None, "Ghost", 52.37523, 4.9153733),
-        (None, "Phantom", 52.3754, 4.9156845),
-        (None, "Falcon", 52.3750703, 4.9162),
+    let aircraft: Vec<(&str, f64, f64)> = vec![
+        (AIRCRAFT_1_ID, 52.3746, 4.9160036),
+        ("Mantis", 52.3749819, 4.9157),
+        ("Ghost", 52.37523, 4.9153733),
+        ("Phantom", 52.3754, 4.9156845),
+        ("Falcon", 52.3750703, 4.9162),
     ];
 
     let aircraft: Vec<AircraftPosition> = aircraft
         .iter()
-        .map(|(uuid, identifier, latitude, longitude)| AircraftPosition {
-            uuid: uuid.clone(),
+        .map(|(identifier, latitude, longitude)| AircraftPosition {
             identifier: identifier.to_string(),
             altitude_meters: 1000.0,
             location: Some(Coordinates {
                 latitude: *latitude,
                 longitude: *longitude,
             }),
-            time: Some(Into::<Timestamp>::into(Utc::now())),
+            timestamp_network: Some(Into::<Timestamp>::into(Utc::now())),
+            timestamp_aircraft: None,
         })
         .collect();
 
@@ -182,9 +173,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let time_start: Timestamp = Utc::now().into();
         let time_end: Timestamp = (Utc::now() + Duration::hours(2)).into();
         let request = BestPathRequest {
-            node_start_id: VERTIPORT_1_UUID.to_string(),
-            node_uuid_end: VERTIPORT_2_UUID.to_string(),
-            start_type: NodeType::Vertiport as i32,
+            origin_identifier: VERTIPORT_1_ID.to_string(),
+            target_identifier: VERTIPORT_2_ID.to_string(),
+            origin_type: NodeType::Vertiport as i32,
+            target_type: NodeType::Vertiport as i32,
             time_start: Some(time_start),
             time_end: Some(time_end),
         };
@@ -204,10 +196,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Update No-Fly Zones
     {
         println!("\n\u{26D4} Add No-Fly Zones");
-        let mut zones: Vec<NoFlyZone> = vec![];
+        let mut zones: Vec<Zone> = vec![];
 
         // No Fly 1
-        let vertices: Vec<(f32, f32)> = vec![
+        let vertices: Vec<(f64, f64)> = vec![
             (52.3751734, 4.9158481),
             (52.3750752, 4.9157998),
             (52.3749409, 4.9164569),
@@ -225,8 +217,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let time_start: Timestamp = no_fly_start_time.into();
         let time_end: Timestamp = no_fly_end_time.into();
-        zones.push(NoFlyZone {
-            label: "NL-NFZ-01".to_string(),
+        zones.push(Zone {
+            identifier: "NL-NFZ-01".to_string(),
+            zone_type: ZoneType::Restriction as i32,
+            altitude_meters_max: 1000.0,
+            altitude_meters_min: 0.0,
             vertices,
             time_start: Some(time_start),
             time_end: Some(time_end),
@@ -257,16 +252,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             })
             .collect();
 
-        zones.push(NoFlyZone {
-            label: "NL-NFZ-02".to_string(),
+        zones.push(Zone {
+            identifier: "NL-NFZ-02".to_string(),
+            zone_type: ZoneType::Restriction as i32,
+            altitude_meters_max: 1000.0,
+            altitude_meters_min: 0.0,
             vertices,
             time_start: None,
             time_end: None,
         });
 
-        let response = client
-            .update_no_fly_zones(UpdateNoFlyZonesRequest { zones })
-            .await?;
+        let response = client.update_zones(UpdateZonesRequest { zones }).await?;
 
         println!("RESPONSE={:?}", response.into_inner());
     }
@@ -277,9 +273,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let time_start: Timestamp = no_fly_start_time.into();
         let time_end: Timestamp = (no_fly_start_time + Duration::hours(1)).into();
         let request = BestPathRequest {
-            node_start_id: VERTIPORT_1_UUID.to_string(),
-            node_uuid_end: VERTIPORT_2_UUID.to_string(),
-            start_type: NodeType::Vertiport as i32,
+            origin_identifier: VERTIPORT_1_ID.to_string(),
+            target_identifier: VERTIPORT_2_ID.to_string(),
+            origin_type: NodeType::Vertiport as i32,
+            target_type: NodeType::Vertiport as i32,
             time_start: Some(time_start),
             time_end: Some(time_end),
         };
@@ -299,9 +296,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let time_start: Timestamp = (no_fly_end_time + Duration::seconds(1)).into();
         let time_end: Timestamp = (no_fly_end_time + Duration::hours(1)).into();
         let request = BestPathRequest {
-            node_start_id: VERTIPORT_1_UUID.to_string(),
-            node_uuid_end: VERTIPORT_2_UUID.to_string(),
-            start_type: NodeType::Vertiport as i32,
+            origin_identifier: VERTIPORT_1_ID.to_string(),
+            target_identifier: VERTIPORT_2_ID.to_string(),
+            origin_type: NodeType::Vertiport as i32,
+            target_type: NodeType::Vertiport as i32,
             time_start: Some(time_start),
             time_end: Some(time_end),
         };
@@ -321,9 +319,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let time_start: Timestamp = no_fly_start_time.into();
         let time_end: Timestamp = (no_fly_start_time + Duration::hours(1)).into();
         let request = BestPathRequest {
-            node_start_id: AIRCRAFT_1_LABEL.to_string(),
-            node_uuid_end: VERTIPORT_2_UUID.to_string(),
-            start_type: NodeType::Aircraft as i32,
+            origin_identifier: AIRCRAFT_1_ID.to_string(),
+            target_identifier: VERTIPORT_2_ID.to_string(),
+            origin_type: NodeType::Aircraft as i32,
+            target_type: NodeType::Vertiport as i32,
             time_start: Some(time_start),
             time_end: Some(time_end),
         };
@@ -338,44 +337,44 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Nearest Neighbor to Vertiport
-    {
-        println!("\n\u{1F3E0} Nearest Vertiport Neighbors to Vertiport");
-        let request = NearestNeighborRequest {
-            start_node_id: VERTIPORT_1_UUID.to_string(),
-            start_type: NodeType::Vertiport as i32,
-            end_type: NodeType::Vertiport as i32,
-            limit: 10,
-            max_range_meters: 3000.0,
-        };
+    // {
+    //     println!("\n\u{1F3E0} Nearest Vertiport Neighbors to Vertiport");
+    //     let request = NearestNeighborRequest {
+    //         start_node_id: VERTIPORT_1_ID.to_string(),
+    //         start_type: NodeType::Vertiport as i32,
+    //         end_type: NodeType::Vertiport as i32,
+    //         limit: 10,
+    //         max_range_meters: 3000.0,
+    //     };
 
-        let response = client.nearest_neighbors(request).await?.into_inner();
+    //     let response = client.nearest_neighbors(request).await?.into_inner();
 
-        println!("RESPONSE={:?}", response);
-        println!(
-            "\x1b[33;3m{} nearest neighbors(s).\x1b[0m",
-            response.distances.len()
-        );
-    }
+    //     println!("RESPONSE={:?}", response);
+    //     println!(
+    //         "\x1b[33;3m{} nearest neighbors(s).\x1b[0m",
+    //         response.distances.len()
+    //     );
+    // }
 
-    // Nearest Neighbor to Aircraft
-    {
-        println!("\n\u{1F3E0} Nearest Vertiport Neighbors to Aircraft");
-        let request = NearestNeighborRequest {
-            start_node_id: AIRCRAFT_1_LABEL.to_string(),
-            start_type: NodeType::Aircraft as i32,
-            end_type: NodeType::Vertiport as i32,
-            limit: 10,
-            max_range_meters: 3000.0,
-        };
+    // // Nearest Neighbor to Aircraft
+    // {
+    //     println!("\n\u{1F3E0} Nearest Vertiport Neighbors to Aircraft");
+    //     let request = NearestNeighborRequest {
+    //         start_node_id: AIRCRAFT_1_ID.to_string(),
+    //         start_type: NodeType::Aircraft as i32,
+    //         end_type: NodeType::Vertiport as i32,
+    //         limit: 10,
+    //         max_range_meters: 3000.0,
+    //     };
 
-        let response = client.nearest_neighbors(request).await?.into_inner();
+    //     let response = client.nearest_neighbors(request).await?.into_inner();
 
-        println!("RESPONSE={:?}", response);
-        println!(
-            "\x1b[33;3m{} nearest neighbors(s).\x1b[0m",
-            response.distances.len()
-        );
-    }
+    //     println!("RESPONSE={:?}", response);
+    //     println!(
+    //         "\x1b[33;3m{} nearest neighbors(s).\x1b[0m",
+    //         response.distances.len()
+    //     );
+    // }
 
     Ok(())
 }
