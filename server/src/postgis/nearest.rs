@@ -204,8 +204,21 @@ pub async fn nearest_neighbors(
 
     let mut results: Vec<DistanceTo> = vec![];
     for r in &rows {
-        let identifier: Uuid = r.get(0);
-        let distance_meters: f64 = r.get(1);
+        let Ok(identifier) = r.try_get(0) else {
+            postgis_error!(
+                "(nearest_neighbors) could not parse identifier into UUID: {}",
+                r.get::<usize, String>(0)
+            );
+            return Err(NNError::DBError);
+        };
+
+        let Ok(distance_meters) = r.try_get(1) else {
+            postgis_error!(
+                "(nearest_neighbors) could not parse distance into f64: {}",
+                r.get::<usize, String>(1)
+            );
+            return Err(NNError::DBError);
+        };
 
         results.push(DistanceTo {
             identifier: identifier.to_string(),

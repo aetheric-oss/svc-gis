@@ -143,8 +143,8 @@ impl RpcService for ServerImpl {
         grpc_debug!("(best_path) entry.");
         let request = request.into_inner();
         match best_path::best_path(request, &self.pool).await {
-            Ok(segments) => {
-                let response = grpc_server::BestPathResponse { segments };
+            Ok(paths) => {
+                let response = grpc_server::BestPathResponse { paths };
                 Ok(Response::new(response))
             }
             Err(e) => {
@@ -311,8 +311,8 @@ impl RpcService for ServerImpl {
         let request = request.into_inner();
 
         match best_path::best_path(request, &self.pool).await {
-            Ok(segments) => {
-                let response = grpc_server::BestPathResponse { segments };
+            Ok(paths) => {
+                let response = grpc_server::BestPathResponse { paths };
                 Ok(Response::new(response))
             }
             Err(e) => {

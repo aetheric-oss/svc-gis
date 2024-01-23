@@ -1,7 +1,7 @@
 //! This module contains functions for updating aircraft in the PostGIS database.
 
 use super::psql_transaction;
-use super::PsqlError;
+use super::PostgisError;
 use crate::grpc::server::grpc_server;
 use crate::postgis::utils::StringError;
 use chrono::{DateTime, Utc};
@@ -10,12 +10,10 @@ use grpc_server::AircraftPosition as ReqAircraftPos;
 use grpc_server::AircraftType;
 use grpc_server::AircraftVelocity as ReqAircraftVelocity;
 use num_traits::FromPrimitive;
-
-/// Maximum length of a identifier
-const LABEL_MAX_LENGTH: usize = 100;
+use postgis::ewkb::PointZ;
 
 /// Allowed characters in a identifier
-const IDENTIFIER_REGEX: &str = r"[a-zA-Z0-9_-.]+";
+pub const IDENTIFIER_REGEX: &str = r"^[\-0-9A-Za-z_\.]{1,255}$";
 
 /// Possible errors with aircraft requests
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -58,8 +56,7 @@ impl std::fmt::Display for AircraftError {
 
 struct AircraftPosition {
     identifier: String,
-    geom: postgis::ewkb::Point,
-    altitude_meters: f32,
+    geom: PointZ,
     timestamp: DateTime<Utc>,
 }
 
@@ -79,26 +76,27 @@ struct AircraftVelocity {
 
 /// Verifies that a identifier is valid
 pub fn check_identifier(identifier: &str) -> Result<(), StringError> {
-    super::utils::check_string(identifier, IDENTIFIER_REGEX, LABEL_MAX_LENGTH)
+    super::utils::check_string(identifier, IDENTIFIER_REGEX)
 }
 
 /// Initializes the PostGIS database for aircraft.
-pub async fn psql_init(pool: &deadpool_postgres::Pool) -> Result<(), PsqlError> {
+pub async fn psql_init(pool: &deadpool_postgres::Pool) -> Result<(), PostgisError> {
     // Create Aircraft Table
     let table_name = "arrow.aircraft";
+    let enum_name = "aircrafttype";
     let statements = vec![
-        super::psql_enum_declaration::<AircraftType>("arrow.aircrafttype"),
+        super::psql_enum_declaration::<AircraftType>(enum_name),
         format!(
             "CREATE TABLE IF NOT EXISTS {table_name} (
-            identifier VARCHAR(20) NOT NULL UNIQUE PRIMARY KEY,
-            aircraft_type aircrafttype NOT NULL DEFAULT '{}',
-            altitude_meters FLOAT,
-            velocity_horizontal_ground_mps FLOAT,
-            velocity_vertical_mps FLOAT,
-            track_angle_degrees FLOAT,
-            last_identifier_update TIMESTAMPTZ NOT NULL,
-            last_position_update TIMESTAMPTZ NOT NULL,
-            last_velocity_update TIMESTAMPTZ NOT NULL
+            identifier VARCHAR(20) UNIQUE PRIMARY KEY NOT NULL,
+            aircraft_type {enum_name} NOT NULL DEFAULT '{}',
+            velocity_horizontal_ground_mps FLOAT(4),
+            velocity_vertical_mps FLOAT(4),
+            track_angle_degrees FLOAT(4),
+            geom GEOMETRY(POINTZ, 4326),
+            last_identifier_update TIMESTAMPTZ,
+            last_position_update TIMESTAMPTZ,
+            last_velocity_update TIMESTAMPTZ
         );",
             AircraftType::Undeclared.to_string()
         ),
@@ -108,7 +106,7 @@ pub async fn psql_init(pool: &deadpool_postgres::Pool) -> Result<(), PsqlError> 
 }
 
 impl TryFrom<ReqAircraftPos> for AircraftPosition {
-    type Error = AircraftError;
+    type Error = PostgisError;
 
     fn try_from(craft: ReqAircraftPos) -> Result<Self, Self::Error> {
         if let Err(e) = check_identifier(&craft.identifier) {
@@ -117,41 +115,45 @@ impl TryFrom<ReqAircraftPos> for AircraftPosition {
                 craft.identifier,
                 e
             );
-            return Err(AircraftError::Label);
+            return Err(PostgisError::Aircraft(AircraftError::Label));
         }
 
-        let Some(location) = craft.location else {
+        let Some(geom) = craft.geom else {
             postgis_error!("(try_from ReqAircraftPos) Aircraft location is invalid.");
-            return Err(AircraftError::Location);
+            return Err(PostgisError::Aircraft(AircraftError::Location));
         };
 
-        let geom = match super::utils::point_from_vertex(&location) {
-            Ok(geom) => geom,
-            Err(e) => {
-                postgis_error!(
-                    "(try_from ReqAircraftPos) Error creating point from vertex: {}",
-                    e
-                );
-                return Err(AircraftError::Location);
-            }
+        let geom = PointZ {
+            x: geom.longitude,
+            y: geom.latitude,
+            z: geom.altitude_meters as f64,
+            srid: Some(4326),
         };
+
+        if let Err(e) = super::utils::validate_pointz(&geom) {
+            postgis_error!(
+                "(try_from ReqAircraftPos) Invalid aircraft location: {}; {}",
+                craft.identifier,
+                e
+            );
+            return Err(PostgisError::Aircraft(AircraftError::Location));
+        }
 
         let Some(timestamp) = craft.timestamp_network else {
             postgis_error!("(try_from ReqAircraftPos) Aircraft time is invalid.");
-            return Err(AircraftError::Time);
+            return Err(PostgisError::Aircraft(AircraftError::Time));
         };
 
         Ok(AircraftPosition {
             identifier: craft.identifier,
             geom,
-            altitude_meters: craft.altitude_meters,
             timestamp: timestamp.into(),
         })
     }
 }
 
 impl TryFrom<ReqAircraftId> for AircraftId {
-    type Error = AircraftError;
+    type Error = PostgisError;
 
     fn try_from(craft: ReqAircraftId) -> Result<Self, Self::Error> {
         if let Err(e) = check_identifier(&craft.identifier) {
@@ -160,7 +162,7 @@ impl TryFrom<ReqAircraftId> for AircraftId {
                 craft.identifier,
                 e
             );
-            return Err(AircraftError::Label);
+            return Err(PostgisError::Aircraft(AircraftError::Label));
         }
 
         let Some(aircraft_type) = FromPrimitive::from_i32(craft.aircraft_type) else {
@@ -169,12 +171,12 @@ impl TryFrom<ReqAircraftId> for AircraftId {
                 craft.aircraft_type
             );
 
-            return Err(AircraftError::AircraftId);
+            return Err(PostgisError::Aircraft(AircraftError::AircraftId));
         };
 
         let Some(timestamp) = craft.timestamp_network else {
             postgis_error!("(try_from ReqAircraftPos) Aircraft time is invalid.");
-            return Err(AircraftError::Time);
+            return Err(PostgisError::Aircraft(AircraftError::Time));
         };
 
         Ok(AircraftId {
@@ -186,7 +188,7 @@ impl TryFrom<ReqAircraftId> for AircraftId {
 }
 
 impl TryFrom<ReqAircraftVelocity> for AircraftVelocity {
-    type Error = AircraftError;
+    type Error = PostgisError;
 
     fn try_from(craft: ReqAircraftVelocity) -> Result<Self, Self::Error> {
         if let Err(e) = check_identifier(&craft.identifier) {
@@ -195,12 +197,12 @@ impl TryFrom<ReqAircraftVelocity> for AircraftVelocity {
                 craft.identifier,
                 e
             );
-            return Err(AircraftError::Label);
+            return Err(PostgisError::Aircraft(AircraftError::Label));
         }
 
         let Some(timestamp) = craft.timestamp_network else {
             postgis_error!("(try_from ReqAircraftVelocity) Network time is invalid.");
-            return Err(AircraftError::Time);
+            return Err(PostgisError::Aircraft(AircraftError::Time));
         };
 
         Ok(AircraftVelocity {
@@ -217,26 +219,27 @@ impl TryFrom<ReqAircraftVelocity> for AircraftVelocity {
 pub async fn update_aircraft_id(
     aircraft: Vec<ReqAircraftId>,
     pool: &deadpool_postgres::Pool,
-) -> Result<(), AircraftError> {
-    postgis_debug!("(update_aircraft_position) entry.");
+) -> Result<(), PostgisError> {
+    postgis_debug!("(update_aircraft_id) entry.");
     if aircraft.is_empty() {
-        return Err(AircraftError::NoAircraft);
+        return Err(PostgisError::Aircraft(AircraftError::NoAircraft));
     }
 
     let aircraft: Vec<AircraftId> = aircraft
         .into_iter()
         .map(AircraftId::try_from)
         .collect::<Result<Vec<_>, _>>()?;
+
     let mut client = pool.get().await.map_err(|e| {
         postgis_error!(
             "(update_aircraft_id) could not get client from psql connection pool: {}",
             e
         );
-        AircraftError::Client
+        PostgisError::Aircraft(AircraftError::Client)
     })?;
     let transaction = client.transaction().await.map_err(|e| {
         postgis_error!("(update_aircraft_id) could not create transaction: {}", e);
-        AircraftError::DBError
+        PostgisError::Aircraft(AircraftError::DBError)
     })?;
 
     let stmt = transaction
@@ -255,7 +258,7 @@ pub async fn update_aircraft_id(
                 "(update_aircraft_id) could not prepare cached statement: {}",
                 e
             );
-            AircraftError::DBError
+            PostgisError::Aircraft(AircraftError::DBError)
         })?;
 
     for craft in &aircraft {
@@ -267,7 +270,7 @@ pub async fn update_aircraft_id(
             .await
             .map_err(|e| {
                 postgis_error!("(update_aircraft_id) could not execute transaction: {}", e);
-                AircraftError::DBError
+                PostgisError::Aircraft(AircraftError::DBError)
             })?;
     }
 
@@ -278,7 +281,7 @@ pub async fn update_aircraft_id(
         }
         Err(e) => {
             postgis_error!("(update_aircraft_id) could not commit transaction: {}", e);
-            Err(AircraftError::DBError)
+            Err(PostgisError::Aircraft(AircraftError::DBError))
         }
     }
 }
@@ -287,10 +290,10 @@ pub async fn update_aircraft_id(
 pub async fn update_aircraft_position(
     aircraft: Vec<ReqAircraftPos>,
     pool: &deadpool_postgres::Pool,
-) -> Result<(), AircraftError> {
+) -> Result<(), PostgisError> {
     postgis_debug!("(update_aircraft_position) entry.");
     if aircraft.is_empty() {
-        return Err(AircraftError::NoAircraft);
+        return Err(PostgisError::Aircraft(AircraftError::NoAircraft));
     }
 
     let aircraft: Vec<AircraftPosition> = aircraft
@@ -303,7 +306,7 @@ pub async fn update_aircraft_position(
             "(update_aircraft_position) could not get client from psql connection pool: {}",
             e
         );
-        AircraftError::Client
+        PostgisError::Aircraft(AircraftError::Client)
     })?;
 
     let transaction = client.transaction().await.map_err(|e| {
@@ -311,18 +314,17 @@ pub async fn update_aircraft_position(
             "(update_aircraft_position) could not create transaction: {}",
             e
         );
-        AircraftError::DBError
+        PostgisError::Aircraft(AircraftError::DBError)
     })?;
 
     let stmt = transaction
         .prepare_cached(
             "
-        INSERT INTO arrow.aircraft (identifier, geom, altitude_meters, last_position_update)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO arrow.aircraft (identifier, geom, last_position_update)
+        VALUES ($1, $2, $3)
         ON CONFLICT (identifier) DO UPDATE
             SET geom = $2,
-                altitude_meters = $3,
-                last_position_update = $4;
+                last_position_update = $3;
         ",
         )
         .await
@@ -331,27 +333,19 @@ pub async fn update_aircraft_position(
                 "(update_aircraft_position) could not prepare cached statement: {}",
                 e
             );
-            AircraftError::DBError
+            PostgisError::Aircraft(AircraftError::DBError)
         })?;
 
     for craft in &aircraft {
         transaction
-            .execute(
-                &stmt,
-                &[
-                    &craft.identifier,
-                    &craft.geom,
-                    &(craft.altitude_meters),
-                    &craft.timestamp,
-                ],
-            )
+            .execute(&stmt, &[&craft.identifier, &craft.geom, &craft.timestamp])
             .await
             .map_err(|e| {
                 postgis_error!(
                     "(update_aircraft_position) could not execute transaction: {}",
                     e
                 );
-                AircraftError::DBError
+                PostgisError::Aircraft(AircraftError::DBError)
             })?;
     }
 
@@ -365,7 +359,7 @@ pub async fn update_aircraft_position(
                 "(update_aircraft_position) could not commit transaction: {}",
                 e
             );
-            Err(AircraftError::DBError)
+            Err(PostgisError::Aircraft(AircraftError::DBError))
         }
     }
 }
@@ -374,10 +368,10 @@ pub async fn update_aircraft_position(
 pub async fn update_aircraft_velocity(
     aircraft: Vec<ReqAircraftVelocity>,
     pool: &deadpool_postgres::Pool,
-) -> Result<(), AircraftError> {
+) -> Result<(), PostgisError> {
     postgis_debug!("(update_aircraft_position) entry.");
     if aircraft.is_empty() {
-        return Err(AircraftError::NoAircraft);
+        return Err(PostgisError::Aircraft(AircraftError::NoAircraft));
     }
 
     let aircraft: Vec<AircraftVelocity> = aircraft
@@ -389,14 +383,14 @@ pub async fn update_aircraft_velocity(
             "(update_aircraft_velocity) could not get client from psql connection pool: {}",
             e
         );
-        AircraftError::Client
+        PostgisError::Aircraft(AircraftError::Client)
     })?;
     let transaction = client.transaction().await.map_err(|e| {
         postgis_error!(
             "(update_aircraft_velocity) could not create transaction: {}",
             e
         );
-        AircraftError::DBError
+        PostgisError::Aircraft(AircraftError::DBError)
     })?;
 
     let stmt = transaction
@@ -422,7 +416,7 @@ pub async fn update_aircraft_velocity(
                 "(update_aircraft_velocity) could not prepare cached statement: {}",
                 e
             );
-            AircraftError::DBError
+            PostgisError::Aircraft(AircraftError::DBError)
         })?;
 
     for craft in &aircraft {
@@ -443,7 +437,7 @@ pub async fn update_aircraft_velocity(
                     "(update_aircraft_velocity) could not execute transaction: {}",
                     e
                 );
-                AircraftError::DBError
+                PostgisError::Aircraft(AircraftError::DBError)
             })?;
     }
 
@@ -457,44 +451,69 @@ pub async fn update_aircraft_velocity(
                 "(update_aircraft_velocity) could not commit transaction: {}",
                 e
             );
-            Err(AircraftError::DBError)
+            Err(PostgisError::Aircraft(AircraftError::DBError))
         }
     }
+}
+
+/// Gets the geometry of an aircraft given its identifier.
+pub async fn get_aircraft_pointz(
+    identifier: &str,
+    pool: &deadpool_postgres::Pool,
+) -> Result<PointZ, PostgisError> {
+    let stmt = "SELECT geom FROM arrow.aircraft WHERE identifier = $1;";
+    let client = pool.get().await.map_err(|e| {
+        postgis_error!(
+            "(get_aircraft_pointz) could not get client from psql connection pool: {}",
+            e
+        );
+        PostgisError::Aircraft(AircraftError::Client)
+    })?;
+
+    client
+        .query_one(stmt, &[&identifier])
+        .await
+        .map_err(|e| {
+            postgis_error!("(get_aircraft_pointz) could not prepare cached statement: {}", e);
+            PostgisError::Aircraft(AircraftError::DBError)
+        })?
+        .try_get::<_, PointZ>(0)
+        .map_err(|e| {
+            postgis_error!("(get_aircraft_pointz) zero or more than one records found for aircraft '{identifier}': {}", e);
+            PostgisError::Aircraft(AircraftError::DBError)
+        })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::grpc::server::grpc_server::Coordinates;
-    use crate::postgis::utils;
     use crate::test_util::get_psql_pool;
+    use grpc_server::PointZ as GrpcPointZ;
     use lib_common::time::*;
-    use rand::{thread_rng, Rng};
 
     #[tokio::test]
     async fn ut_request_valid() {
         crate::get_log_handle().await;
         ut_info!("(ut_request_valid) start");
 
-        let mut rng = thread_rng();
-        let nodes = vec![
-            ("Marauder", 52.3745905, 4.9160036),
-            ("Phantom", 52.3749819, 4.9156925),
-            ("Ghost", 52.3752144, 4.9153733),
-            ("Falcon", 52.3753012, 4.9156845),
-            ("Mantis", 52.3750703, 4.9161538),
+        let nodes: Vec<(&str, f64, f64, f32)> = vec![
+            ("Marauder", 52.3745905, 4.9160036, 100.0),
+            ("Phantom", 52.3749819, 4.9156925, 102.0),
+            ("Ghost", 52.3752144, 4.9153733, 45.0),
+            ("Falcon", 52.3753012, 4.9156845, 50.),
+            ("Mantis", 52.3750703, 4.9161538, 72.),
         ];
 
         let aircraft: Vec<ReqAircraftPos> = nodes
             .iter()
-            .map(|(label, latitude, longitude)| ReqAircraftPos {
+            .map(|(label, latitude, longitude, altitude)| ReqAircraftPos {
                 identifier: label.to_string(),
-                location: Some(Coordinates {
+                geom: Some(GrpcPointZ {
                     latitude: *latitude,
                     longitude: *longitude,
+                    altitude_meters: *altitude,
                 }),
-                altitude_meters: rng.gen_range(0.0..2000.),
-                timestamp_network: Some(Into::<Timestamp>::into(Utc::now())),
+                timestamp_network: Some(Utc::now().into()),
                 timestamp_aircraft: None,
             })
             .collect();
@@ -509,13 +528,10 @@ mod tests {
 
         for (i, aircraft) in aircraft.iter().enumerate() {
             assert_eq!(aircraft.identifier, converted[i].identifier);
-            let location = aircraft.location.unwrap();
-            assert_eq!(
-                utils::point_from_vertex(&location).unwrap(),
-                converted[i].geom
-            );
-
-            assert_eq!(aircraft.altitude_meters, converted[i].altitude_meters);
+            let geom = aircraft.geom.unwrap();
+            assert_eq!(geom.latitude, converted[i].geom.y);
+            assert_eq!(geom.longitude, converted[i].geom.x);
+            assert_eq!(geom.altitude_meters as f64, converted[i].geom.z);
 
             let time: Timestamp = aircraft
                 .timestamp_network
@@ -539,11 +555,12 @@ mod tests {
             .iter()
             .map(|(label, latitude, longitude)| ReqAircraftPos {
                 identifier: label.to_string(),
-                location: Some(Coordinates {
+                geom: Some(GrpcPointZ {
                     latitude: *latitude,
                     longitude: *longitude,
+                    altitude_meters: 100.0,
                 }),
-                timestamp_network: Some(Into::<Timestamp>::into(Utc::now())),
+                timestamp_network: Some(Utc::now().into()),
                 ..Default::default()
             })
             .collect();
@@ -551,7 +568,7 @@ mod tests {
         let result = update_aircraft_position(aircraft, get_psql_pool().await)
             .await
             .unwrap_err();
-        assert_eq!(result, AircraftError::Client);
+        assert_eq!(result, PostgisError::Aircraft(AircraftError::Client));
 
         ut_info!("(ut_client_failure) success");
     }
@@ -566,7 +583,7 @@ mod tests {
             "Aircraft;",
             "'Aircraft'",
             "Aircraft \'",
-            &"X".repeat(LABEL_MAX_LENGTH + 1),
+            &"X".repeat(1000),
         ] {
             let aircraft: Vec<ReqAircraftPos> = vec![ReqAircraftPos {
                 identifier: label.to_string(),
@@ -576,7 +593,7 @@ mod tests {
             let result = update_aircraft_position(aircraft, get_psql_pool().await)
                 .await
                 .unwrap_err();
-            assert_eq!(result, AircraftError::Label);
+            assert_eq!(result, PostgisError::Aircraft(AircraftError::Label));
         }
 
         ut_info!("(ut_aircraft_request_to_gis_invalid_label) success");
@@ -591,7 +608,7 @@ mod tests {
         let result = update_aircraft_position(aircraft, get_psql_pool().await)
             .await
             .unwrap_err();
-        assert_eq!(result, AircraftError::NoAircraft);
+        assert_eq!(result, PostgisError::Aircraft(AircraftError::NoAircraft));
 
         ut_info!("(ut_aircraft_request_to_gis_invalid_no_nodes) success");
     }
@@ -604,23 +621,25 @@ mod tests {
         let coords = vec![(-90.1, 0.0), (90.1, 0.0), (0.0, -180.1), (0.0, 180.1)];
         for coord in coords {
             let aircraft: Vec<ReqAircraftPos> = vec![ReqAircraftPos {
-                location: Some(Coordinates {
+                geom: Some(GrpcPointZ {
                     latitude: coord.0,
                     longitude: coord.1,
+                    altitude_meters: 100.0,
                 }),
                 identifier: "Aircraft".to_string(),
+                timestamp_network: Some(Utc::now().into()),
                 ..Default::default()
             }];
 
             let result = update_aircraft_position(aircraft, get_psql_pool().await)
                 .await
                 .unwrap_err();
-            assert_eq!(result, AircraftError::Location);
+            assert_eq!(result, PostgisError::Aircraft(AircraftError::Location));
         }
 
         // No location
         let aircraft: Vec<ReqAircraftPos> = vec![ReqAircraftPos {
-            location: None,
+            geom: None,
             identifier: "Aircraft".to_string(),
             ..Default::default()
         }];
@@ -628,7 +647,7 @@ mod tests {
         let result = update_aircraft_position(aircraft, get_psql_pool().await)
             .await
             .unwrap_err();
-        assert_eq!(result, AircraftError::Location);
+        assert_eq!(result, PostgisError::Aircraft(AircraftError::Location));
 
         ut_info!("(ut_aircraft_request_to_gis_invalid_location) success");
     }
@@ -641,9 +660,10 @@ mod tests {
         // No location
         let aircraft: Vec<ReqAircraftPos> = vec![ReqAircraftPos {
             timestamp_network: None,
-            location: Some(Coordinates {
+            geom: Some(GrpcPointZ {
                 latitude: 0.0,
                 longitude: 0.0,
+                altitude_meters: 0.0,
             }),
             identifier: "Aircraft".to_string(),
             ..Default::default()
@@ -652,7 +672,7 @@ mod tests {
         let result = update_aircraft_position(aircraft, get_psql_pool().await)
             .await
             .unwrap_err();
-        assert_eq!(result, AircraftError::Time);
+        assert_eq!(result, PostgisError::Aircraft(AircraftError::Time));
 
         ut_info!("(ut_aircraft_request_to_gis_invalid_time) success");
     }

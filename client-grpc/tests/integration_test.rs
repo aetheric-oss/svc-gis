@@ -15,30 +15,66 @@ async fn test_add_aircraft() -> Result<(), Box<dyn std::error::Error>> {
     let (server_host, server_port) = get_endpoint_from_env("GRPC_HOST", "GRPC_PORT");
     let client = GisClient::new_client(&server_host, server_port, "compliance");
 
-    let aircraft: Vec<(&str, f64, f64)> = vec![
-        (AIRCRAFT_1_ID, 52.3746, 4.9160036),
-        ("Mantis", 52.3749819, 4.9157),
-        ("Ghost", 52.37523, 4.9153733),
-        ("Phantom", 52.3754, 4.9156845),
-        ("Falcon", 52.3750703, 4.9162),
+    let sample: Vec<(&str, f64, f64, f32)> = vec![
+        (AIRCRAFT_1_ID, 52.3746, 4.9160036, 100.0),
+        ("Mantis", 52.3749819, 4.9157, 120.0),
+        ("Ghost", 52.37523, 4.9153733, 30.0),
+        ("Phantom", 52.3754, 4.9156845, 45.0),
+        ("Falcon", 52.3750703, 4.9162, 32.0),
     ];
 
-    let aircraft: Vec<AircraftPosition> = aircraft
+    let aircraft: Vec<AircraftPosition> = sample
         .iter()
-        .map(|(identifier, latitude, longitude)| AircraftPosition {
-            identifier: identifier.to_string(),
-            altitude_meters: 1000.0,
-            location: Some(Coordinates {
-                latitude: *latitude,
-                longitude: *longitude,
-            }),
-            timestamp_network: Some(Into::<Timestamp>::into(Utc::now())),
-            timestamp_aircraft: Some(Into::<Timestamp>::into(Utc::now())),
-        })
+        .map(
+            |(identifier, latitude, longitude, altitude)| AircraftPosition {
+                identifier: identifier.to_string(),
+                geom: Some(PointZ {
+                    latitude: *latitude,
+                    longitude: *longitude,
+                    altitude_meters: *altitude,
+                }),
+                timestamp_network: Some(Utc::now().into()),
+                timestamp_aircraft: Some(Utc::now().into()),
+            },
+        )
         .collect();
 
     let response = client
         .update_aircraft_position(UpdateAircraftPositionRequest { aircraft })
+        .await?;
+
+    println!("Response: {:?}", response);
+
+    let aircraft = sample
+        .iter()
+        .map(|(identifier, _, _, _)| AircraftId {
+            identifier: identifier.to_string(),
+            aircraft_type: AircraftType::Rotorcraft as i32,
+            timestamp_network: Some(Utc::now().into()),
+        })
+        .collect::<Vec<AircraftId>>();
+
+    let response = client
+        .update_aircraft_id(UpdateAircraftIdRequest { aircraft })
+        .await?;
+
+    println!("Response: {:?}", response);
+
+    let aircraft = sample
+        .iter()
+        .map(|(identifier, _, _, _)| AircraftVelocity {
+            identifier: identifier.to_string(),
+            velocity_horizontal_air_mps: None,
+            velocity_horizontal_ground_mps: 100.0,
+            velocity_vertical_mps: 10.0,
+            track_angle_degrees: 10.0,
+            timestamp_network: Some(Utc::now().into()),
+            timestamp_aircraft: None,
+        })
+        .collect();
+
+    let response = client
+        .update_aircraft_velocity(UpdateAircraftVelocityRequest { aircraft })
         .await?;
 
     println!("Response: {:?}", response);
@@ -69,6 +105,7 @@ async fn test_add_vertiport() -> Result<(), Box<dyn std::error::Error>> {
                 longitude: *y,
             })
             .collect(),
+            timestamp_network: Some(Utc::now().into()),
         },
         Vertiport {
             identifier: VERTIPORT_2_ID.to_string(),
@@ -88,6 +125,7 @@ async fn test_add_vertiport() -> Result<(), Box<dyn std::error::Error>> {
                 longitude: *y,
             })
             .collect(),
+            timestamp_network: Some(Utc::now().into()),
         },
         Vertiport {
             identifier: VERTIPORT_3_ID.to_string(),
@@ -106,6 +144,7 @@ async fn test_add_vertiport() -> Result<(), Box<dyn std::error::Error>> {
                 longitude: *y,
             })
             .collect(),
+            timestamp_network: Some(Utc::now().into()),
         },
     ];
 
