@@ -148,6 +148,60 @@ where
         request: super::UpdateAircraftPositionRequest,
     ) -> Result<tonic::Response<super::UpdateResponse>, tonic::Status>;
 
+    /// Returns a [`tonic::Response`] containing a [`UpdateResponse`](super::UpdateResponse)
+    /// Takes an [`UpdateAircraftIdRequest`](super::UpdateAircraftIdnRequest).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`tonic::Status`] with [`Code::Unknown`](tonic::Code::Unknown) if
+    /// the server is not ready.
+    ///
+    /// # Examples
+    /// ```
+    /// use lib_common::grpc::get_endpoint_from_env;
+    /// use svc_gis_client_grpc::prelude::*;
+    ///
+    /// async fn example () -> Result<(), Box<dyn std::error::Error>> {
+    ///     let (host, port) = get_endpoint_from_env("SERVER_HOSTNAME", "SERVER_PORT_GRPC");
+    ///     let client = GisClient::new_client(&host, port, "gis");
+    ///     let request = gis::UpdateAircraftIdRequest { aircraft: vec![] };
+    ///     let response = client.update_aircraft_id(request).await?;
+    ///     println!("RESPONSE={:?}", response.into_inner());
+    ///     Ok(())
+    /// }
+    /// ```
+    async fn update_aircraft_id(
+        &self,
+        request: super::UpdateAircraftIdRequest,
+    ) -> Result<tonic::Response<super::UpdateResponse>, tonic::Status>;
+
+    /// Returns a [`tonic::Response`] containing a [`UpdateResponse`](super::UpdateResponse)
+    /// Takes an [`UpdateAircraftVelocityRequest`](super::UpdateAircraftVelocityRequest).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`tonic::Status`] with [`Code::Unknown`](tonic::Code::Unknown) if
+    /// the server is not ready.
+    ///
+    /// # Examples
+    /// ```
+    /// use lib_common::grpc::get_endpoint_from_env;
+    /// use svc_gis_client_grpc::prelude::*;
+    ///
+    /// async fn example () -> Result<(), Box<dyn std::error::Error>> {
+    ///     let (host, port) = get_endpoint_from_env("SERVER_HOSTNAME", "SERVER_PORT_GRPC");
+    ///     let client = GisClient::new_client(&host, port, "gis");
+    ///     let request = gis::UpdateAircraftVelocityRequest { aircraft: vec![] };
+    ///     let response = client.update_aircraft_velocity(request).await?;
+    ///     println!("RESPONSE={:?}", response.into_inner());
+    ///     Ok(())
+    /// }
+    /// ```
+    async fn update_aircraft_velocity(
+        &self,
+        request: super::UpdateAircraftVelocityRequest,
+    ) -> Result<tonic::Response<super::UpdateResponse>, tonic::Status>;
+
     /// Returns a [`tonic::Response`] containing a [`BestPathResponse`](super::BestPathResponse)
     /// Takes an [`BestPathRequest`](super::BestPathRequest).
     ///
@@ -168,11 +222,13 @@ where
     ///     let time_start: Timestamp = Utc::now().into();
     ///     let time_end: Timestamp = Utc::now().into();
     ///     let request = gis::BestPathRequest {
-    ///         origin_identifier: "".to_string(),
-    ///         target_identifier: "".to_string(),
-    ///         start_type: 0,
+    ///         origin_identifier: "Kamino".to_string(),
+    ///         target_identifier: "Coruscant".to_string(),
+    ///         origin_type: 0,
+    ///         target_type: 0,
     ///         time_start: Some(time_start),
     ///         time_end: Some(time_end),
+    ///         limit: 1
     ///     };
     ///     let response = client.best_path(request).await?;
     ///     println!("RESPONSE={:?}", response.into_inner());

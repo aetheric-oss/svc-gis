@@ -31,6 +31,7 @@ async fn add_vertiports(client: &GisClient) -> Result<(), Box<dyn std::error::Er
             })
             .collect(),
             label: Some("VertiportA".to_string()),
+            timestamp_network: Some(Utc::now().into()),
         },
         Vertiport {
             identifier: VERTIPORT_2_ID.to_string(),
@@ -50,6 +51,7 @@ async fn add_vertiports(client: &GisClient) -> Result<(), Box<dyn std::error::Er
             })
             .collect(),
             label: Some("VertiportB".to_string()),
+            timestamp_network: Some(Utc::now().into()),
         },
         Vertiport {
             identifier: VERTIPORT_3_ID.to_string(),
@@ -68,6 +70,7 @@ async fn add_vertiports(client: &GisClient) -> Result<(), Box<dyn std::error::Er
             })
             .collect(),
             label: Some("Blocker Port".to_string()),
+            timestamp_network: Some(Utc::now().into()),
         },
     ];
 
@@ -113,26 +116,28 @@ async fn add_waypoints(client: &GisClient) -> Result<(), Box<dyn std::error::Err
 async fn add_aircraft(client: &GisClient) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n\u{1F681} Add Aircraft");
 
-    let aircraft: Vec<(&str, f64, f64)> = vec![
-        (AIRCRAFT_1_ID, 52.3746, 4.9160036),
-        ("Mantis", 52.3749819, 4.9157),
-        ("Ghost", 52.37523, 4.9153733),
-        ("Phantom", 52.3754, 4.9156845),
-        ("Falcon", 52.3750703, 4.9162),
+    let sample: Vec<(&str, f64, f64, f32)> = vec![
+        (AIRCRAFT_1_ID, 52.3746, 4.9160036, 100.),
+        ("Mantis", 52.3749819, 4.9157, 200.),
+        ("Ghost", 52.37523, 4.9153733, 50.),
+        ("Phantom", 52.3754, 4.9156845, 20.),
+        ("Falcon", 52.3750703, 4.9162, 30.),
     ];
 
-    let aircraft: Vec<AircraftPosition> = aircraft
+    let aircraft: Vec<AircraftPosition> = sample
         .iter()
-        .map(|(identifier, latitude, longitude)| AircraftPosition {
-            identifier: identifier.to_string(),
-            altitude_meters: 1000.0,
-            location: Some(Coordinates {
-                latitude: *latitude,
-                longitude: *longitude,
-            }),
-            timestamp_network: Some(Into::<Timestamp>::into(Utc::now())),
-            timestamp_aircraft: None,
-        })
+        .map(
+            |(identifier, latitude, longitude, altitude_meters)| AircraftPosition {
+                identifier: identifier.to_string(),
+                geom: Some(PointZ {
+                    latitude: *latitude,
+                    longitude: *longitude,
+                    altitude_meters: *altitude_meters,
+                }),
+                timestamp_network: Some(Utc::now().into()),
+                timestamp_aircraft: None,
+            },
+        )
         .collect();
 
     let response = client
@@ -141,7 +146,52 @@ async fn add_aircraft(client: &GisClient) -> Result<(), Box<dyn std::error::Erro
 
     println!("RESPONSE={:?}", response.into_inner());
 
+    let aircraft = sample
+        .iter()
+        .map(|(identifier, _, _, _)| AircraftId {
+            identifier: identifier.to_string(),
+            aircraft_type: AircraftType::Rotorcraft as i32,
+            timestamp_network: Some(Utc::now().into()),
+        })
+        .collect::<Vec<AircraftId>>();
+
+    let response = client
+        .update_aircraft_id(UpdateAircraftIdRequest { aircraft })
+        .await?;
+
+    println!("RESPONSE={:?}", response.into_inner());
+
+    let aircraft = sample
+        .iter()
+        .map(|(identifier, _, _, _)| AircraftVelocity {
+            identifier: identifier.to_string(),
+            velocity_horizontal_air_mps: None,
+            velocity_horizontal_ground_mps: 100.0,
+            velocity_vertical_mps: 10.0,
+            track_angle_degrees: 10.0,
+            timestamp_network: Some(Utc::now().into()),
+            timestamp_aircraft: None,
+        })
+        .collect();
+
+    let response = client
+        .update_aircraft_velocity(UpdateAircraftVelocityRequest { aircraft })
+        .await?;
+
+    println!("RESPONSE={:?}", response.into_inner());
+
     Ok(())
+}
+
+fn display_paths(paths: &[Path]) {
+    println!("\x1b[33;3m{} paths found.\x1b[0m", paths.len());
+
+    for (idx, path) in paths.iter().enumerate() {
+        println!("\nPath {idx}: ({} meters):", path.distance_meters);
+        for node in &path.path {
+            println!("\t{}: {:?}", node.index, node);
+        }
+    }
 }
 
 /// Example svc-gis-client-grpc
@@ -179,15 +229,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             target_type: NodeType::Vertiport as i32,
             time_start: Some(time_start),
             time_end: Some(time_end),
+            limit: 1,
         };
 
         let response = client.best_path(request).await?.into_inner();
 
         println!("RESPONSE={:?}", response);
-        println!(
-            "\x1b[33;3m{} segment(s) in path.\x1b[0m",
-            response.segments.len()
-        );
+        display_paths(&response.paths);
     }
 
     let no_fly_start_time = Utc::now();
@@ -279,15 +327,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             target_type: NodeType::Vertiport as i32,
             time_start: Some(time_start),
             time_end: Some(time_end),
+            limit: 1,
         };
 
         let response = client.best_path(request).await?.into_inner();
 
         println!("RESPONSE={:?}", response);
-        println!(
-            "\x1b[33;3m{} segment(s) in path.\x1b[0m",
-            response.segments.len()
-        );
+        display_paths(&response.paths);
     }
 
     // Best Path After Temporary No-Fly Zone
@@ -302,15 +348,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             target_type: NodeType::Vertiport as i32,
             time_start: Some(time_start),
             time_end: Some(time_end),
+            limit: 1,
         };
 
         let response = client.best_path(request).await?.into_inner();
 
         println!("RESPONSE={:?}", response);
-        println!(
-            "\x1b[33;3m{} segment(s) in path.\x1b[0m",
-            response.segments.len()
-        );
+        display_paths(&response.paths);
     }
 
     // Best Path From Aircraft
@@ -325,15 +369,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             target_type: NodeType::Vertiport as i32,
             time_start: Some(time_start),
             time_end: Some(time_end),
+            limit: 5,
         };
 
         let response = client.best_path(request).await?.into_inner();
 
         println!("RESPONSE={:?}", response);
-        println!(
-            "\x1b[33;3m{} segment(s) in path.\x1b[0m",
-            response.segments.len()
-        );
+        display_paths(&response.paths);
     }
 
     // Nearest Neighbor to Vertiport

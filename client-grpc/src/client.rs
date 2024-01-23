@@ -30,7 +30,7 @@ cfg_if::cfg_if! {
 
                 let pool = cfg.create_pool(Some(Runtime::Tokio1), NoTls).unwrap();
                 let grpc_service = ServerImpl { pool };
-                lib_common::grpc::mock::origin_mock_server(
+                lib_common::grpc::mock::start_mock_server(
                     server,
                     RpcServiceServer::new(grpc_service),
                 )
@@ -110,6 +110,27 @@ impl crate::service::Client<RpcServiceClient<Channel>> for GisClient {
             .await?
             .update_aircraft_position(request)
             .await
+    }
+
+    async fn update_aircraft_velocity(
+        &self,
+        request: UpdateAircraftVelocityRequest,
+    ) -> Result<tonic::Response<UpdateResponse>, tonic::Status> {
+        grpc_info!("(update_aircraft_velocity) {} client.", self.get_name());
+        grpc_debug!("(update_aircraft_velocity) request: {:?}", request);
+        self.get_client()
+            .await?
+            .update_aircraft_velocity(request)
+            .await
+    }
+
+    async fn update_aircraft_id(
+        &self,
+        request: UpdateAircraftIdRequest,
+    ) -> Result<tonic::Response<UpdateResponse>, tonic::Status> {
+        grpc_info!("(update_aircraft_id) {} client.", self.get_name());
+        grpc_debug!("(update_aircraft_id) request: {:?}", request);
+        self.get_client().await?.update_aircraft_id(request).await
     }
 
     async fn update_zones(
@@ -194,6 +215,27 @@ impl crate::service::Client<RpcServiceClient<Channel>> for GisClient {
         Ok(tonic::Response::new(UpdateResponse { updated: true }))
     }
 
+    async fn update_aircraft_id(
+        &self,
+        request: UpdateAircraftIdRequest,
+    ) -> Result<tonic::Response<UpdateResponse>, tonic::Status> {
+        grpc_warn!("(update_aircraft_id MOCK) {} client.", self.get_name());
+        grpc_debug!("(update_aircraft_id MOCK) request: {:?}", request);
+        Ok(tonic::Response::new(UpdateResponse { updated: true }))
+    }
+
+    async fn update_aircraft_velocity(
+        &self,
+        request: UpdateAircraftVelocityRequest,
+    ) -> Result<tonic::Response<UpdateResponse>, tonic::Status> {
+        grpc_warn!(
+            "(update_aircraft_velocity MOCK) {} client.",
+            self.get_name()
+        );
+        grpc_debug!("(update_aircraft_velocity MOCK) request: {:?}", request);
+        Ok(tonic::Response::new(UpdateResponse { updated: true }))
+    }
+
     async fn best_path(
         &self,
         request: BestPathRequest,
@@ -201,17 +243,18 @@ impl crate::service::Client<RpcServiceClient<Channel>> for GisClient {
         grpc_warn!("(best_path MOCK) {} client.", self.get_name());
         grpc_debug!("(best_path MOCK) request: {:?}", request);
         Ok(tonic::Response::new(BestPathResponse {
-            segments: vec![PathSegment {
-                index: 0,
-                origin_type: NodeType::Vertiport as i32,
-                origin_latitude: 52.374746487741156,
-                origin_longitude: 4.916383166303402,
-                origin_altitude_meters: 100.0,
-                target_type: NodeType::Vertiport as i32,
-                target_latitude: 52.3751804160378,
-                target_longitude: 4.916396577348476,
-                distance_meters: 50.0,
-                target_altitude_meters: 100.0,
+            paths: vec![Path {
+                path: vec![PathNode {
+                    index: 0,
+                    node_type: NodeType::Waypoint.into(),
+                    identifier: "mock waypoint".to_string(),
+                    geom: Some(PointZ {
+                        latitude: 0.0,
+                        longitude: 0.0,
+                        altitude_meters: 0.0,
+                    }),
+                }],
+                distance_meters: 0.0,
             }],
         }))
     }

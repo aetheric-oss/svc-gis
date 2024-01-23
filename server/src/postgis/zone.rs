@@ -1,17 +1,17 @@
-//! This module contains functions for updating no-fly zones in the PostGIS database.
-//! No-Fly Zones are permanent or temporary.
+//! This module contains functions for updating zones in the PostGIS database.
+//! Zones have various restrictions and can be permanent or temporary.
 
 use crate::grpc::server::grpc_server;
 use chrono::{DateTime, Utc};
+use deadpool_postgres::Object;
 use grpc_server::Zone as RequestZone;
 use grpc_server::ZoneType;
 use num_traits::FromPrimitive;
 
-/// Maximum length of a identifier
-const IDENTIFIER_MAX_LENGTH: usize = 100;
+use super::PostgisError;
 
 /// Allowed characters in a identifier
-const IDENTIFIER_REGEX: &str = r"^[a-zA-Z0-9_\s-]+$";
+const IDENTIFIER_REGEX: &str = r"^[\-0-9A-Za-z_\.]{1,255}$";
 
 #[derive(Clone, Debug)]
 /// Nodes that aircraft can fly between
@@ -19,22 +19,22 @@ pub struct Zone {
     /// A unique identifier for the No-Fly Zone (NOTAM id, etc.)
     pub identifier: String,
 
-    /// The type of no-fly zone
+    /// The type of zone
     pub zone_type: ZoneType,
 
     /// The geometry string to feed into PSQL
-    pub geom: postgis::ewkb::Polygon,
+    pub geom: postgis::ewkb::PolygonZ,
 
-    /// The minimum altitude of the no-fly zone
+    /// The minimum altitude of the zone
     pub altitude_meters_min: f32,
 
-    /// The maximum altitude of the no-fly zone
+    /// The maximum altitude of the zone
     pub altitude_meters_max: f32,
 
-    /// The start time of the no-fly zone, if applicable
+    /// The start time of the zone, if applicable
     pub time_start: Option<DateTime<Utc>>,
 
-    /// The end time of the no-fly zone, if applicable
+    /// The end time of the zone, if applicable
     pub time_end: Option<DateTime<Utc>>,
 }
 
@@ -85,11 +85,9 @@ impl TryFrom<RequestZone> for Zone {
     type Error = ZoneError;
 
     fn try_from(zone: RequestZone) -> Result<Self, Self::Error> {
-        if let Err(e) =
-            super::utils::check_string(&zone.identifier, IDENTIFIER_REGEX, IDENTIFIER_MAX_LENGTH)
-        {
+        if let Err(e) = super::utils::check_string(&zone.identifier, IDENTIFIER_REGEX) {
             postgis_error!(
-                "(try_from RequestZone) Invalid no-fly zone identifier: {}; {}",
+                "(try_from RequestZone) Invalid zone identifier: {}; {}",
                 zone.identifier,
                 e
             );
@@ -109,16 +107,17 @@ impl TryFrom<RequestZone> for Zone {
             }
         }
 
-        let geom = match super::utils::polygon_from_vertices(&zone.vertices) {
-            Ok(geom) => geom,
-            Err(e) => {
-                postgis_error!(
-                    "(try_from RequestZone) Error converting zone polygon: {}",
-                    e.to_string()
-                );
-                return Err(ZoneError::Location);
-            }
-        };
+        let geom =
+            match super::utils::polygon_from_vertices_z(&zone.vertices, zone.altitude_meters_min) {
+                Ok(geom) => geom,
+                Err(e) => {
+                    postgis_error!(
+                        "(try_from RequestZone) Error converting zone polygon: {}",
+                        e.to_string()
+                    );
+                    return Err(ZoneError::Location);
+                }
+            };
 
         let Some(zone_type) = FromPrimitive::from_i32(zone.zone_type) else {
             postgis_error!(
@@ -141,11 +140,11 @@ impl TryFrom<RequestZone> for Zone {
 }
 
 /// Initialize the vertiports table in the PostGIS database
-pub async fn psql_init(pool: &deadpool_postgres::Pool) -> Result<(), super::PsqlError> {
+pub async fn psql_init(pool: &deadpool_postgres::Pool) -> Result<(), PostgisError> {
     // Create Aircraft Table
 
     let table_name = "arrow.zones";
-    let zonetype_str = "arrow.zonetype";
+    let zonetype_str = "zonetype";
     let statements = vec![
         super::psql_enum_declaration::<ZoneType>(zonetype_str),
         format!(
@@ -153,11 +152,12 @@ pub async fn psql_init(pool: &deadpool_postgres::Pool) -> Result<(), super::Psql
             id SERIAL UNIQUE NOT NULL,
             identifier VARCHAR(255) UNIQUE NOT NULL PRIMARY KEY,
             zone_type {zonetype_str} NOT NULL,
-            geom GEOMETRY(POLYGON) NOT NULL,
-            altitude_meters_min FLOAT NOT NULL,
-            altitude_meters_max FLOAT NOT NULL,
+            geom GEOMETRY NOT NULL,
+            altitude_meters_min FLOAT(4) NOT NULL,
+            altitude_meters_max FLOAT(4) NOT NULL,
             time_start TIMESTAMPTZ,
-            time_end TIMESTAMPTZ
+            time_end TIMESTAMPTZ,
+            last_updated TIMESTAMPTZ
         );"
         ),
         format!("CREATE INDEX zone_geom_idx ON {table_name} USING GIST (geom);"),
@@ -166,14 +166,14 @@ pub async fn psql_init(pool: &deadpool_postgres::Pool) -> Result<(), super::Psql
     super::psql_transaction(statements, pool).await
 }
 
-/// Updates no-fly zones in the PostGIS database.
+/// Updates zones in the PostGIS database.
 pub async fn update_zones(
     zones: Vec<RequestZone>,
     pool: &deadpool_postgres::Pool,
 ) -> Result<(), ZoneError> {
     postgis_debug!("(update_zones) entry.");
     if zones.is_empty() {
-        postgis_error!("(update_zones) no no-fly zones provided.");
+        postgis_error!("(update_zones) no zones provided.");
         return Err(ZoneError::NoZones);
     }
 
@@ -204,11 +204,21 @@ pub async fn update_zones(
             altitude_meters_min,
             altitude_meters_max,
             time_start,
-            time_end
+            time_end,
+            last_updated
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        VALUES (
+            $1,
+            $2,
+            ST_Extrude($3, 0, 0, ($5::FLOAT(4) - $4::FLOAT(4))),
+            $4,
+            $5,
+            $6,
+            $7,
+            NOW()
+        )
         ON CONFLICT (identifier) DO UPDATE SET
-            geom = $3,
+            geom = ST_Extrude($3, 0, 0, ($5::FLOAT(4) - $4::FLOAT(4))),
             altitude_meters_min = $4,
             altitude_meters_max = $5,
             time_start = $6,
@@ -254,6 +264,44 @@ pub async fn update_zones(
     }
 }
 
+/// Prepares a statement that checks zone intersections with the provided geometry
+pub async fn get_zone_intersection_stmt(
+    client: &Object,
+) -> Result<tokio_postgres::Statement, PostgisError> {
+    let result = client
+        .prepare_cached(
+            "
+            SELECT (
+                identifier,
+                geom,
+                zone_type,
+                altitude_meters_min,
+                altitude_meters_max,
+                time_start,
+                time_end
+            )
+            FROM arrow.zones
+            WHERE
+                ST_3DIntersects(geom, $1::GEOMETRY)
+                AND (time_start <= $3 OR time_start IS NULL)
+                AND (time_end >= $2 OR time_end IS NULL)
+                AND identifier NOT IN ($4, $5)
+            LIMIT 1;
+        ",
+        )
+        .await;
+    match result {
+        Ok(stmt) => Ok(stmt),
+        Err(e) => {
+            postgis_error!(
+                "(get_zone_intersection_stmt) could not prepare cached statement: {}",
+                e
+            );
+            Err(PostgisError::Zone(ZoneError::DBError))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -273,25 +321,29 @@ mod tests {
 
     #[test]
     fn ut_request_valid() {
-        let nodes = vec![
-            ("NFZ A", square(52.3745905, 4.9160036)),
-            ("NFZ B", square(52.3749819, 4.9156925)),
-            ("NFZ C", square(52.3752144, 4.9153733)),
+        let nodes: Vec<(&str, Vec<(f64, f64)>, f32, f32)> = vec![
+            ("NFZ_A", square(52.3745905, 4.9160036), 102.0, 200.0),
+            ("NFZ_B", square(52.3749819, 4.9156925), 20.5, 120.0),
+            ("NFZ_C", square(52.3752144, 4.9153733), 22.0, 100.0),
         ];
 
         let zones: Vec<RequestZone> = nodes
             .iter()
-            .map(|(identifier, points)| RequestZone {
-                identifier: identifier.to_string(),
-                vertices: points
-                    .iter()
-                    .map(|(latitude, longitude)| Coordinates {
-                        latitude: *latitude,
-                        longitude: *longitude,
-                    })
-                    .collect(),
-                ..Default::default()
-            })
+            .map(
+                |(identifier, points, altitude_min, altitude_max)| RequestZone {
+                    identifier: identifier.to_string(),
+                    vertices: points
+                        .iter()
+                        .map(|(latitude, longitude)| Coordinates {
+                            latitude: *latitude,
+                            longitude: *longitude,
+                        })
+                        .collect(),
+                    altitude_meters_min: *altitude_min,
+                    altitude_meters_max: *altitude_max,
+                    ..Default::default()
+                },
+            )
             .collect();
 
         let converted = zones
@@ -306,7 +358,7 @@ mod tests {
         for (i, nfz) in zones.iter().enumerate() {
             assert_eq!(nfz.identifier, converted[i].identifier);
             assert_eq!(
-                utils::polygon_from_vertices(&nfz.vertices).unwrap(),
+                utils::polygon_from_vertices_z(&nfz.vertices, nfz.altitude_meters_min).unwrap(),
                 converted[i].geom
             );
         }
@@ -341,7 +393,7 @@ mod tests {
             "Nofly_zone;",
             "'Nofly_zone'",
             "Nofly_zone \'",
-            &"X".repeat(IDENTIFIER_MAX_LENGTH + 1),
+            &"X".repeat(1000),
         ] {
             let zones: Vec<RequestZone> = vec![RequestZone {
                 identifier: identifier.to_string(),

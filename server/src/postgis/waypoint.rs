@@ -3,11 +3,10 @@
 use crate::grpc::server::grpc_server;
 use grpc_server::Waypoint as RequestWaypoint;
 
-/// Maximum length of a waypoint identifier
-const IDENTIFIER_MAX_LENGTH: usize = 20;
+use super::PostgisError;
 
 /// Allowed characters in a waypoint identifier
-const IDENTIFIER_REGEX: &str = r"^[a-zA-Z0-9_-]+$";
+const IDENTIFIER_REGEX: &str = r"^[\-0-9A-Za-z_\.]{1,255}$";
 
 /// Possible conversion errors from the GRPC type to GIS type
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -40,20 +39,21 @@ impl std::fmt::Display for WaypointError {
     }
 }
 
-struct Waypoint {
-    identifier: String,
-    geom: postgis::ewkb::Point,
+/// Waypoint type
+#[derive(Debug, Clone)]
+pub struct Waypoint {
+    /// Waypoint identifier
+    pub identifier: String,
+
+    /// Waypoint location (no altitude information)
+    pub geom: postgis::ewkb::Point, // No height information
 }
 
 impl TryFrom<RequestWaypoint> for Waypoint {
     type Error = WaypointError;
 
     fn try_from(waypoint: RequestWaypoint) -> Result<Self, Self::Error> {
-        if let Err(e) = super::utils::check_string(
-            &waypoint.identifier,
-            IDENTIFIER_REGEX,
-            IDENTIFIER_MAX_LENGTH,
-        ) {
+        if let Err(e) = super::utils::check_string(&waypoint.identifier, IDENTIFIER_REGEX) {
             postgis_error!(
                 "(try_from RequestWaypoint) Invalid waypoint identifier: {}; {}",
                 waypoint.identifier,
@@ -86,14 +86,14 @@ impl TryFrom<RequestWaypoint> for Waypoint {
 }
 
 /// Initialize the vertiports table in the PostGIS database
-pub async fn psql_init(pool: &deadpool_postgres::Pool) -> Result<(), super::PsqlError> {
+pub async fn psql_init(pool: &deadpool_postgres::Pool) -> Result<(), PostgisError> {
     // Create Aircraft Table
     let table_name = "arrow.waypoints";
     let statements = vec![
         format!(
             "CREATE TABLE IF NOT EXISTS {table_name} (
             identifier VARCHAR(255) UNIQUE NOT NULL,
-            geom GEOMETRY(POINT) NOT NULL
+            geom GEOMETRY(POINT, 4326) NOT NULL
         );"
         ),
         format!("CREATE INDEX waypoints_geom_idx ON {table_name} USING GIST (geom);"),
@@ -165,6 +165,52 @@ pub async fn update_waypoints(
             Err(WaypointError::DBError)
         }
     }
+}
+
+/// Get a subset of waypoints within N meters of another geometry
+pub async fn get_waypoints_near_geometry(
+    geom: &postgis::ewkb::GeometryZ,
+    range_meters: f32,
+    pool: &deadpool_postgres::Pool,
+) -> Result<Vec<Waypoint>, PostgisError> {
+    let client = pool.get().await.map_err(|e| {
+        postgis_error!(
+            "(get_aircraft_pointz) could not get client from psql connection pool: {}",
+            e
+        );
+        PostgisError::Waypoint(WaypointError::Client)
+    })?;
+
+    // Get a subset of waypoints within N meters of the line between the origin and target
+    //  This saves computation time by doing shortest path on a smaller graph
+    let stmt = "SELECT identifier, geom FROM arrow.waypoints
+        WHERE ST_DWithin(geom, $1, $2::FLOAT(4), false);";
+
+    Ok(client
+        .query(stmt, &[&geom, &range_meters])
+        .await
+        .map_err(|e| {
+            postgis_error!(
+                "(get_waypoints_near_geometry) could not query waypoints: {}",
+                e
+            );
+            PostgisError::Waypoint(WaypointError::DBError)
+        })?
+        .into_iter()
+        .filter_map(|row| {
+            let Ok(identifier) = row.try_get(0) else {
+                postgis_error!("(get_waypoints_near_geometry) could not get identifier from row.");
+                return None;
+            };
+
+            let Ok(geom) = row.try_get(1) else {
+                postgis_error!("(get_waypoints_near_geometry) could not get geom from row.");
+                return None;
+            };
+
+            Some(Waypoint { identifier, geom })
+        })
+        .collect::<Vec<_>>())
 }
 
 #[cfg(test)]
@@ -243,7 +289,7 @@ mod tests {
             "'Waypoint'",
             "Waypoint A",
             "Waypoint \'",
-            &"X".repeat(IDENTIFIER_MAX_LENGTH + 1),
+            &"X".repeat(1000),
         ] {
             let waypoints: Vec<RequestWaypoint> = vec![RequestWaypoint {
                 identifier: identifier.to_string(),

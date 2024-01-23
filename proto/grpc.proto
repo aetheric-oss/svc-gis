@@ -72,6 +72,9 @@ message Vertiport {
 
     // Vertiport label
     optional string label = 4;
+
+    // Network Timestamp
+    google.protobuf.Timestamp timestamp_network = 5;
 }
 
 // Waypoint Type
@@ -155,16 +158,13 @@ message AircraftPosition {
     string identifier = 1;
 
     // Aircraft Location
-    Coordinates location = 2;
-
-    // Aircraft Altitude
-    float altitude_meters = 3;
+    PointZ geom = 2;
 
     // Telemetry Self-Report Time
-    google.protobuf.Timestamp timestamp_aircraft = 4;
+    google.protobuf.Timestamp timestamp_aircraft = 3;
 
     // Network Timestamp at Receipt
-    google.protobuf.Timestamp timestamp_network = 5;
+    google.protobuf.Timestamp timestamp_network = 4;
 }
 
 
@@ -270,39 +270,6 @@ message UpdateAircraftVelocityRequest {
     repeated AircraftVelocity aircraft = 1;
 }
 
-// A path between nodes has >= 1 straight segments
-message PathSegment {
-    // Segment Index
-    int32 index = 1;
-
-    // Start Node Type (Waypoint, Aircraft, or Vertiport)
-    NodeType origin_type = 2;
-
-    // Start Latitude
-    double origin_latitude = 3;
-
-    // Start Longitude
-    double origin_longitude = 4;
-
-    // Start altitude
-    float origin_altitude_meters = 5;
-
-    // End Node Type (Vertiport or Waypoint)
-    NodeType target_type = 6;
-
-    // End Latitude
-    float target_latitude = 7;
-
-    // End Longitude
-    float target_longitude = 8;
-
-    // End altitude
-    float target_altitude_meters = 9;
-
-    // Total distance of this 3D segment
-    float distance_meters = 10;
-}
-
 // Best Path Request object
 message BestPathRequest {
     // Start Node Identifier
@@ -322,12 +289,51 @@ message BestPathRequest {
 
     // Time of arrival
     google.protobuf.Timestamp time_end = 6;
+
+    // Number of paths to return
+    int32 limit = 7;
+}
+
+/// Geospatial Point with Altitude
+message PointZ {
+    // Latitude
+    double latitude = 1;
+
+    // Longitude
+    double longitude = 2;
+
+    // Altitude
+    float altitude_meters = 3;
+}
+
+/// A node in a path
+message PathNode {
+    // Path Node Index
+    int32 index = 1;
+
+    // Node Type (Vertiport or Waypoint)
+    NodeType node_type = 2;
+
+    // Node Identifier
+    string identifier = 3;
+
+    // Location
+    PointZ geom = 4;
+}
+
+/// A path between nodes
+message Path {
+    // The nodes in this path
+    repeated PathNode path = 1;
+
+    // Total distance of this path
+    float distance_meters = 2;
 }
 
 // Best Path Response object
 message BestPathResponse {
-    // Nodes in the best path
-    repeated PathSegment segments = 1;
+    // Best paths
+    repeated Path paths = 1;
 }
 
 // // Nearest Neighbor Request object

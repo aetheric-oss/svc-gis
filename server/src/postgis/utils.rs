@@ -1,6 +1,9 @@
 //! Common functions for PostGIS operations
 
 use crate::grpc::server::grpc_server::Coordinates;
+use geo::algorithm::haversine_distance::HaversineDistance;
+use geo::point;
+use postgis::ewkb::PointZ;
 use regex;
 
 /// A polygon must have at least three vertices (a triangle)
@@ -52,9 +55,6 @@ impl std::fmt::Display for PointError {
 #[derive(Debug, Copy, Clone, PartialEq)]
 /// Errors validating a string
 pub enum StringError {
-    /// Provided string is too long
-    Length,
-
     /// Regex is invalid
     Regex,
 
@@ -68,7 +68,6 @@ pub enum StringError {
 impl std::fmt::Display for StringError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            StringError::Length => write!(f, "String is too long."),
             StringError::Regex => write!(f, "Regex is invalid."),
             StringError::Mismatch => write!(f, "String does not match regex."),
             StringError::ContainsForbidden => write!(f, "String contains 'null'."),
@@ -77,11 +76,7 @@ impl std::fmt::Display for StringError {
 }
 
 /// Check if a provided string argument is valid
-pub fn check_string(string: &str, regex: &str, allowed_length: usize) -> Result<(), StringError> {
-    if string.len() > allowed_length {
-        return Err(StringError::Length);
-    }
-
+pub fn check_string(string: &str, regex: &str) -> Result<(), StringError> {
     let Ok(re) = regex::Regex::new(regex) else {
         return Err(StringError::Regex);
     };
@@ -97,13 +92,34 @@ pub fn check_string(string: &str, regex: &str, allowed_length: usize) -> Result<
     Ok(())
 }
 
+/// Approximate the distance between these two points
+pub fn distance_meters(a: &PointZ, b: &PointZ) -> f32 {
+    let p1 = point!(x: a.x, y: a.y);
+    let p2 = point!(x: b.x, y: b.y);
+
+    let distance_meters = p1.haversine_distance(&p2);
+
+    // the Z coordinate is already in meters
+    (distance_meters.powf(2.) + (a.z - b.z).powf(2.)).sqrt() as f32
+}
+
+/// Validate a PointZ
+pub fn validate_pointz(point: &PointZ) -> Result<(), PolygonError> {
+    if point.x < -180.0 || point.x > 180.0 || point.y < -90.0 || point.y > 90.0 {
+        return Err(PolygonError::OutOfBounds);
+    }
+
+    Ok(())
+}
+
 /// Generate a PostGIS Polygon from a list of vertices
 /// The first and last vertices must be equal
 /// The polygon must have at least [`MIN_NUM_POLYGON_VERTICES`] vertices
 /// Each vertex must be within the valid range of latitude and longitude
-pub fn polygon_from_vertices(
-    vertices: &Vec<Coordinates>,
-) -> Result<postgis::ewkb::Polygon, PolygonError> {
+pub fn polygon_from_vertices_z(
+    vertices: &[Coordinates],
+    altitude_meters: f32,
+) -> Result<postgis::ewkb::PolygonZ, PolygonError> {
     let size = vertices.len();
 
     // Check that the zone has at least N vertices
@@ -118,18 +134,27 @@ pub fn polygon_from_vertices(
 
     // Each coordinate must fit within the valid range of latitude and longitude
     if vertices.iter().any(|&pt| {
-        pt.latitude < -90.0 || pt.latitude > 90.0 || pt.longitude < -180.0 || pt.longitude > 180.0
+        validate_pointz(
+            &(PointZ {
+                x: pt.longitude,
+                y: pt.latitude,
+                z: altitude_meters as f64,
+                srid: Some(4326),
+            }),
+        )
+        .is_err()
     }) {
         return Err(PolygonError::OutOfBounds);
     }
 
-    Ok(postgis::ewkb::Polygon {
-        rings: vec![postgis::ewkb::LineString {
+    Ok(postgis::ewkb::PolygonZ {
+        rings: vec![postgis::ewkb::LineStringT {
             points: vertices
                 .iter()
-                .map(|vertex| postgis::ewkb::Point {
+                .map(|vertex| PointZ {
                     x: vertex.longitude,
                     y: vertex.latitude,
+                    z: altitude_meters as f64,
                     srid: Some(4326),
                 })
                 .collect(),
@@ -225,20 +250,22 @@ mod tests {
             });
         }
 
-        let polygon = polygon_from_vertices(&vertices).unwrap_err();
+        let polygon = polygon_from_vertices_z(&vertices, 122.0).unwrap_err();
         assert_eq!(polygon, PolygonError::VertexCount);
 
         // Close the polygon
         vertices.push(vertices.first().unwrap().clone());
 
-        let polygon = polygon_from_vertices(&vertices).unwrap();
-        let expected = postgis::ewkb::Polygon {
-            rings: vec![postgis::ewkb::LineString {
+        let altitude_meters = 122.0;
+        let polygon = polygon_from_vertices_z(&vertices, altitude_meters).unwrap();
+        let expected = postgis::ewkb::PolygonZ {
+            rings: vec![postgis::ewkb::LineStringT {
                 points: vertices
                     .iter()
-                    .map(|vertex| postgis::ewkb::Point {
+                    .map(|vertex| PointZ {
                         x: vertex.longitude,
                         y: vertex.latitude,
+                        z: altitude_meters as f64,
                         srid: Some(4326),
                     })
                     .collect(),
@@ -266,7 +293,7 @@ mod tests {
         }
 
         // Do not close the polygon
-        let polygon = polygon_from_vertices(&vertices).unwrap_err();
+        let polygon = polygon_from_vertices_z(&vertices, 100.).unwrap_err();
         assert_eq!(polygon, PolygonError::OpenPolygon);
 
         // Add an invalid vertex
@@ -278,43 +305,45 @@ mod tests {
         // Close the polygon
         vertices.push(vertices.first().unwrap().clone());
 
-        let polygon = polygon_from_vertices(&vertices).unwrap_err();
+        let polygon = polygon_from_vertices_z(&vertices, 100.).unwrap_err();
         assert_eq!(polygon, PolygonError::OutOfBounds);
     }
 
     #[test]
     fn ut_check_string() {
         // Valid
+        let max_length = 20;
         let string = "test";
-        let regex = r"^[a-zA-Z0-9_-.]+$";
-        let allowed_length = 10;
-
-        assert!(check_string(string, regex, allowed_length).is_ok());
+        let regex = &format!(r"^[0-9A-Za-z_]{{4,{max_length}}}$");
+        assert!(check_string(string, regex).is_ok());
 
         // Invalid Length
-        let string = "test";
-        let regex = r"^[a-zA-Z0-9_]+$";
-        let allowed_length = 3;
+        let string = "tes";
         assert_eq!(
-            check_string(string, regex, allowed_length).unwrap_err(),
-            StringError::Length,
+            check_string(string, regex).unwrap_err(),
+            StringError::Mismatch,
+        );
+
+        // Invalid Length
+        let string = "T".repeat(max_length + 1);
+        assert_eq!(
+            check_string(&string, regex).unwrap_err(),
+            StringError::Mismatch,
         );
 
         // Breaks Regex
         let string = "test!";
-        let regex = r"^[a-zA-Z0-9_]+$";
-        let allowed_length = 10;
+        let regex = r"^[0-9A-Za-z_]+$";
         assert_eq!(
-            check_string(string, regex, allowed_length).unwrap_err(),
-            StringError::Regex,
+            check_string(string, regex).unwrap_err(),
+            StringError::Mismatch,
         );
 
         // Contains NULL
         let string = "nullTest";
-        let regex = r"^[a-zA-Z0-9_]+$";
-        let allowed_length = 10;
+        let regex = r"[0-9A-Za-z_]{3,20}";
         assert_eq!(
-            check_string(string, regex, allowed_length).unwrap_err(),
+            check_string(string, regex).unwrap_err(),
             StringError::ContainsForbidden,
         );
     }

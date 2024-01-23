@@ -51,6 +51,9 @@ pub struct Vertiport {
     /// Vertiport label
     #[prost(string, optional, tag = "4")]
     pub label: ::core::option::Option<::prost::alloc::string::String>,
+    /// Network Timestamp
+    #[prost(message, optional, tag = "5")]
+    pub timestamp_network: ::core::option::Option<::lib_common::time::Timestamp>,
 }
 /// Waypoint Type
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -89,15 +92,12 @@ pub struct AircraftPosition {
     pub identifier: ::prost::alloc::string::String,
     /// Aircraft Location
     #[prost(message, optional, tag = "2")]
-    pub location: ::core::option::Option<Coordinates>,
-    /// Aircraft Altitude
-    #[prost(float, tag = "3")]
-    pub altitude_meters: f32,
+    pub geom: ::core::option::Option<PointZ>,
     /// Telemetry Self-Report Time
-    #[prost(message, optional, tag = "4")]
+    #[prost(message, optional, tag = "3")]
     pub timestamp_aircraft: ::core::option::Option<::lib_common::time::Timestamp>,
     /// Network Timestamp at Receipt
-    #[prost(message, optional, tag = "5")]
+    #[prost(message, optional, tag = "4")]
     pub timestamp_network: ::core::option::Option<::lib_common::time::Timestamp>,
 }
 /// Aircraft Identification
@@ -206,42 +206,6 @@ pub struct UpdateAircraftVelocityRequest {
     #[prost(message, repeated, tag = "1")]
     pub aircraft: ::prost::alloc::vec::Vec<AircraftVelocity>,
 }
-/// A path between nodes has >= 1 straight segments
-#[derive(Copy)]
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct PathSegment {
-    /// Segment Index
-    #[prost(int32, tag = "1")]
-    pub index: i32,
-    /// Start Node Type (Waypoint, Aircraft, or Vertiport)
-    #[prost(enumeration = "NodeType", tag = "2")]
-    pub origin_type: i32,
-    /// Start Latitude
-    #[prost(double, tag = "3")]
-    pub origin_latitude: f64,
-    /// Start Longitude
-    #[prost(double, tag = "4")]
-    pub origin_longitude: f64,
-    /// Start altitude
-    #[prost(float, tag = "5")]
-    pub origin_altitude_meters: f32,
-    /// End Node Type (Vertiport or Waypoint)
-    #[prost(enumeration = "NodeType", tag = "6")]
-    pub target_type: i32,
-    /// End Latitude
-    #[prost(float, tag = "7")]
-    pub target_latitude: f32,
-    /// End Longitude
-    #[prost(float, tag = "8")]
-    pub target_longitude: f32,
-    /// End altitude
-    #[prost(float, tag = "9")]
-    pub target_altitude_meters: f32,
-    /// Total distance of this 3D segment
-    #[prost(float, tag = "10")]
-    pub distance_meters: f32,
-}
 /// Best Path Request object
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -264,14 +228,60 @@ pub struct BestPathRequest {
     /// Time of arrival
     #[prost(message, optional, tag = "6")]
     pub time_end: ::core::option::Option<::lib_common::time::Timestamp>,
+    /// Number of paths to return
+    #[prost(int32, tag = "7")]
+    pub limit: i32,
+}
+/// / Geospatial Point with Altitude
+#[derive(Copy)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct PointZ {
+    /// Latitude
+    #[prost(double, tag = "1")]
+    pub latitude: f64,
+    /// Longitude
+    #[prost(double, tag = "2")]
+    pub longitude: f64,
+    /// Altitude
+    #[prost(float, tag = "3")]
+    pub altitude_meters: f32,
+}
+/// / A node in a path
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct PathNode {
+    /// Path Node Index
+    #[prost(int32, tag = "1")]
+    pub index: i32,
+    /// Node Type (Vertiport or Waypoint)
+    #[prost(enumeration = "NodeType", tag = "2")]
+    pub node_type: i32,
+    /// Node Identifier
+    #[prost(string, tag = "3")]
+    pub identifier: ::prost::alloc::string::String,
+    /// Location
+    #[prost(message, optional, tag = "4")]
+    pub geom: ::core::option::Option<PointZ>,
+}
+/// / A path between nodes
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Path {
+    /// The nodes in this path
+    #[prost(message, repeated, tag = "1")]
+    pub path: ::prost::alloc::vec::Vec<PathNode>,
+    /// Total distance of this path
+    #[prost(float, tag = "2")]
+    pub distance_meters: f32,
 }
 /// Best Path Response object
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct BestPathResponse {
-    /// Nodes in the best path
+    /// Best paths
     #[prost(message, repeated, tag = "1")]
-    pub segments: ::prost::alloc::vec::Vec<PathSegment>,
+    pub paths: ::prost::alloc::vec::Vec<Path>,
 }
 /// The nodes involved in the best path request
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]

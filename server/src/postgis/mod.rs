@@ -4,9 +4,9 @@ use strum::IntoEnumIterator;
 
 #[macro_use]
 pub mod macros;
+// pub mod nearest;
 pub mod aircraft;
 pub mod best_path;
-// pub mod nearest;
 pub mod pool;
 pub mod utils;
 pub mod vertiport;
@@ -14,7 +14,48 @@ pub mod waypoint;
 pub mod zone;
 
 /// Error type for postgis actions
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum PostgisError {
+    /// PostgreSQL Error
+    Psql(PsqlError),
+
+    /// Vertiport Error
+    Vertiport(vertiport::VertiportError),
+
+    /// Aircraft Error
+    Aircraft(aircraft::AircraftError),
+
+    /// Waypoint Error
+    Waypoint(waypoint::WaypointError),
+
+    /// Zone Error
+    Zone(zone::ZoneError),
+
+    /// BestPath Error
+    BestPath(best_path::PathError),
+}
+
+impl std::error::Error for PostgisError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        None
+    }
+}
+
+impl std::fmt::Display for PostgisError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PostgisError::Psql(e) => write!(f, "PostgreSQL Error: {}", e),
+            PostgisError::Vertiport(e) => write!(f, "Vertiport Error: {}", e),
+            PostgisError::Aircraft(e) => write!(f, "Aircraft Error: {}", e),
+            PostgisError::Waypoint(e) => write!(f, "Waypoint Error: {}", e),
+            PostgisError::Zone(e) => write!(f, "Zone Error: {}", e),
+            PostgisError::BestPath(e) => write!(f, "BestPath Error: {}", e),
+        }
+    }
+}
+
+/// Error type for postgis actions
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum PsqlError {
     /// Client Error
     Client,
@@ -55,18 +96,18 @@ impl std::error::Error for PsqlError {
 pub async fn psql_transaction(
     statements: Vec<String>,
     pool: &deadpool_postgres::Pool,
-) -> Result<(), PsqlError> {
+) -> Result<(), PostgisError> {
     let mut client = pool.get().await.map_err(|e| {
         postgis_error!(
             "(psql_init) could not get client from psql connection pool: {}",
             e
         );
-        PsqlError::Client
+        PostgisError::Psql(PsqlError::Client)
     })?;
 
     let transaction = client.transaction().await.map_err(|e| {
         postgis_error!("(psql_init) could not create transaction: {}", e);
-        PsqlError::Connection
+        PostgisError::Psql(PsqlError::Connection)
     })?;
 
     for stmt in statements.into_iter() {
@@ -75,16 +116,16 @@ pub async fn psql_transaction(
 
             transaction.rollback().await.map_err(|e| {
                 postgis_error!("(psql_init) Failed to rollback transaction: {}", e);
-                PsqlError::Rollback
+                PostgisError::Psql(PsqlError::Rollback)
             })?;
 
-            return Err(PsqlError::Execute);
+            return Err(PostgisError::Psql(PsqlError::Execute));
         }
     }
 
     transaction.commit().await.map_err(|e| {
         postgis_error!("(psql_init) Failed to commit transaction: {}", e);
-        PsqlError::Commit
+        PostgisError::Psql(PsqlError::Commit)
     })?;
 
     Ok(())
