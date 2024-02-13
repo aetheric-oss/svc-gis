@@ -13,6 +13,11 @@ pub mod vertiport;
 pub mod waypoint;
 pub mod zone;
 
+pub use once_cell::sync::OnceCell;
+
+/// Global pool for PostgreSQL connections
+pub static DEADPOOL_POSTGIS: OnceCell<deadpool_postgres::Pool> = OnceCell::new();
+
 /// Error type for postgis actions
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum PostgisError {
@@ -93,10 +98,12 @@ impl std::error::Error for PsqlError {
 
 /// Executes a transaction with multiple statements on the provided pool
 ///  with rollback if any of the statements fail to execute.
-pub async fn psql_transaction(
-    statements: Vec<String>,
-    pool: &deadpool_postgres::Pool,
-) -> Result<(), PostgisError> {
+pub async fn psql_transaction(statements: Vec<String>) -> Result<(), PostgisError> {
+    let Some(pool) = DEADPOOL_POSTGIS.get() else {
+        postgis_error!("(psql_transaction) could not get psql pool.");
+        return Err(PostgisError::Psql(PsqlError::Client));
+    };
+
     let mut client = pool.get().await.map_err(|e| {
         postgis_error!(
             "(psql_init) could not get client from psql connection pool: {}",
@@ -141,18 +148,25 @@ where
         .collect::<Vec<String>>()
         .join(", ");
 
-    let declaration = format!("CREATE TYPE {enum_name} as ENUM ({fields});");
+    let declaration = format!(
+        "DO $$
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = '{enum_name}') THEN
+            CREATE TYPE {enum_name} as ENUM ({fields});
+        END IF;
+    END $$;"
+    );
     postgis_info!("(psql_enum_declaration) {}.", declaration);
 
     declaration
 }
 
 /// Initializes the PostgreSQL database with the required tables and enums
-pub async fn psql_init(pool: &deadpool_postgres::Pool) -> Result<(), Box<dyn std::error::Error>> {
-    zone::psql_init(pool).await?;
-    vertiport::psql_init(pool).await?;
-    aircraft::psql_init(pool).await?;
-    waypoint::psql_init(pool).await?;
+pub async fn psql_init() -> Result<(), Box<dyn std::error::Error>> {
+    zone::psql_init().await?;
+    vertiport::psql_init().await?;
+    aircraft::psql_init().await?;
+    waypoint::psql_init().await?;
 
     Ok(())
 }

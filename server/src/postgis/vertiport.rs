@@ -116,7 +116,7 @@ impl TryFrom<RequestVertiport> for Vertiport {
 }
 
 /// Initialize the vertiports table in the PostGIS database
-pub async fn psql_init(pool: &deadpool_postgres::Pool) -> Result<(), PostgisError> {
+pub async fn psql_init() -> Result<(), PostgisError> {
     // Create Vertiport Table
     let table_name = "arrow.vertiports";
     let statements = vec![format!(
@@ -133,14 +133,11 @@ pub async fn psql_init(pool: &deadpool_postgres::Pool) -> Result<(), PostgisErro
         );"
     )];
 
-    super::psql_transaction(statements, pool).await
+    super::psql_transaction(statements).await
 }
 
 /// Update vertiports in the PostGIS database
-pub async fn update_vertiports(
-    vertiports: Vec<RequestVertiport>,
-    pool: &deadpool_postgres::Pool,
-) -> Result<(), VertiportError> {
+pub async fn update_vertiports(vertiports: Vec<RequestVertiport>) -> Result<(), VertiportError> {
     postgis_debug!("(update_vertiports) entry.");
     if vertiports.is_empty() {
         return Err(VertiportError::NoVertiports);
@@ -150,6 +147,12 @@ pub async fn update_vertiports(
         .into_iter()
         .map(Vertiport::try_from)
         .collect::<Result<Vec<_>, _>>()?;
+
+    let Some(pool) = crate::postgis::DEADPOOL_POSTGIS.get() else {
+        postgis_error!("(update_vertiports) could not get psql pool.");
+
+        return Err(VertiportError::Client);
+    };
 
     let mut client = pool.get().await.map_err(|e| {
         postgis_error!(
@@ -263,12 +266,16 @@ pub async fn update_vertiports(
 }
 
 /// Gets the central PointZ geometry of a vertiport (for routing) given its identifier.
-pub async fn get_vertiport_centroidz(
-    identifier: &str,
-    pool: &deadpool_postgres::Pool,
-) -> Result<PointZ, PostgisError> {
+pub async fn get_vertiport_centroidz(identifier: &str) -> Result<PointZ, PostgisError> {
     postgis_debug!("(get_vertiport_centroidz) entry, vertiport: '{identifier}'.");
     let stmt = "SELECT ST_Force3DZ(ST_Centroid(geom), altitude_meters) FROM arrow.vertiports WHERE identifier = $1;";
+
+    let Some(pool) = crate::postgis::DEADPOOL_POSTGIS.get() else {
+        postgis_error!("(get_vertiport_centroidz) could not get psql pool.");
+
+        return Err(PostgisError::Vertiport(VertiportError::Client));
+    };
+
     let client = pool.get().await.map_err(|e| {
         postgis_error!(
             "(get_vertiport_centroidz) could not get client from psql connection pool: {}",
@@ -296,7 +303,6 @@ mod tests {
     use super::*;
     use crate::grpc::server::grpc_server::Coordinates;
     use crate::postgis::utils;
-    use crate::test_util::get_psql_pool;
     use uuid::Uuid;
 
     fn square(latitude: f64, longitude: f64) -> Vec<(f64, f64)> {
@@ -374,9 +380,7 @@ mod tests {
             })
             .collect();
 
-        let result = update_vertiports(vertiports, get_psql_pool().await)
-            .await
-            .unwrap_err();
+        let result = update_vertiports(vertiports).await.unwrap_err();
         assert_eq!(result, VertiportError::Client);
     }
 
@@ -403,9 +407,7 @@ mod tests {
                 timestamp_network: Some(Utc::now().into()),
             }];
 
-            let result = update_vertiports(vertiports, get_psql_pool().await)
-                .await
-                .unwrap_err();
+            let result = update_vertiports(vertiports).await.unwrap_err();
             assert_eq!(result, VertiportError::Identifier);
         }
     }
@@ -413,9 +415,7 @@ mod tests {
     #[tokio::test]
     async fn ut_vertiports_request_to_gis_invalid_no_nodes() {
         let vertiports: Vec<RequestVertiport> = vec![];
-        let result = update_vertiports(vertiports, get_psql_pool().await)
-            .await
-            .unwrap_err();
+        let result = update_vertiports(vertiports).await.unwrap_err();
         assert_eq!(result, VertiportError::NoVertiports);
     }
 
@@ -441,9 +441,7 @@ mod tests {
                 ..Default::default()
             }];
 
-            let result = update_vertiports(vertiports, get_psql_pool().await)
-                .await
-                .unwrap_err();
+            let result = update_vertiports(vertiports).await.unwrap_err();
             assert_eq!(result, VertiportError::Location);
         }
 
@@ -474,9 +472,7 @@ mod tests {
                 ..Default::default()
             }];
 
-            let result = update_vertiports(vertiports, get_psql_pool().await)
-                .await
-                .unwrap_err();
+            let result = update_vertiports(vertiports).await.unwrap_err();
             assert_eq!(result, VertiportError::Location);
         }
     }

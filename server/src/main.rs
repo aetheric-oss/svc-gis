@@ -1,7 +1,36 @@
 //! Main function starting the server and initializing dependencies.
 
+use crate::types::{
+    AircraftId, AircraftPosition, AircraftVelocity, REDIS_KEY_AIRCRAFT_ID,
+    REDIS_KEY_AIRCRAFT_POSITION, REDIS_KEY_AIRCRAFT_VELOCITY,
+};
+use cache::Consumer;
 use log::info;
+use svc_gis::cache::IsConsumer;
 use svc_gis::*;
+
+async fn start_redis_consumers(config: &Config) -> Result<(), ()> {
+    //
+    // Aircraft
+    //
+    let mut id_consumer = Consumer::new(config, REDIS_KEY_AIRCRAFT_ID, 500).await?;
+    let mut position_consumer = Consumer::new(config, REDIS_KEY_AIRCRAFT_POSITION, 100).await?;
+    let mut velocity_consumer = Consumer::new(config, REDIS_KEY_AIRCRAFT_VELOCITY, 100).await?;
+
+    tokio::spawn(
+        async move { <Consumer as IsConsumer<AircraftId>>::begin(&mut id_consumer).await },
+    );
+
+    tokio::spawn(async move {
+        <Consumer as IsConsumer<AircraftPosition>>::begin(&mut position_consumer).await
+    });
+
+    tokio::spawn(async move {
+        <Consumer as IsConsumer<AircraftVelocity>>::begin(&mut velocity_consumer).await
+    });
+
+    Ok(())
+}
 
 /// Main entry point: starts gRPC Server on specified address and port
 #[tokio::main]
@@ -20,10 +49,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create pool from PostgreSQL environment variables
     let pool = postgis::pool::create_pool(config.clone());
-    postgis::psql_init(&pool).await?;
+    if crate::postgis::DEADPOOL_POSTGIS.set(pool).is_err() {
+        log::error!("(main) Could not set DEADPOOL_POSTGIS.");
+        panic!("Could not set DEADPOOL_POSTGIS.");
+    }
+
+    postgis::psql_init().await?;
+
+    // Start the Redis consumers
+    if start_redis_consumers(&config).await.is_err() {
+        log::error!("(main) Could not start Redis consumers.");
+        panic!("Could not start Redis consumers.");
+    }
 
     // Start GRPC Server
-    tokio::spawn(grpc::server::grpc_server(config, None, pool.clone())).await?;
+    tokio::spawn(grpc::server::grpc_server(config, None)).await?;
 
     info!("(main) Server shutdown.");
 

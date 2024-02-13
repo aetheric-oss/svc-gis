@@ -6,6 +6,7 @@ version: '3.6'
 volumes:
   postgis-data:
   postgis-ssl:
+  redis-data:
 
 configs:
   log4rs:
@@ -68,9 +69,29 @@ services:
       -c ssl_cert_file=${DB_CLIENT_CERT}
       -c ssl_key_file=${DB_CLIENT_KEY}
 
+  redis:
+    container_name: svc-gis-redis
+    image: redis:6.2-alpine
+    restart: always
+    command: redis-server --save 20 1 --loglevel warning
+    ports:
+      - 6379:6379
+    healthcheck:
+      test: ["CMD", "redis-cli","ping"]
+      interval: 2s
+      timeout: 1s
+      retries: 3
+    volumes:
+      - redis-data:/data
+    environment:
+      - REDIS_DISABLE_COMMANDS=FLUSHDB,FLUSHALL,CONFIG
+      - ALLOW_EMPTY_PASSWORD=yes
+
   web-server:
     depends_on:
       postgis:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     extends:
       file: docker-compose-base.yml
@@ -89,6 +110,10 @@ services:
       - DB_CA_CERT
       - DB_CLIENT_CERT
       - DB_CLIENT_KEY
+      - REDIS__URL
+      - REDIS__POOL__MAX_SIZE
+      - REDIS__POOL__TIMEOUTS__WAIT__SECS
+      - REDIS__POOL__TIMEOUTS__WAIT__NANOS
       - DOCKER_PORT_GRPC
       - LOG_CONFIG
 
@@ -96,6 +121,8 @@ services:
     extends:
       file: docker-compose-base.yml
       service: example
+    environment:
+      - REDIS__URL
 
   ut-coverage:
     extends:

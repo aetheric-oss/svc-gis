@@ -86,7 +86,7 @@ impl TryFrom<RequestWaypoint> for Waypoint {
 }
 
 /// Initialize the vertiports table in the PostGIS database
-pub async fn psql_init(pool: &deadpool_postgres::Pool) -> Result<(), PostgisError> {
+pub async fn psql_init() -> Result<(), PostgisError> {
     // Create Aircraft Table
     let table_name = "arrow.waypoints";
     let statements = vec![
@@ -96,17 +96,14 @@ pub async fn psql_init(pool: &deadpool_postgres::Pool) -> Result<(), PostgisErro
             geom GEOMETRY(POINT, 4326) NOT NULL
         );"
         ),
-        format!("CREATE INDEX waypoints_geom_idx ON {table_name} USING GIST (geom);"),
+        format!("CREATE INDEX IF NOT EXISTS waypoints_geom_idx ON {table_name} USING GIST (geom);"),
     ];
 
-    super::psql_transaction(statements, pool).await
+    super::psql_transaction(statements).await
 }
 
 /// Update waypoints in the PostGIS database
-pub async fn update_waypoints(
-    waypoints: Vec<RequestWaypoint>,
-    pool: &deadpool_postgres::Pool,
-) -> Result<(), WaypointError> {
+pub async fn update_waypoints(waypoints: Vec<RequestWaypoint>) -> Result<(), WaypointError> {
     postgis_debug!("(update_waypoints) entry.");
     if waypoints.is_empty() {
         return Err(WaypointError::NoWaypoints);
@@ -117,6 +114,12 @@ pub async fn update_waypoints(
         .map(Waypoint::try_from)
         .collect::<Result<Vec<_>, _>>()?;
 
+    let Some(pool) = crate::postgis::DEADPOOL_POSTGIS.get() else {
+        postgis_error!("(update_waypoints) could not get psql pool.");
+
+        return Err(WaypointError::Client);
+    };
+
     let mut client = pool.get().await.map_err(|e| {
         postgis_error!(
             "(update_waypoints) could not get client from psql connection pool: {}",
@@ -124,6 +127,7 @@ pub async fn update_waypoints(
         );
         WaypointError::Client
     })?;
+
     let transaction = client.transaction().await.map_err(|e| {
         postgis_error!("(update_waypoints) could not create transaction: {}", e);
         WaypointError::DBError
@@ -171,11 +175,16 @@ pub async fn update_waypoints(
 pub async fn get_waypoints_near_geometry(
     geom: &postgis::ewkb::GeometryZ,
     range_meters: f32,
-    pool: &deadpool_postgres::Pool,
 ) -> Result<Vec<Waypoint>, PostgisError> {
+    let Some(pool) = crate::postgis::DEADPOOL_POSTGIS.get() else {
+        postgis_error!("(get_waypoints_near_geometry) could not get psql pool.");
+
+        return Err(PostgisError::Waypoint(WaypointError::Client));
+    };
+
     let client = pool.get().await.map_err(|e| {
         postgis_error!(
-            "(get_aircraft_pointz) could not get client from psql connection pool: {}",
+            "(get_waypoints_near_geometry) could not get client from psql connection pool: {}",
             e
         );
         PostgisError::Waypoint(WaypointError::Client)
@@ -218,7 +227,6 @@ mod tests {
     use super::*;
     use crate::grpc::server::grpc_server::Coordinates;
     use crate::postgis::utils;
-    use crate::test_util::get_psql_pool;
 
     #[test]
     fn ut_request_valid() {
@@ -275,9 +283,7 @@ mod tests {
             })
             .collect();
 
-        let result = update_waypoints(waypoints, get_psql_pool().await)
-            .await
-            .unwrap_err();
+        let result = update_waypoints(waypoints).await.unwrap_err();
         assert_eq!(result, WaypointError::Client);
     }
 
@@ -299,9 +305,7 @@ mod tests {
                 }),
             }];
 
-            let result = update_waypoints(waypoints, get_psql_pool().await)
-                .await
-                .unwrap_err();
+            let result = update_waypoints(waypoints).await.unwrap_err();
             assert_eq!(result, WaypointError::Identifier);
         }
     }
@@ -309,9 +313,7 @@ mod tests {
     #[tokio::test]
     async fn ut_waypoints_request_to_gis_invalid_no_nodes() {
         let waypoints: Vec<RequestWaypoint> = vec![];
-        let result = update_waypoints(waypoints, get_psql_pool().await)
-            .await
-            .unwrap_err();
+        let result = update_waypoints(waypoints).await.unwrap_err();
         assert_eq!(result, WaypointError::NoWaypoints);
     }
 
@@ -328,9 +330,7 @@ mod tests {
                 }),
             }];
 
-            let result = update_waypoints(waypoints, get_psql_pool().await)
-                .await
-                .unwrap_err();
+            let result = update_waypoints(waypoints).await.unwrap_err();
             assert_eq!(result, WaypointError::Location);
         }
     }

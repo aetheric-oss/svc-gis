@@ -32,6 +32,7 @@ chrono              = { version = "0.4", features = ["serde"] }
 clap                = { version = "4.4", features = ["derive"] }
 config              = "0.13"
 deadpool-postgres   = { version = "0.11", features = ["serde"] }
+deadpool-redis      = { version = "0.14", features = ["serde"] }
 dotenv              = "0.15"
 futures             = "0.3"
 geo                 = "0.27"
@@ -41,6 +42,7 @@ native-tls          = "0.2"
 num                 = "0.4"
 num-derive          = "0.4"
 num-traits          = "0.2"
+once_cell           = "1.19"
 openssl             = "0.10"
 postgis             = "0.9"
 postgres-native-tls = "0.5"

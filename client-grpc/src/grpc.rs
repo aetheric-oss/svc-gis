@@ -66,71 +66,6 @@ pub struct Waypoint {
     #[prost(message, optional, tag = "2")]
     pub location: ::core::option::Option<Coordinates>,
 }
-/// Aircraft Identification
-/// ADS-B issues an identification message separately from position
-/// at a different rate, indicating the type of aircraft.
-/// Remote ID uses basic ID
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct AircraftId {
-    /// Aircraft Identifier
-    #[prost(string, tag = "1")]
-    pub identifier: ::prost::alloc::string::String,
-    /// Aircraft Type
-    #[prost(enumeration = "AircraftType", tag = "2")]
-    pub aircraft_type: i32,
-    /// Network Timestamp at Receipt
-    #[prost(message, optional, tag = "3")]
-    pub timestamp_network: ::core::option::Option<::lib_common::time::Timestamp>,
-}
-/// Aircraft Type
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct AircraftPosition {
-    /// Aircraft Identifier
-    #[prost(string, tag = "1")]
-    pub identifier: ::prost::alloc::string::String,
-    /// Aircraft Location
-    #[prost(message, optional, tag = "2")]
-    pub geom: ::core::option::Option<PointZ>,
-    /// Telemetry Self-Report Time
-    #[prost(message, optional, tag = "3")]
-    pub timestamp_aircraft: ::core::option::Option<::lib_common::time::Timestamp>,
-    /// Network Timestamp at Receipt
-    #[prost(message, optional, tag = "4")]
-    pub timestamp_network: ::core::option::Option<::lib_common::time::Timestamp>,
-}
-/// Aircraft Identification
-/// ADS-B issues an identification message separately from position
-/// at a different rate, indicating the type of aircraft.
-/// Remote ID includes velocity in location messages
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct AircraftVelocity {
-    /// Aircraft Identifier
-    #[prost(string, tag = "1")]
-    pub identifier: ::prost::alloc::string::String,
-    /// Vertical Rate (meters/second)
-    #[prost(float, tag = "2")]
-    pub velocity_vertical_mps: f32,
-    /// Horizontal Rate (Ground, meters/second)
-    /// ADS-B and Remote ID Location message both report this
-    #[prost(float, tag = "3")]
-    pub velocity_horizontal_ground_mps: f32,
-    /// Horizontal Rate (Air, meters/second)
-    /// ADS-B may report this, Remote ID does not
-    #[prost(float, optional, tag = "4")]
-    pub velocity_horizontal_air_mps: ::core::option::Option<f32>,
-    /// Track Angle (degrees) from true North
-    #[prost(float, tag = "5")]
-    pub track_angle_degrees: f32,
-    /// Telemetry Self-Report Time
-    #[prost(message, optional, tag = "6")]
-    pub timestamp_aircraft: ::core::option::Option<::lib_common::time::Timestamp>,
-    /// Network Timestamp at Receipt
-    #[prost(message, optional, tag = "7")]
-    pub timestamp_network: ::core::option::Option<::lib_common::time::Timestamp>,
-}
 /// Update Vertiports Request object
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -181,30 +116,6 @@ pub struct UpdateZonesRequest {
     /// Nodes to update
     #[prost(message, repeated, tag = "1")]
     pub zones: ::prost::alloc::vec::Vec<Zone>,
-}
-/// Update Aircraft Request Object
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct UpdateAircraftIdRequest {
-    /// List of aircraft to update
-    #[prost(message, repeated, tag = "1")]
-    pub aircraft: ::prost::alloc::vec::Vec<AircraftId>,
-}
-/// Update Aircraft Request Object
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct UpdateAircraftPositionRequest {
-    /// List of aircraft to update
-    #[prost(message, repeated, tag = "1")]
-    pub aircraft: ::prost::alloc::vec::Vec<AircraftPosition>,
-}
-/// Update Aircraft Request Object
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct UpdateAircraftVelocityRequest {
-    /// List of aircraft to update
-    #[prost(message, repeated, tag = "1")]
-    pub aircraft: ::prost::alloc::vec::Vec<AircraftVelocity>,
 }
 /// Best Path Request object
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -312,91 +223,6 @@ impl NodeType {
             "VERTIPORT" => Some(Self::Vertiport),
             "WAYPOINT" => Some(Self::Waypoint),
             "AIRCRAFT" => Some(Self::Aircraft),
-            _ => None,
-        }
-    }
-}
-/// Aircraft Type
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
-#[repr(i32)]
-pub enum AircraftType {
-    /// Undeclared aircraft type
-    Undeclared = 0,
-    /// Fixed Wing Aircraft
-    Aeroplane = 1,
-    /// Rotary Wing Aircraft
-    Rotorcraft = 2,
-    /// Gyroplane
-    Gyroplane = 3,
-    /// Hybrid Lift
-    Hybridlift = 4,
-    /// Ornithopter
-    Ornithopter = 5,
-    /// Glider
-    Glider = 6,
-    /// Kite
-    Kite = 7,
-    /// Free Balloon
-    Freeballoon = 8,
-    /// Captive Balloon
-    Captiveballoon = 9,
-    /// Airship
-    Airship = 10,
-    /// Unpowered aircraft (free fall or parachute)
-    Unpowered = 11,
-    /// Rocket
-    Rocket = 12,
-    /// Tethered Powered Aircraft
-    Tethered = 13,
-    /// Ground Obstacle
-    Groundobstacle = 14,
-    /// Other
-    Other = 15,
-}
-impl AircraftType {
-    /// String value of the enum field names used in the ProtoBuf definition.
-    ///
-    /// The values are not transformed in any way and thus are considered stable
-    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
-    pub fn as_str_name(&self) -> &'static str {
-        match self {
-            AircraftType::Undeclared => "UNDECLARED",
-            AircraftType::Aeroplane => "AEROPLANE",
-            AircraftType::Rotorcraft => "ROTORCRAFT",
-            AircraftType::Gyroplane => "GYROPLANE",
-            AircraftType::Hybridlift => "HYBRIDLIFT",
-            AircraftType::Ornithopter => "ORNITHOPTER",
-            AircraftType::Glider => "GLIDER",
-            AircraftType::Kite => "KITE",
-            AircraftType::Freeballoon => "FREEBALLOON",
-            AircraftType::Captiveballoon => "CAPTIVEBALLOON",
-            AircraftType::Airship => "AIRSHIP",
-            AircraftType::Unpowered => "UNPOWERED",
-            AircraftType::Rocket => "ROCKET",
-            AircraftType::Tethered => "TETHERED",
-            AircraftType::Groundobstacle => "GROUNDOBSTACLE",
-            AircraftType::Other => "OTHER",
-        }
-    }
-    /// Creates an enum from field names used in the ProtoBuf definition.
-    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
-        match value {
-            "UNDECLARED" => Some(Self::Undeclared),
-            "AEROPLANE" => Some(Self::Aeroplane),
-            "ROTORCRAFT" => Some(Self::Rotorcraft),
-            "GYROPLANE" => Some(Self::Gyroplane),
-            "HYBRIDLIFT" => Some(Self::Hybridlift),
-            "ORNITHOPTER" => Some(Self::Ornithopter),
-            "GLIDER" => Some(Self::Glider),
-            "KITE" => Some(Self::Kite),
-            "FREEBALLOON" => Some(Self::Freeballoon),
-            "CAPTIVEBALLOON" => Some(Self::Captiveballoon),
-            "AIRSHIP" => Some(Self::Airship),
-            "UNPOWERED" => Some(Self::Unpowered),
-            "ROCKET" => Some(Self::Rocket),
-            "TETHERED" => Some(Self::Tethered),
-            "GROUNDOBSTACLE" => Some(Self::Groundobstacle),
-            "OTHER" => Some(Self::Other),
             _ => None,
         }
     }
@@ -600,72 +426,6 @@ pub mod rpc_service_client {
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("grpc.RpcService", "updateZones"));
-            self.inner.unary(req, path, codec).await
-        }
-        pub async fn update_aircraft_id(
-            &mut self,
-            request: impl tonic::IntoRequest<super::UpdateAircraftIdRequest>,
-        ) -> std::result::Result<tonic::Response<super::UpdateResponse>, tonic::Status> {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
-            let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/grpc.RpcService/updateAircraftId",
-            );
-            let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(GrpcMethod::new("grpc.RpcService", "updateAircraftId"));
-            self.inner.unary(req, path, codec).await
-        }
-        pub async fn update_aircraft_position(
-            &mut self,
-            request: impl tonic::IntoRequest<super::UpdateAircraftPositionRequest>,
-        ) -> std::result::Result<tonic::Response<super::UpdateResponse>, tonic::Status> {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
-            let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/grpc.RpcService/updateAircraftPosition",
-            );
-            let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(GrpcMethod::new("grpc.RpcService", "updateAircraftPosition"));
-            self.inner.unary(req, path, codec).await
-        }
-        pub async fn update_aircraft_velocity(
-            &mut self,
-            request: impl tonic::IntoRequest<super::UpdateAircraftVelocityRequest>,
-        ) -> std::result::Result<tonic::Response<super::UpdateResponse>, tonic::Status> {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
-            let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/grpc.RpcService/updateAircraftVelocity",
-            );
-            let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(GrpcMethod::new("grpc.RpcService", "updateAircraftVelocity"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn best_path(

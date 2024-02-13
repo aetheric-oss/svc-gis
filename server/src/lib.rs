@@ -6,9 +6,15 @@ use tokio::sync::OnceCell;
 #[macro_use]
 pub mod test_util;
 
+pub mod cache;
 pub mod config;
 pub mod grpc;
 pub mod postgis;
+
+/// Types used with svc-gis Redis queues
+pub mod types {
+    include!("../../common/types.rs");
+}
 
 pub use crate::config::Config;
 

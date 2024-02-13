@@ -260,7 +260,6 @@ impl TryFrom<BestPathRequest> for PathRequest {
 /// Modified A* algorithm for finding the best path between two points
 ///  Potentials are sorted by (distance to target + distance traversed)
 async fn mod_a_star(
-    pool: &deadpool_postgres::Pool,
     origin_node: PathNode,
     target_node: PathNode,
     time_start: DateTime<Utc>,
@@ -310,6 +309,11 @@ async fn mod_a_star(
         distance_traversed_meters: 0.,
     };
     potentials.push(starting_path);
+
+    let Some(pool) = crate::postgis::DEADPOOL_POSTGIS.get() else {
+        postgis_error!("(mod_a_star) could not get psql pool.");
+        return Err(PostgisError::BestPath(PathError::Client));
+    };
 
     let client = pool.get().await.map_err(|e| {
         postgis_error!(
@@ -416,16 +420,13 @@ async fn mod_a_star(
 ///
 /// No-Fly zones can extend flights, isolate aircraft, or disable vertiports entirely.
 #[cfg(not(tarpaulin_include))]
-pub async fn best_path(
-    request: BestPathRequest,
-    pool: &deadpool_postgres::Pool,
-) -> Result<Vec<GrpcPath>, PostgisError> {
+pub async fn best_path(request: BestPathRequest) -> Result<Vec<GrpcPath>, PostgisError> {
     postgis_info!("(best_path) request: {:?}", request);
     let request = PathRequest::try_from(request)?;
 
     let origin_geom = match request.origin_type {
-        NodeType::Vertiport => get_vertiport_centroidz(&request.origin_identifier, pool).await?,
-        NodeType::Aircraft => get_aircraft_pointz(&request.origin_identifier, pool).await?,
+        NodeType::Vertiport => get_vertiport_centroidz(&request.origin_identifier).await?,
+        NodeType::Aircraft => get_aircraft_pointz(&request.origin_identifier).await?,
         _ => {
             postgis_error!(
                 "(best_path) invalid node types: {:?} -> {:?}",
@@ -437,7 +438,7 @@ pub async fn best_path(
     };
 
     let target_geom = match request.target_type {
-        NodeType::Vertiport => get_vertiport_centroidz(&request.target_identifier, pool).await?,
+        NodeType::Vertiport => get_vertiport_centroidz(&request.target_identifier).await?,
         _ => {
             postgis_error!(
                 "(best_path) invalid node types: {:?} -> {:?}",
@@ -456,7 +457,6 @@ pub async fn best_path(
             srid: Some(4326),
         })),
         WAYPOINT_RANGE_METERS,
-        pool,
     )
     .await?;
 
@@ -477,7 +477,6 @@ pub async fn best_path(
     };
 
     let result = mod_a_star(
-        pool,
         origin_node,
         target_node,
         request.time_start,

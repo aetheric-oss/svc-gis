@@ -90,3 +90,10 @@ sfcgal
 centroidz
 linestring
 polyhedralsurfacez
+loglevel
+flushdb
+flushall
+nanos
+rpop
+rpush
+typname
