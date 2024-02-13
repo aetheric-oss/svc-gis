@@ -55,7 +55,7 @@ root:
 
 loggers:
   backend::postgis:
-    level: debug
+    level: info
     appenders:
       - backend_requests
   app::grpc:

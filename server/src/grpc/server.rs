@@ -16,11 +16,8 @@ use tonic::transport::Server;
 use tonic::{Request, Response, Status};
 
 /// struct to implement the gRPC server functions
-#[derive(Debug, Clone)]
-pub struct ServerImpl {
-    /// Postgres connection pool
-    pub pool: deadpool_postgres::Pool,
-}
+#[derive(Debug, Copy, Clone)]
+pub struct ServerImpl {}
 
 #[cfg(not(feature = "stub_server"))]
 #[tonic::async_trait]
@@ -44,7 +41,7 @@ impl RpcService for ServerImpl {
         grpc_debug!("(update_vertiports) entry.");
 
         // Update nodes in PostGIS
-        match vertiport::update_vertiports(request.into_inner().vertiports, &self.pool).await {
+        match vertiport::update_vertiports(request.into_inner().vertiports).await {
             Ok(_) => Ok(Response::new(grpc_server::UpdateResponse { updated: true })),
             Err(e) => {
                 grpc_error!("(update_vertiports) error updating vertiports.");
@@ -61,7 +58,7 @@ impl RpcService for ServerImpl {
         grpc_debug!("(update_waypoints) entry.");
 
         // Update nodes in PostGIS
-        match waypoint::update_waypoints(request.into_inner().waypoints, &self.pool).await {
+        match waypoint::update_waypoints(request.into_inner().waypoints).await {
             Ok(_) => Ok(Response::new(grpc_server::UpdateResponse { updated: true })),
             Err(e) => {
                 grpc_error!("(update_waypoints) error updating nodes: {}", e);
@@ -78,58 +75,10 @@ impl RpcService for ServerImpl {
         grpc_debug!("(update_zones) entry.");
 
         // Update nodes in PostGIS
-        match zone::update_zones(request.into_inner().zones, &self.pool).await {
+        match zone::update_zones(request.into_inner().zones).await {
             Ok(_) => Ok(Response::new(grpc_server::UpdateResponse { updated: true })),
             Err(e) => {
                 grpc_error!("(update_zones) error updating zones: {}", e);
-                Err(Status::internal(e.to_string()))
-            }
-        }
-    }
-
-    #[cfg(not(tarpaulin_include))]
-    async fn update_aircraft_id(
-        &self,
-        request: Request<grpc_server::UpdateAircraftIdRequest>,
-    ) -> Result<Response<grpc_server::UpdateResponse>, Status> {
-        grpc_debug!("(update_aircraft_id) entry.");
-        // Update aircraft in PostGIS
-        match aircraft::update_aircraft_id(request.into_inner().aircraft, &self.pool).await {
-            Ok(_) => Ok(Response::new(grpc_server::UpdateResponse { updated: true })),
-            Err(e) => {
-                grpc_error!("(update_aircraft_id) error updating aircraft: {}", e);
-                Err(Status::internal(e.to_string()))
-            }
-        }
-    }
-
-    #[cfg(not(tarpaulin_include))]
-    async fn update_aircraft_position(
-        &self,
-        request: Request<grpc_server::UpdateAircraftPositionRequest>,
-    ) -> Result<Response<grpc_server::UpdateResponse>, Status> {
-        grpc_debug!("(update_aircraft_position) entry.");
-        // Update aircraft in PostGIS
-        match aircraft::update_aircraft_position(request.into_inner().aircraft, &self.pool).await {
-            Ok(_) => Ok(Response::new(grpc_server::UpdateResponse { updated: true })),
-            Err(e) => {
-                grpc_error!("(update_aircraft_position) error updating aircraft: {}", e);
-                Err(Status::internal(e.to_string()))
-            }
-        }
-    }
-
-    #[cfg(not(tarpaulin_include))]
-    async fn update_aircraft_velocity(
-        &self,
-        request: Request<grpc_server::UpdateAircraftVelocityRequest>,
-    ) -> Result<Response<grpc_server::UpdateResponse>, Status> {
-        grpc_debug!("(update_aircraft_velocity) entry.");
-        // Update aircraft in PostGIS
-        match aircraft::update_aircraft_velocity(request.into_inner().aircraft, &self.pool).await {
-            Ok(_) => Ok(Response::new(grpc_server::UpdateResponse { updated: true })),
-            Err(e) => {
-                grpc_error!("(update_aircraft_velocity) error updating aircraft: {}", e);
                 Err(Status::internal(e.to_string()))
             }
         }
@@ -142,7 +91,7 @@ impl RpcService for ServerImpl {
     ) -> Result<Response<grpc_server::BestPathResponse>, Status> {
         grpc_debug!("(best_path) entry.");
         let request = request.into_inner();
-        match best_path::best_path(request, &self.pool).await {
+        match best_path::best_path(request).await {
             Ok(paths) => {
                 let response = grpc_server::BestPathResponse { paths };
                 Ok(Response::new(response))
@@ -161,7 +110,7 @@ impl RpcService for ServerImpl {
     // ) -> Result<Response<grpc_server::NearestNeighborResponse>, Status> {
     //     grpc_debug!("(nearest_neighbors) entry.");
 
-    //     match nearest::nearest_neighbors(request.into_inner(), &self.pool).await {
+    //     match nearest::nearest_neighbors(request.into_inner()).await {
     //         Ok(distances) => {
     //             let response = grpc_server::NearestNeighborResponse { distances };
     //             Ok(Response::new(response))
@@ -183,15 +132,13 @@ impl RpcService for ServerImpl {
 /// use deadpool_postgres::{tokio_postgres::NoTls, Runtime};
 /// async fn example() -> Result<(), tokio::task::JoinError> {
 ///     let config = Config::try_from_env().unwrap();
-///     let pool = config.pg.create_pool(Some(Runtime::Tokio1), NoTls).unwrap();
-///     tokio::spawn(grpc_server(config, None, pool)).await
+///     tokio::spawn(grpc_server(config, None)).await
 /// }
 /// ```
 #[cfg(not(tarpaulin_include))]
 pub async fn grpc_server(
     config: crate::config::Config,
     shutdown_rx: Option<tokio::sync::oneshot::Receiver<()>>,
-    pool: deadpool_postgres::Pool,
 ) {
     grpc_debug!("(grpc_server) entry.");
 
@@ -205,7 +152,7 @@ pub async fn grpc_server(
         }
     };
 
-    let imp = ServerImpl { pool };
+    let imp = ServerImpl {};
     let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
     health_reporter
         .set_serving::<RpcServiceServer<ServerImpl>>()
@@ -273,44 +220,13 @@ impl RpcService for ServerImpl {
     }
 
     #[cfg(not(tarpaulin_include))]
-    async fn update_aircraft_id(
-        &self,
-        _request: Request<grpc_server::UpdateAircraftIdRequest>,
-    ) -> Result<Response<grpc_server::UpdateResponse>, Status> {
-        grpc_warn!("(update_aircraft_id MOCK) entry.");
-
-        Ok(Response::new(grpc_server::UpdateResponse { updated: true }))
-    }
-
-    #[cfg(not(tarpaulin_include))]
-    async fn update_aircraft_position(
-        &self,
-        _request: Request<grpc_server::UpdateAircraftPositionRequest>,
-    ) -> Result<Response<grpc_server::UpdateResponse>, Status> {
-        grpc_warn!("(update_aircraft_position MOCK) entry.");
-
-        Ok(Response::new(grpc_server::UpdateResponse { updated: true }))
-    }
-
-    #[cfg(not(tarpaulin_include))]
-    async fn update_aircraft_velocity(
-        &self,
-        _request: Request<grpc_server::UpdateAircraftVelocityRequest>,
-    ) -> Result<Response<grpc_server::UpdateResponse>, Status> {
-        grpc_warn!("(update_aircraft_velocity MOCK) entry.");
-
-        Ok(Response::new(grpc_server::UpdateResponse { updated: true }))
-    }
-
-    #[cfg(not(tarpaulin_include))]
     async fn best_path(
         &self,
         request: Request<grpc_server::BestPathRequest>,
     ) -> Result<Response<grpc_server::BestPathResponse>, Status> {
         grpc_warn!("(best_path MOCK) entry.");
         let request = request.into_inner();
-
-        match best_path::best_path(request, &self.pool).await {
+        match best_path::best_path(request).await {
             Ok(paths) => {
                 let response = grpc_server::BestPathResponse { paths };
                 Ok(Response::new(response))
@@ -328,7 +244,7 @@ impl RpcService for ServerImpl {
     //     request: Request<grpc_server::NearestNeighborRequest>,
     // ) -> Result<Response<grpc_server::NearestNeighborResponse>, Status> {
     //     grpc_warn!("(nearest_neighbors MOCK) entry.");
-    //     match nearest::nearest_neighbors(request.into_inner(), &self.pool).await {
+    //     match nearest::nearest_neighbors(request.into_inner()).await {
     //         Ok(distances) => {
     //             let response = grpc_server::NearestNeighborResponse { distances };
     //             Ok(Response::new(response))
@@ -344,13 +260,10 @@ impl RpcService for ServerImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_util::get_psql_pool;
 
     #[tokio::test]
     async fn test_grpc_server_is_ready() {
-        let imp = ServerImpl {
-            pool: get_psql_pool().await.to_owned(),
-        };
+        let imp = ServerImpl {};
         let result = imp.is_ready(Request::new(ReadyRequest {})).await;
         assert!(result.is_ok());
         let result: ReadyResponse = result.unwrap().into_inner();

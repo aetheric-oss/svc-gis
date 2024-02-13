@@ -36,13 +36,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .type_attribute("ZoneType", "#[derive(::postgres_types::ToSql)]")
         .type_attribute("ZoneType", "#[derive(::num_derive::FromPrimitive)]")
         .type_attribute("ZoneType", r#"#[postgres(name = "zonetype")]"#)
-        .type_attribute("AircraftType", "#[derive(::strum::EnumString)]")
-        .type_attribute("AircraftType", "#[derive(::strum::Display)]")
-        .type_attribute("AircraftType", "#[derive(::strum::EnumIter)]")
-        .type_attribute("AircraftType", "#[derive(::postgres_types::FromSql)]")
-        .type_attribute("AircraftType", "#[derive(::postgres_types::ToSql)]")
-        .type_attribute("AircraftType", "#[derive(::num_derive::FromPrimitive)]")
-        .type_attribute("AircraftType", r#"#[postgres(name = "aircrafttype")]"#)
         .build_client(false)
         .compile(&[proto_file], &[proto_dir])?;
 

@@ -140,7 +140,7 @@ impl TryFrom<RequestZone> for Zone {
 }
 
 /// Initialize the vertiports table in the PostGIS database
-pub async fn psql_init(pool: &deadpool_postgres::Pool) -> Result<(), PostgisError> {
+pub async fn psql_init() -> Result<(), PostgisError> {
     // Create Aircraft Table
 
     let table_name = "arrow.zones";
@@ -160,17 +160,14 @@ pub async fn psql_init(pool: &deadpool_postgres::Pool) -> Result<(), PostgisErro
             last_updated TIMESTAMPTZ
         );"
         ),
-        format!("CREATE INDEX zone_geom_idx ON {table_name} USING GIST (geom);"),
+        format!("CREATE INDEX IF NOT EXISTS zone_geom_idx ON {table_name} USING GIST (geom);"),
     ];
 
-    super::psql_transaction(statements, pool).await
+    super::psql_transaction(statements).await
 }
 
 /// Updates zones in the PostGIS database.
-pub async fn update_zones(
-    zones: Vec<RequestZone>,
-    pool: &deadpool_postgres::Pool,
-) -> Result<(), ZoneError> {
+pub async fn update_zones(zones: Vec<RequestZone>) -> Result<(), ZoneError> {
     postgis_debug!("(update_zones) entry.");
     if zones.is_empty() {
         postgis_error!("(update_zones) no zones provided.");
@@ -182,6 +179,11 @@ pub async fn update_zones(
         .map(Zone::try_from)
         .collect::<Result<Vec<_>, _>>()?;
 
+    let Some(pool) = crate::postgis::DEADPOOL_POSTGIS.get() else {
+        postgis_error!("(update_zones) could not get psql pool.");
+        return Err(ZoneError::Client);
+    };
+
     let mut client = pool.get().await.map_err(|e| {
         postgis_error!(
             "(update_zones) could not get client from psql connection pool: {}",
@@ -189,6 +191,7 @@ pub async fn update_zones(
         );
         ZoneError::Client
     })?;
+
     let transaction = client.transaction().await.map_err(|e| {
         postgis_error!("(update_zones) could not create transaction: {}", e);
         ZoneError::DBError
@@ -307,7 +310,6 @@ mod tests {
     use super::*;
     use crate::grpc::server::grpc_server::Coordinates;
     use crate::postgis::utils;
-    use crate::test_util::get_psql_pool;
 
     fn square(latitude: f64, longitude: f64) -> Vec<(f64, f64)> {
         vec![
@@ -382,7 +384,7 @@ mod tests {
             })
             .collect();
 
-        let result = update_zones(zone, get_psql_pool().await).await.unwrap_err();
+        let result = update_zones(zone).await.unwrap_err();
         assert_eq!(result, ZoneError::Client);
     }
 
@@ -407,9 +409,7 @@ mod tests {
                 ..Default::default()
             }];
 
-            let result = update_zones(zones, get_psql_pool().await)
-                .await
-                .unwrap_err();
+            let result = update_zones(zones).await.unwrap_err();
             assert_eq!(result, ZoneError::Identifier);
         }
     }
@@ -417,9 +417,7 @@ mod tests {
     #[tokio::test]
     async fn ut_zone_request_to_gis_invalid_no_nodes() {
         let zones: Vec<RequestZone> = vec![];
-        let result = update_zones(zones, get_psql_pool().await)
-            .await
-            .unwrap_err();
+        let result = update_zones(zones).await.unwrap_err();
         assert_eq!(result, ZoneError::NoZones);
     }
 
@@ -445,9 +443,7 @@ mod tests {
                 ..Default::default()
             }];
 
-            let result = update_zones(zones, get_psql_pool().await)
-                .await
-                .unwrap_err();
+            let result = update_zones(zones).await.unwrap_err();
             assert_eq!(result, ZoneError::Location);
         }
 
@@ -478,9 +474,7 @@ mod tests {
                 ..Default::default()
             }];
 
-            let result = update_zones(zones, get_psql_pool().await)
-                .await
-                .unwrap_err();
+            let result = update_zones(zones).await.unwrap_err();
             assert_eq!(result, ZoneError::Location);
         }
     }

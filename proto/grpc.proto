@@ -10,12 +10,6 @@ service RpcService {
     rpc updateVertiports(updateVertiportsRequest) returns (UpdateResponse);
     rpc updateWaypoints(updateWaypointsRequest) returns (UpdateResponse);
     rpc updateZones(UpdateZonesRequest) returns (UpdateResponse);
-    rpc updateAircraftId(UpdateAircraftIdRequest)
-        returns (UpdateResponse);
-    rpc updateAircraftPosition(UpdateAircraftPositionRequest)
-        returns (UpdateResponse);
-    rpc updateAircraftVelocity(UpdateAircraftVelocityRequest)
-        returns (UpdateResponse);
     rpc bestPath(BestPathRequest) returns (BestPathResponse);
     // rpc nearestNeighbors(NearestNeighborRequest) returns (NearestNeighborResponse);
 }
@@ -86,119 +80,6 @@ message Waypoint {
     Coordinates location = 2;
 }
 
-// Aircraft Type
-enum AircraftType {
-    // Undeclared aircraft type
-    UNDECLARED = 0;
-
-    // Fixed Wing Aircraft
-    AEROPLANE = 1;
-
-    // Rotary Wing Aircraft
-    ROTORCRAFT = 2;
-
-    // Gyroplane
-    GYROPLANE = 3;
-
-    // Hybrid Lift
-    HYBRIDLIFT = 4;
-
-    // Ornithopter
-    ORNITHOPTER = 5;
-
-    // Glider
-    GLIDER = 6;
-
-    // Kite
-    KITE = 7;
-
-    // Free Balloon
-    FREEBALLOON = 8;
-
-    // Captive Balloon
-    CAPTIVEBALLOON = 9;
-
-    // Airship
-    AIRSHIP = 10;
-
-    // Unpowered aircraft (free fall or parachute)
-    UNPOWERED = 11;
-
-    // Rocket
-    ROCKET = 12;
-
-    // Tethered Powered Aircraft
-    TETHERED = 13;
-
-    // Ground Obstacle
-    GROUNDOBSTACLE = 14;
-
-    // Other
-    OTHER = 15;
-}
-
-// Aircraft Identification
-//  ADS-B issues an identification message separately from position
-//  at a different rate, indicating the type of aircraft.
-//  Remote ID uses basic ID
-message AircraftId {
-    // Aircraft Identifier
-    string identifier = 1;
-
-    // Aircraft Type
-    AircraftType aircraft_type = 2;
-
-    // Network Timestamp at Receipt
-    google.protobuf.Timestamp timestamp_network = 3;
-}
-
-// Aircraft Type
-message AircraftPosition {
-    // Aircraft Identifier
-    string identifier = 1;
-
-    // Aircraft Location
-    PointZ geom = 2;
-
-    // Telemetry Self-Report Time
-    google.protobuf.Timestamp timestamp_aircraft = 3;
-
-    // Network Timestamp at Receipt
-    google.protobuf.Timestamp timestamp_network = 4;
-}
-
-
-// Aircraft Identification
-//  ADS-B issues an identification message separately from position
-//  at a different rate, indicating the type of aircraft.
-//  Remote ID includes velocity in location messages
-message AircraftVelocity {
-    // Aircraft Identifier
-    string identifier = 1;
-
-    // Vertical Rate (meters/second)
-    float velocity_vertical_mps = 2;
-
-    // Horizontal Rate (Ground, meters/second)
-    // ADS-B and Remote ID Location message both report this
-    float velocity_horizontal_ground_mps = 3;
-
-    // Horizontal Rate (Air, meters/second)
-    // ADS-B may report this, Remote ID does not
-    optional float velocity_horizontal_air_mps = 4;
-
-    // Track Angle (degrees) from true North
-    float track_angle_degrees = 5;
-
-    // TODO(R5) - Uncertainty/Tolerance
-
-    // Telemetry Self-Report Time
-    google.protobuf.Timestamp timestamp_aircraft = 6;
-
-    // Network Timestamp at Receipt
-    google.protobuf.Timestamp timestamp_network = 7;
-}
-
 // Update Vertiports Request object
 message updateVertiportsRequest {
     // Nodes to update
@@ -249,25 +130,6 @@ message Zone {
 message UpdateZonesRequest {
     // Nodes to update
     repeated Zone zones = 1;
-}
-
-// Update Aircraft Request Object
-message UpdateAircraftIdRequest {
-    // List of aircraft to update
-    repeated AircraftId aircraft = 1;
-}
-
-// Update Aircraft Request Object
-message UpdateAircraftPositionRequest {
-
-    // List of aircraft to update
-    repeated AircraftPosition aircraft = 1;
-}
-
-// Update Aircraft Request Object
-message UpdateAircraftVelocityRequest {
-    // List of aircraft to update
-    repeated AircraftVelocity aircraft = 1;
 }
 
 // Best Path Request object

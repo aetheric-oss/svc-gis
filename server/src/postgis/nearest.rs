@@ -127,7 +127,6 @@ async fn nearest_neighbor_aircraft_source(
 #[cfg(not(tarpaulin_include))]
 pub async fn nearest_neighbors(
     request: NearestNeighborRequest,
-    pool: &deadpool_postgres::Pool,
 ) -> Result<Vec<DistanceTo>, NNError> {
     request.validate()?;
 
@@ -160,6 +159,15 @@ pub async fn nearest_neighbors(
             return Err(NNError::Unsupported);
         }
     };
+
+    let Some(pool) = crate::postgis::DEADPOOL_POSTGIS.get() else {
+            postgis_error!(
+                "(nearest_neighbors) could not get psql pool.",
+                e
+            );
+            
+            return Err(NNError::Client)
+        };
 
     let client = pool.get().await.map_err(|e| {
         postgis_error!(
@@ -234,7 +242,6 @@ pub async fn nearest_neighbors(
 mod tests {
     use super::*;
     use crate::grpc::server::grpc_server;
-    use crate::test_util::get_psql_pool;
 
     #[tokio::test]
     async fn ut_client_failure() {
@@ -246,7 +253,7 @@ mod tests {
             max_range_meters: 1000.0,
         };
 
-        let result = nearest_neighbors(request, get_psql_pool().await)
+        let result = nearest_neighbors(request)
             .await
             .unwrap_err();
         assert_eq!(result, NNError::Client);
@@ -262,7 +269,7 @@ mod tests {
             max_range_meters: 1000.0,
         };
 
-        let result = nearest_neighbors(request, get_psql_pool().await)
+        let result = nearest_neighbors(request)
             .await
             .unwrap_err();
         assert_eq!(result, NNError::InvalidStartNode);
@@ -278,7 +285,7 @@ mod tests {
             max_range_meters: 1000.0,
         };
 
-        let result = nearest_neighbors(request, get_psql_pool().await)
+        let result = nearest_neighbors(request)
             .await
             .unwrap_err();
         assert_eq!(result, NNError::InvalidStartNode);
@@ -294,7 +301,7 @@ mod tests {
             max_range_meters: 1000.0,
         };
 
-        let result = nearest_neighbors(request, get_psql_pool().await)
+        let result = nearest_neighbors(request)
             .await
             .unwrap_err();
         assert_eq!(result, NNError::Unsupported);
@@ -310,7 +317,7 @@ mod tests {
             max_range_meters: 1000.0,
         };
 
-        let result = nearest_neighbors(request, get_psql_pool().await)
+        let result = nearest_neighbors(request)
             .await
             .unwrap_err();
         assert_eq!(result, NNError::Unsupported);
@@ -326,7 +333,7 @@ mod tests {
             max_range_meters: 1000.0,
         };
 
-        let result = nearest_neighbors(request, get_psql_pool().await)
+        let result = nearest_neighbors(request)
             .await
             .unwrap_err();
         assert_eq!(result, NNError::InvalidLimit);
@@ -342,7 +349,7 @@ mod tests {
             max_range_meters: -1.0,
         };
 
-        let result = nearest_neighbors(request, get_psql_pool().await)
+        let result = nearest_neighbors(request)
             .await
             .unwrap_err();
         assert_eq!(result, NNError::InvalidRange);
@@ -358,7 +365,7 @@ mod tests {
             max_range_meters: 1000.0,
         };
 
-        let result = nearest_neighbors(request, get_psql_pool().await)
+        let result = nearest_neighbors(request)
             .await
             .unwrap_err();
         assert_eq!(result, NNError::Unsupported);
