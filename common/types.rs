@@ -2,13 +2,13 @@ use serde::{Deserialize, Serialize};
 use lib_common::time::{DateTime, Utc};
 
 /// The key for the Redis queue containing aircraft identification information
-pub const REDIS_KEY_AIRCRAFT_ID: &str = "aircraft_id";
+pub const REDIS_KEY_AIRCRAFT_ID: &str = "gis:aircraft:id";
 
 /// The key for the Redis queue containing aircraft position information
-pub const REDIS_KEY_AIRCRAFT_POSITION: &str = "aircraft_position";
+pub const REDIS_KEY_AIRCRAFT_POSITION: &str = "gis:aircraft:position";
 
 /// The key for the Redis queue containing aircraft velocity information
-pub const REDIS_KEY_AIRCRAFT_VELOCITY: &str = "aircraft_velocity";
+pub const REDIS_KEY_AIRCRAFT_VELOCITY: &str = "gis:aircraft:velocity";
 
 /// Aircraft Type
 #[derive(Serialize, Deserialize, Debug, Copy, Clone)]
@@ -92,7 +92,10 @@ pub struct AircraftPosition {
     pub position: Position,
 
     /// The network timestamp of the position
-    pub timestamp: DateTime<Utc>,
+    pub timestamp_network: DateTime<Utc>,
+
+    /// The timestamp reported by the asset
+    pub timestamp_asset: Option<DateTime<Utc>>,
 
     // TODO(R5): location uncertainty
 }
@@ -107,7 +110,10 @@ pub struct AircraftId {
     pub aircraft_type: AircraftType,
 
     /// The network timestamp of the identification
-    pub timestamp: DateTime<Utc>,
+    pub timestamp_network: DateTime<Utc>,
+
+    /// The timestamp reported by the asset
+    pub timestamp_asset: Option<DateTime<Utc>>,
 }
 
 /// Generic Velocity Information for an Aircraft
@@ -121,6 +127,9 @@ pub struct AircraftVelocity {
     ///  with respect to ground, its ground speed is 0 but its airspeed is 100 kph.
     pub velocity_horizontal_ground_mps: f32,
 
+    /// The velocity of the aircraft relative to the air in meters per second
+    pub velocity_horizontal_air_mps: Option<f32>,
+
     /// The vertical velocity of the aircraft in meters per second
     pub velocity_vertical_mps: f32,
 
@@ -128,7 +137,10 @@ pub struct AircraftVelocity {
     pub track_angle_degrees: f32,
 
     /// The network timestamp of the velocity
-    pub timestamp: DateTime<Utc>,
+    pub timestamp_network: DateTime<Utc>,
     
+    /// The timestamp reported by the asset
+    pub timestamp_asset: Option<DateTime<Utc>>
+
     // TODO(R5): velocity uncertainty
 }

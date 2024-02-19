@@ -78,6 +78,7 @@ pub async fn psql_init() -> Result<(), PostgisError> {
             identifier VARCHAR(20) UNIQUE PRIMARY KEY NOT NULL,
             aircraft_type {enum_name} NOT NULL DEFAULT '{}',
             velocity_horizontal_ground_mps FLOAT(4),
+            velocity_horizontal_air_mps FLOAT(4),
             velocity_vertical_mps FLOAT(4),
             track_angle_degrees FLOAT(4),
             geom GEOMETRY(POINTZ, 4326),
@@ -125,10 +126,10 @@ fn validate_identification(item: &AircraftId, now: &DateTime<Utc>) -> Result<(),
         return Err(PostgisError::Aircraft(AircraftError::Label));
     }
 
-    if item.timestamp > *now {
+    if item.timestamp_network > *now {
         postgis_error!(
-            "(validate_identification) could not validate timestamp (in future): {}",
-            item.timestamp
+            "(validate_identification) could not validate timestamp_network (in future): {}",
+            item.timestamp_network
         );
 
         return Err(PostgisError::Aircraft(AircraftError::Time));
@@ -200,7 +201,11 @@ pub async fn update_aircraft_id(aircraft: Vec<AircraftId>) -> Result<(), Postgis
         transaction
             .execute(
                 &stmt,
-                &[&craft.identifier, &craft.aircraft_type, &craft.timestamp],
+                &[
+                    &craft.identifier,
+                    &craft.aircraft_type,
+                    &craft.timestamp_network,
+                ],
             )
             .await
             .map_err(|e| {
@@ -250,10 +255,10 @@ fn validate_position(item: &AircraftPosition, now: &DateTime<Utc>) -> Result<(),
         return Err(PostgisError::Aircraft(AircraftError::Label));
     }
 
-    if item.timestamp > *now {
+    if item.timestamp_network > *now {
         postgis_error!(
-            "(validate_position) could not validate timestamp (in future): {}",
-            item.timestamp
+            "(validate_position) could not validate timestamp_network (in future): {}",
+            item.timestamp_network
         );
 
         return Err(PostgisError::Aircraft(AircraftError::Time));
@@ -332,7 +337,7 @@ pub async fn update_aircraft_position(aircraft: Vec<AircraftPosition>) -> Result
         };
 
         transaction
-            .execute(&stmt, &[&craft.identifier, &geom, &craft.timestamp])
+            .execute(&stmt, &[&craft.identifier, &geom, &craft.timestamp_network])
             .await
             .map_err(|e| {
                 postgis_error!(
@@ -370,10 +375,10 @@ fn validate_velocity(item: &AircraftVelocity, now: &DateTime<Utc>) -> Result<(),
         return Err(PostgisError::Aircraft(AircraftError::Label));
     }
 
-    if item.timestamp > *now {
+    if item.timestamp_network > *now {
         postgis_error!(
-            "(validate_velocity) could not validate timestamp (in future): {}",
-            item.timestamp
+            "(validate_velocity) could not validate timestamp_network (in future): {}",
+            item.timestamp_network
         );
 
         return Err(PostgisError::Aircraft(AircraftError::Time));
@@ -456,7 +461,7 @@ pub async fn update_aircraft_velocity(aircraft: Vec<AircraftVelocity>) -> Result
                     &craft.velocity_horizontal_ground_mps,
                     &craft.velocity_vertical_mps,
                     &craft.track_angle_degrees,
-                    &craft.timestamp,
+                    &craft.timestamp_network,
                 ],
             )
             .await
@@ -535,7 +540,8 @@ mod tests {
                     longitude: *longitude,
                     altitude_meters: 100.0,
                 },
-                timestamp: Utc::now(),
+                timestamp_network: Utc::now(),
+                timestamp_asset: None,
             })
             .collect();
 
@@ -564,21 +570,25 @@ mod tests {
                     longitude: 0.0,
                     altitude_meters: 100.0,
                 },
-                timestamp: Utc::now(),
+                timestamp_network: Utc::now(),
+                timestamp_asset: None,
             };
 
             let velocity = AircraftVelocity {
                 identifier: label.to_string(),
-                timestamp: Utc::now(),
+                timestamp_network: Utc::now(),
                 velocity_horizontal_ground_mps: 0.0,
+                velocity_horizontal_air_mps: None,
                 velocity_vertical_mps: 0.0,
                 track_angle_degrees: 0.0,
+                timestamp_asset: None,
             };
 
             let id = AircraftId {
                 identifier: label.to_string(),
-                timestamp: Utc::now(),
+                timestamp_network: Utc::now(),
                 aircraft_type: AircraftType::Rotorcraft,
+                timestamp_asset: None,
             };
 
             let result = validate_position(&position, &Utc::now()).unwrap_err();
@@ -608,7 +618,8 @@ mod tests {
                     altitude_meters: 100.0,
                 },
                 identifier: "Aircraft".to_string(),
-                timestamp: Utc::now(),
+                timestamp_network: Utc::now(),
+                timestamp_asset: None,
             };
 
             let result = validate_position(&aircraft, &Utc::now()).unwrap_err();
@@ -623,29 +634,33 @@ mod tests {
         crate::get_log_handle().await;
         ut_info!("(ut_aircraft_position_to_gis_invalid_time) start");
 
-        let timestamp = Utc::now() + Duration::days(1);
+        let timestamp_network = Utc::now() + Duration::days(1);
         let position = AircraftPosition {
-            timestamp,
+            timestamp_network,
             position: Position {
                 latitude: 0.0,
                 longitude: 0.0,
                 altitude_meters: 0.0,
             },
             identifier: "Aircraft".to_string(),
+            timestamp_asset: None,
         };
 
         let velocity = AircraftVelocity {
-            timestamp,
+            timestamp_network,
             identifier: "Aircraft".to_string(),
             velocity_horizontal_ground_mps: 0.0,
+            velocity_horizontal_air_mps: None,
             velocity_vertical_mps: 0.0,
             track_angle_degrees: 0.0,
+            timestamp_asset: None,
         };
 
         let id = AircraftId {
-            timestamp,
+            timestamp_network,
             identifier: "Aircraft".to_string(),
             aircraft_type: AircraftType::Rotorcraft,
+            timestamp_asset: None,
         };
 
         let result = validate_position(&position, &Utc::now()).unwrap_err();

@@ -134,7 +134,8 @@ async fn add_aircraft(connection: &mut redis::Connection) -> Result<(), ()> {
                     longitude: *longitude,
                     altitude_meters: *altitude_meters,
                 },
-                timestamp: Utc::now(),
+                timestamp_network: Utc::now(),
+                timestamp_asset: None,
             },
         )
         .collect();
@@ -150,48 +151,6 @@ async fn add_aircraft(connection: &mut redis::Connection) -> Result<(), ()> {
     pipe.query::<()>(connection).unwrap();
 
     Ok(())
-
-    // let response = client
-    //     .update_aircraft_position(UpdateAircraftPositionRequest { aircraft })
-    //     .await?;
-
-    // println!("RESPONSE={:?}", response.into_inner());
-
-    // let aircraft = sample
-    //     .iter()
-    //     .map(|(identifier, _, _, _)| AircraftId {
-    //         identifier: identifier.to_string(),
-    //         aircraft_type: AircraftType::Rotorcraft as i32,
-    //         timestamp_network: Some(Utc::now().into()),
-    //     })
-    //     .collect::<Vec<AircraftId>>();
-
-    // let response = client
-    //     .update_aircraft_id(UpdateAircraftIdRequest { aircraft })
-    //     .await?;
-
-    // println!("RESPONSE={:?}", response.into_inner());
-
-    // let aircraft = sample
-    //     .iter()
-    //     .map(|(identifier, _, _, _)| AircraftVelocity {
-    //         identifier: identifier.to_string(),
-    //         velocity_horizontal_air_mps: None,
-    //         velocity_horizontal_ground_mps: 100.0,
-    //         velocity_vertical_mps: 10.0,
-    //         track_angle_degrees: 10.0,
-    //         timestamp_network: Some(Utc::now().into()),
-    //         timestamp_aircraft: None,
-    //     })
-    //     .collect();
-
-    // let response = client
-    //     .update_aircraft_velocity(UpdateAircraftVelocityRequest { aircraft })
-    //     .await?;
-
-    // println!("RESPONSE={:?}", response.into_inner());
-
-    // Ok(())
 }
 
 fn display_paths(paths: &[Path]) {
@@ -233,171 +192,171 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     add_aircraft(&mut connection).await.unwrap();
-    // add_vertiports(&client).await?;
-    // add_waypoints(&client).await?;
+    add_vertiports(&client).await?;
+    add_waypoints(&client).await?;
 
-    // // Best Path Without No-Fly Zone
-    // {
-    //     println!("\n\u{1F426} Best Path WITHOUT Temporary No-Fly Zone");
-    //     let time_start: Timestamp = Utc::now().into();
-    //     let time_end: Timestamp = (Utc::now() + Duration::hours(2)).into();
-    //     let request = BestPathRequest {
-    //         origin_identifier: VERTIPORT_1_ID.to_string(),
-    //         target_identifier: VERTIPORT_2_ID.to_string(),
-    //         origin_type: NodeType::Vertiport as i32,
-    //         target_type: NodeType::Vertiport as i32,
-    //         time_start: Some(time_start),
-    //         time_end: Some(time_end),
-    //         limit: 1,
-    //     };
+    // Best Path Without No-Fly Zone
+    {
+        println!("\n\u{1F426} Best Path WITHOUT Temporary No-Fly Zone");
+        let time_start: Timestamp = Utc::now().into();
+        let time_end: Timestamp = (Utc::now() + Duration::hours(2)).into();
+        let request = BestPathRequest {
+            origin_identifier: VERTIPORT_1_ID.to_string(),
+            target_identifier: VERTIPORT_2_ID.to_string(),
+            origin_type: NodeType::Vertiport as i32,
+            target_type: NodeType::Vertiport as i32,
+            time_start: Some(time_start),
+            time_end: Some(time_end),
+            limit: 1,
+        };
 
-    //     let response = client.best_path(request).await?.into_inner();
+        let response = client.best_path(request).await?.into_inner();
 
-    //     println!("RESPONSE={:?}", response);
-    //     display_paths(&response.paths);
-    // }
+        println!("RESPONSE={:?}", response);
+        display_paths(&response.paths);
+    }
 
-    // let no_fly_start_time = Utc::now();
-    // let no_fly_end_time = Utc::now() + Duration::hours(2);
+    let no_fly_start_time = Utc::now();
+    let no_fly_end_time = Utc::now() + Duration::hours(2);
 
-    // // Update No-Fly Zones
-    // {
-    //     println!("\n\u{26D4} Add No-Fly Zones");
-    //     let mut zones: Vec<Zone> = vec![];
+    // Update No-Fly Zones
+    {
+        println!("\n\u{26D4} Add No-Fly Zones");
+        let mut zones: Vec<Zone> = vec![];
 
-    //     // No Fly 1
-    //     let vertices: Vec<(f64, f64)> = vec![
-    //         (52.3751734, 4.9158481),
-    //         (52.3750752, 4.9157998),
-    //         (52.3749409, 4.9164569),
-    //         (52.3751047, 4.9164999),
-    //         (52.3751734, 4.9158481),
-    //     ];
+        // No Fly 1
+        let vertices: Vec<(f64, f64)> = vec![
+            (52.3751734, 4.9158481),
+            (52.3750752, 4.9157998),
+            (52.3749409, 4.9164569),
+            (52.3751047, 4.9164999),
+            (52.3751734, 4.9158481),
+        ];
 
-    //     let vertices: Vec<Coordinates> = vertices
-    //         .iter()
-    //         .map(|(x, y)| Coordinates {
-    //             latitude: *x,
-    //             longitude: *y,
-    //         })
-    //         .collect();
+        let vertices: Vec<Coordinates> = vertices
+            .iter()
+            .map(|(x, y)| Coordinates {
+                latitude: *x,
+                longitude: *y,
+            })
+            .collect();
 
-    //     let time_start: Timestamp = no_fly_start_time.into();
-    //     let time_end: Timestamp = no_fly_end_time.into();
-    //     zones.push(Zone {
-    //         identifier: "NL-NFZ-01".to_string(),
-    //         zone_type: ZoneType::Restriction as i32,
-    //         altitude_meters_max: 1000.0,
-    //         altitude_meters_min: 0.0,
-    //         vertices,
-    //         time_start: Some(time_start),
-    //         time_end: Some(time_end),
-    //     });
+        let time_start: Timestamp = no_fly_start_time.into();
+        let time_end: Timestamp = no_fly_end_time.into();
+        zones.push(Zone {
+            identifier: "NL-NFZ-01".to_string(),
+            zone_type: ZoneType::Restriction as i32,
+            altitude_meters_max: 1000.0,
+            altitude_meters_min: 0.0,
+            vertices,
+            time_start: Some(time_start),
+            time_end: Some(time_end),
+        });
 
-    //     // No Fly 2
-    //     let vertices = vec![
-    //         (52.3743089, 4.9159741),
-    //         (52.3749147, 4.9169827),
-    //         (52.3751309, 4.9165696),
-    //         (52.3755009, 4.9166715),
-    //         (52.3751309, 4.9191499),
-    //         (52.3730774, 4.9166822),
-    //         (52.3732215, 4.9143541),
-    //         (52.3749769, 4.9132517),
-    //         (52.3758464, 4.9145097),
-    //         (52.3757465, 4.9152178),
-    //         (52.3751456, 4.9149576),
-    //         (52.3748934, 4.9155074),
-    //         (52.3743089, 4.9159741),
-    //     ];
+        // No Fly 2
+        let vertices = vec![
+            (52.3743089, 4.9159741),
+            (52.3749147, 4.9169827),
+            (52.3751309, 4.9165696),
+            (52.3755009, 4.9166715),
+            (52.3751309, 4.9191499),
+            (52.3730774, 4.9166822),
+            (52.3732215, 4.9143541),
+            (52.3749769, 4.9132517),
+            (52.3758464, 4.9145097),
+            (52.3757465, 4.9152178),
+            (52.3751456, 4.9149576),
+            (52.3748934, 4.9155074),
+            (52.3743089, 4.9159741),
+        ];
 
-    //     let vertices: Vec<Coordinates> = vertices
-    //         .iter()
-    //         .map(|(x, y)| Coordinates {
-    //             latitude: *x,
-    //             longitude: *y,
-    //         })
-    //         .collect();
+        let vertices: Vec<Coordinates> = vertices
+            .iter()
+            .map(|(x, y)| Coordinates {
+                latitude: *x,
+                longitude: *y,
+            })
+            .collect();
 
-    //     zones.push(Zone {
-    //         identifier: "NL-NFZ-02".to_string(),
-    //         zone_type: ZoneType::Restriction as i32,
-    //         altitude_meters_max: 1000.0,
-    //         altitude_meters_min: 0.0,
-    //         vertices,
-    //         time_start: None,
-    //         time_end: None,
-    //     });
+        zones.push(Zone {
+            identifier: "NL-NFZ-02".to_string(),
+            zone_type: ZoneType::Restriction as i32,
+            altitude_meters_max: 1000.0,
+            altitude_meters_min: 0.0,
+            vertices,
+            time_start: None,
+            time_end: None,
+        });
 
-    //     let response = client.update_zones(UpdateZonesRequest { zones }).await?;
+        let response = client.update_zones(UpdateZonesRequest { zones }).await?;
 
-    //     println!("RESPONSE={:?}", response.into_inner());
-    // }
+        println!("RESPONSE={:?}", response.into_inner());
+    }
 
-    // // Best Path During Temporary No-Fly Zone
-    // {
-    //     println!("\n\u{26D4}\u{1F681} Best Path DURING Temporary No-Fly Zone");
-    //     let time_start: Timestamp = no_fly_start_time.into();
-    //     let time_end: Timestamp = (no_fly_start_time + Duration::hours(1)).into();
-    //     let request = BestPathRequest {
-    //         origin_identifier: VERTIPORT_1_ID.to_string(),
-    //         target_identifier: VERTIPORT_2_ID.to_string(),
-    //         origin_type: NodeType::Vertiport as i32,
-    //         target_type: NodeType::Vertiport as i32,
-    //         time_start: Some(time_start),
-    //         time_end: Some(time_end),
-    //         limit: 1,
-    //     };
+    // Best Path During Temporary No-Fly Zone
+    {
+        println!("\n\u{26D4}\u{1F681} Best Path DURING Temporary No-Fly Zone");
+        let time_start: Timestamp = no_fly_start_time.into();
+        let time_end: Timestamp = (no_fly_start_time + Duration::hours(1)).into();
+        let request = BestPathRequest {
+            origin_identifier: VERTIPORT_1_ID.to_string(),
+            target_identifier: VERTIPORT_2_ID.to_string(),
+            origin_type: NodeType::Vertiport as i32,
+            target_type: NodeType::Vertiport as i32,
+            time_start: Some(time_start),
+            time_end: Some(time_end),
+            limit: 1,
+        };
 
-    //     let response = client.best_path(request).await?.into_inner();
+        let response = client.best_path(request).await?.into_inner();
 
-    //     println!("RESPONSE={:?}", response);
-    //     display_paths(&response.paths);
-    // }
+        println!("RESPONSE={:?}", response);
+        display_paths(&response.paths);
+    }
 
-    // // Best Path After Temporary No-Fly Zone
-    // {
-    //     println!("\n\u{1F681} Best Path AFTER Temporary No-Fly Zone Expires");
-    //     let time_start: Timestamp = (no_fly_end_time + Duration::seconds(1)).into();
-    //     let time_end: Timestamp = (no_fly_end_time + Duration::hours(1)).into();
-    //     let request = BestPathRequest {
-    //         origin_identifier: VERTIPORT_1_ID.to_string(),
-    //         target_identifier: VERTIPORT_2_ID.to_string(),
-    //         origin_type: NodeType::Vertiport as i32,
-    //         target_type: NodeType::Vertiport as i32,
-    //         time_start: Some(time_start),
-    //         time_end: Some(time_end),
-    //         limit: 1,
-    //     };
+    // Best Path After Temporary No-Fly Zone
+    {
+        println!("\n\u{1F681} Best Path AFTER Temporary No-Fly Zone Expires");
+        let time_start: Timestamp = (no_fly_end_time + Duration::seconds(1)).into();
+        let time_end: Timestamp = (no_fly_end_time + Duration::hours(1)).into();
+        let request = BestPathRequest {
+            origin_identifier: VERTIPORT_1_ID.to_string(),
+            target_identifier: VERTIPORT_2_ID.to_string(),
+            origin_type: NodeType::Vertiport as i32,
+            target_type: NodeType::Vertiport as i32,
+            time_start: Some(time_start),
+            time_end: Some(time_end),
+            limit: 1,
+        };
 
-    //     let response = client.best_path(request).await?.into_inner();
+        let response = client.best_path(request).await?.into_inner();
 
-    //     println!("RESPONSE={:?}", response);
-    //     display_paths(&response.paths);
-    // }
+        println!("RESPONSE={:?}", response);
+        display_paths(&response.paths);
+    }
 
-    // // Best Path From Aircraft
-    // {
-    //     println!("\n\u{1F681} Best Path From Aircraft during TFR");
-    //     let time_start: Timestamp = no_fly_start_time.into();
-    //     let time_end: Timestamp = (no_fly_start_time + Duration::hours(1)).into();
-    //     let request = BestPathRequest {
-    //         origin_identifier: AIRCRAFT_1_ID.to_string(),
-    //         target_identifier: VERTIPORT_2_ID.to_string(),
-    //         origin_type: NodeType::Aircraft as i32,
-    //         target_type: NodeType::Vertiport as i32,
-    //         time_start: Some(time_start),
-    //         time_end: Some(time_end),
-    //         limit: 5,
-    //     };
+    // Best Path From Aircraft
+    {
+        println!("\n\u{1F681} Best Path From Aircraft during TFR");
+        let time_start: Timestamp = no_fly_start_time.into();
+        let time_end: Timestamp = (no_fly_start_time + Duration::hours(1)).into();
+        let request = BestPathRequest {
+            origin_identifier: AIRCRAFT_1_ID.to_string(),
+            target_identifier: VERTIPORT_2_ID.to_string(),
+            origin_type: NodeType::Aircraft as i32,
+            target_type: NodeType::Vertiport as i32,
+            time_start: Some(time_start),
+            time_end: Some(time_end),
+            limit: 5,
+        };
 
-    //     let response = client.best_path(request).await?.into_inner();
+        let response = client.best_path(request).await?.into_inner();
 
-    //     println!("RESPONSE={:?}", response);
-    //     display_paths(&response.paths);
-    // }
+        println!("RESPONSE={:?}", response);
+        display_paths(&response.paths);
+    }
 
-    // Nearest Neighbor to Vertiport
+    // // Nearest Neighbor to Vertiport
     // {
     //     println!("\n\u{1F3E0} Nearest Vertiport Neighbors to Vertiport");
     //     let request = NearestNeighborRequest {
