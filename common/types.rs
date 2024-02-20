@@ -10,6 +10,9 @@ pub const REDIS_KEY_AIRCRAFT_POSITION: &str = "gis:aircraft:position";
 /// The key for the Redis queue containing aircraft velocity information
 pub const REDIS_KEY_AIRCRAFT_VELOCITY: &str = "gis:aircraft:velocity";
 
+/// The key for the Redis queue containing flight path information
+pub const REDIS_KEY_FLIGHT_PATH: &str = "gis:flight";
+
 /// Aircraft Type
 #[derive(Serialize, Deserialize, Debug, Copy, Clone)]
 #[derive(strum::EnumString)]
@@ -163,9 +166,9 @@ pub struct FlightPath {
     /// The path of the aircraft
     pub path: Vec<Position>,
 
-    /// The network timestamp of the flight path
+    /// The planned start time of the flight
     pub timestamp_start: DateTime<Utc>,
 
-    /// The network timestamp of the flight path
-    pub timestamp_end: Option<DateTime<Utc>>,
+    /// The planned end time of the flight
+    pub timestamp_end: DateTime<Utc>,
 }

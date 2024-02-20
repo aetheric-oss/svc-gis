@@ -13,9 +13,9 @@ const AIRCRAFT_1_ID: &str = "00000000-0000-0000-0000-000000000002";
 #[tokio::test]
 async fn test_add_aircraft() -> Result<(), ()> {
     let (server_host, server_port) = get_endpoint_from_env("GRPC_HOST", "GRPC_PORT");
-    let client = GisClient::new_client(&server_host, server_port, "compliance");
+    let _client = GisClient::new_client(&server_host, server_port, "compliance");
 
-    let sample: Vec<(&str, f64, f64, f32)> = vec![
+    let _sample: Vec<(&str, f64, f64, f32)> = vec![
         (AIRCRAFT_1_ID, 52.3746, 4.9160036, 100.0),
         ("Mantis", 52.3749819, 4.9157, 120.0),
         ("Ghost", 52.37523, 4.9153733, 30.0),

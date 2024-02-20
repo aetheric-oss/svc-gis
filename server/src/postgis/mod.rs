@@ -114,23 +114,23 @@ pub async fn psql_transaction(statements: Vec<String>) -> Result<(), PostgisErro
 
     let mut client = pool.get().await.map_err(|e| {
         postgis_error!(
-            "(psql_init) could not get client from psql connection pool: {}",
+            "(psql_transaction) could not get client from psql connection pool: {}",
             e
         );
         PostgisError::Psql(PsqlError::Client)
     })?;
 
     let transaction = client.transaction().await.map_err(|e| {
-        postgis_error!("(psql_init) could not create transaction: {}", e);
+        postgis_error!("(psql_transaction) could not create transaction: {}", e);
         PostgisError::Psql(PsqlError::Connection)
     })?;
 
     for stmt in statements.into_iter() {
         if let Err(e) = transaction.execute(&stmt, &[]).await {
-            postgis_error!("(psql_init) Failed to execute statement '{stmt}': {e}");
+            postgis_error!("(psql_transaction) Failed to execute statement '{stmt}': {e}");
 
             transaction.rollback().await.map_err(|e| {
-                postgis_error!("(psql_init) Failed to rollback transaction: {}", e);
+                postgis_error!("(psql_transaction) Failed to rollback transaction: {}", e);
                 PostgisError::Psql(PsqlError::Rollback)
             })?;
 
@@ -139,7 +139,7 @@ pub async fn psql_transaction(statements: Vec<String>) -> Result<(), PostgisErro
     }
 
     transaction.commit().await.map_err(|e| {
-        postgis_error!("(psql_init) Failed to commit transaction: {}", e);
+        postgis_error!("(psql_transaction) Failed to commit transaction: {}", e);
         PostgisError::Psql(PsqlError::Commit)
     })?;
 
@@ -176,6 +176,13 @@ pub async fn psql_init() -> Result<(), Box<dyn std::error::Error>> {
     aircraft::psql_init().await?;
     waypoint::psql_init().await?;
     flight::psql_init().await?;
+
+    Ok(())
+}
+
+/// Performs maintenance tasks (removing old records, etc.) on the PostgreSQL database
+pub async fn psql_maintenance() -> Result<(), Box<dyn std::error::Error>> {
+    flight::psql_maintenance().await?;
 
     Ok(())
 }

@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use postgis::ewkb::PointZ;
 use tonic::async_trait;
 
-use crate::types::{AircraftId, AircraftPosition, AircraftType, AircraftVelocity};
+use crate::types::{AircraftId, AircraftPosition, AircraftType, AircraftVelocity, Position};
 
 /// Allowed characters in a identifier
 pub const IDENTIFIER_REGEX: &str = r"^[\-0-9A-Za-z_\.]{1,255}$";

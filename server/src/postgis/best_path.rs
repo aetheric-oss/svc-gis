@@ -269,6 +269,11 @@ async fn mod_a_star(
 ) -> Result<Vec<Path>, PostgisError> {
     postgis_info!("(mod_a_star) entry.");
 
+    // TODO(R5): This is dependent on the aircraft type
+    //  Small drones can come closer to one another than large drones
+    //  or rideshare vehicles
+    let allowable_distance_m = 10.0;
+
     // Using a binary heap to store potential paths
     //  means potentials are sorted on insert with O(log n)
     //  worst case time complexity
@@ -327,6 +332,7 @@ async fn mod_a_star(
     //  For now all zones are considered no-fly zones
     //  So limit query to one result
     let zone_stmt = crate::postgis::zone::get_zone_intersection_stmt(&client).await?;
+    let flights_stmt = crate::postgis::flight::get_flight_intersection_stmt(&client).await?;
 
     // Run until we have 'limit' paths or we run out of potentials
     while completed.len() < limit && !potentials.is_empty() {
@@ -395,10 +401,29 @@ async fn mod_a_star(
 
             // If there are any zone intersection results, this path is invalid
             if !result.is_empty() {
+                postgis_debug!("(mod_a_star) flight path intersects with no-fly zones");
                 continue;
             }
 
-            // TODO(R4): Check if this conflicts with other flights' segments
+            // Check if this conflicts with other flights' segments
+            let Ok(result) = client
+                .query(
+                    &flights_stmt,
+                    &[&linestring, &allowable_distance_m, &time_start, &time_end],
+                )
+                .await
+            else {
+                postgis_error!(
+                    "(mod_a_star) could not query for existing flight paths intersection"
+                );
+                return Err(PostgisError::BestPath(PathError::DBError));
+            };
+
+            // If any intersections found, reject this
+            if !result.is_empty() {
+                postgis_debug!("(mod_a_star) flight path intersects with existing flight paths");
+                continue;
+            }
 
             // Valid routes are pushed
             completed.push(tmp)

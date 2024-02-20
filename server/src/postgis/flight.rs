@@ -2,8 +2,12 @@
 
 use super::psql_transaction;
 use super::PostgisError;
+use crate::cache::{Consumer, Processor};
 use crate::postgis::utils::StringError;
+use chrono::{Duration, Utc};
+use deadpool_postgres::Object;
 use postgis::ewkb::PointZ;
+use tonic::async_trait;
 
 use crate::types::{AircraftType, FlightPath};
 
@@ -63,7 +67,7 @@ pub async fn psql_init() -> Result<(), PostgisError> {
                 aircraft_identifier VARCHAR(20) NOT NULL,
                 aircraft_type {enum_name} NOT NULL DEFAULT '{}',
                 simulated BOOLEAN NOT NULL DEFAULT FALSE,
-                path GEOMETRY(LINESTRINGZ, 4326),
+                geom GEOMETRY(LINESTRINGZ, 4326),
                 isa GEOMETRY NOT NULL,
                 start TIMESTAMPTZ,
                 end TIMESTAMPTZ,
@@ -73,6 +77,73 @@ pub async fn psql_init() -> Result<(), PostgisError> {
     ];
 
     psql_transaction(statements).await
+}
+
+/// Starts a thread that will remove old flights from the PostGIS flights table
+pub async fn psql_maintenance() -> Result<(), PostgisError> {
+    postgis_info!("(flight::psql_maintenance) start.");
+    let Some(pool) = crate::postgis::DEADPOOL_POSTGIS.get() else {
+        postgis_error!("(psql_maintenance) could not get psql pool.");
+        return Err(PostgisError::FlightPath(FlightPathError::Client));
+    };
+
+    // TODO(R5): These should be config settings
+    const DURATION_H: i64 = 6;
+    const FREQUENCY_S: u64 = 60;
+
+    let table_name = format!("{}.flights", super::PSQL_SCHEMA);
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_secs(FREQUENCY_S)).await;
+            postgis_debug!("(flight::psql_maintenance) running scheduled maintenance.");
+
+            let client = match pool.get().await {
+                Err(e) => {
+                    postgis_error!(
+                        "(flight::psql_maintenance) could not get client from psql connection pool: {}",
+                        e
+                    );
+
+                    continue;
+                }
+                Ok(client) => client,
+            };
+
+            // Remove flights from postgis that are older than N hours
+            let stmt = format!("DELETE FROM {table_name} WHERE end < $1;",);
+
+            let result = match client
+                .query(&stmt, &[&(Utc::now() - Duration::hours(DURATION_H))])
+                .await
+            {
+                Err(e) => {
+                    postgis_error!(
+                        "(flight::psql_maintenance) could not execute simple query: {}",
+                        e
+                    );
+
+                    continue;
+                }
+                Ok(result) => result,
+            };
+
+            postgis_debug!(
+                "(flight::psql_maintenance) removed {} flights older than {} hours.",
+                result.len(),
+                DURATION_H
+            );
+        }
+    });
+
+    postgis_info!("(flight::psql_maintenance) successfully launched thread.");
+    Ok(())
+}
+
+#[async_trait]
+impl Processor<FlightPath> for Consumer {
+    async fn process(&mut self, items: Vec<FlightPath>) -> Result<(), ()> {
+        update_flight_path(items).await.map_err(|_| ())
+    }
 }
 
 /// Validates the provided aircraft identification.
@@ -126,18 +197,18 @@ pub async fn update_flight_path(flights: Vec<FlightPath>) -> Result<(), PostgisE
             aircraft_identifier,
             aircraft_type,
             simulated,
-            path,
-            isa,
             start,
-            end
+            end,
+            geom,
+            isa,
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, ST_Envelope($7))
         ON CONFLICT (flight_identifier) DO UPDATE
             SET aircraft_identifier = EXCLUDED.aircraft_identifier,
                 aircraft_type = EXCLUDED.aircraft_type,
                 simulated = EXCLUDED.simulated,
-                path = EXCLUDED.path,
-                isa = EXCLUDED.isa,
+                geom = EXCLUDED.geom,
+                isa = ST_Envelope(EXCLUDED.geom),
                 start = EXCLUDED.start,
                 end = EXCLUDED.end
         ",
@@ -172,7 +243,6 @@ pub async fn update_flight_path(flights: Vec<FlightPath>) -> Result<(), PostgisE
             .collect::<Result<Vec<PointZ>, _>>()
             .map_err(|_| {
                 postgis_error!("(update_flight_path) could not convert path to Vec<PointZ>.");
-
                 PostgisError::FlightPath(FlightPathError::Location)
             })?;
 
@@ -180,10 +250,6 @@ pub async fn update_flight_path(flights: Vec<FlightPath>) -> Result<(), PostgisE
             points,
             srid: Some(4326),
         };
-
-        // Draw bounding box around flight for ISA
-        // let isa = postgis::ewkb::Geometry::from(flight.isa.clone());
-        let isa: i32 = 1;
 
         transaction
             .execute(
@@ -193,10 +259,9 @@ pub async fn update_flight_path(flights: Vec<FlightPath>) -> Result<(), PostgisE
                     &flight.aircraft_identifier,
                     &flight.aircraft_type,
                     &flight.simulated,
-                    &path,
-                    &isa,
                     &flight.timestamp_start,
                     &flight.timestamp_end,
+                    &path,
                 ],
             )
             .await
@@ -218,32 +283,61 @@ pub async fn update_flight_path(flights: Vec<FlightPath>) -> Result<(), PostgisE
     }
 }
 
+/// Prepares a statement that checks zone intersections with the provided geometry
+pub async fn get_flight_intersection_stmt(
+    client: &Object,
+) -> Result<tokio_postgres::Statement, PostgisError> {
+    let table_name = format!("{}.flights", super::PSQL_SCHEMA);
+    let result = client
+        .prepare_cached(&format!(
+            "
+            SELECT (
+                flight_identifier,
+                aircraft_identifier,
+                geom
+            )
+            FROM {table_name}
+            WHERE
+                ST_DWithin(geom, $1::GEOMETRY, $2)
+                AND (time_start <= $4 OR time_start IS NULL)
+                AND (time_end >= $3 OR time_end IS NULL)
+            LIMIT 1;
+        ",
+        ))
+        .await;
+
+    match result {
+        Ok(stmt) => Ok(stmt),
+        Err(e) => {
+            postgis_error!(
+                "(get_flight_intersection_stmt) could not prepare cached statement: {}",
+                e
+            );
+            Err(PostgisError::FlightPath(FlightPathError::DBError))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Duration;
 
     #[tokio::test]
     async fn ut_client_failure() {
         crate::get_log_handle().await;
         ut_info!("(ut_client_failure) start");
 
-        let nodes = vec![("aircraft", 52.3745905, 4.9160036)];
-        let aircraft: Vec<AircraftPosition> = nodes
-            .iter()
-            .map(|(label, latitude, longitude)| AircraftPosition {
-                identifier: label.to_string(),
-                position: Position {
-                    latitude: *latitude,
-                    longitude: *longitude,
-                    altitude_meters: 100.0,
-                },
-                timestamp_network: Utc::now(),
-                timestamp_asset: None,
-            })
-            .collect();
+        let item = FlightPath {
+            flight_identifier: "test".to_string(),
+            aircraft_identifier: "test".to_string(),
+            aircraft_type: AircraftType::Aeroplane,
+            simulated: false,
+            timestamp_start: Utc::now(),
+            timestamp_end: Utc::now() + Duration::hours(1),
+            path: vec![],
+        };
 
-        let result = update_aircraft_position(aircraft).await.unwrap_err();
+        let result = update_flight_path(vec![item]).await.unwrap_err();
         assert_eq!(result, PostgisError::FlightPath(FlightPathError::Client));
 
         ut_info!("(ut_client_failure) success");
