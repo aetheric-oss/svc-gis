@@ -1,6 +1,7 @@
 //! Common functions for PostGIS operations
 
 use crate::grpc::server::grpc_server::Coordinates;
+use crate::types::Position;
 use geo::algorithm::haversine_distance::HaversineDistance;
 use geo::point;
 use postgis::ewkb::PointZ;
@@ -110,6 +111,19 @@ pub fn validate_pointz(point: &PointZ) -> Result<(), PolygonError> {
     }
 
     Ok(())
+}
+
+impl TryFrom<Position> for PointZ {
+    type Error = ();
+
+    fn try_from(position: Position) -> Result<Self, Self::Error> {
+        Ok(PointZ::new(
+            position.longitude,
+            position.latitude,
+            position.altitude_meters,
+            Some(4326),
+        ))
+    }
 }
 
 /// Generate a PostGIS Polygon from a list of vertices

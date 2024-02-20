@@ -144,3 +144,28 @@ pub struct AircraftVelocity {
 
     // TODO(R5): velocity uncertainty
 }
+
+/// A flight path is a series of positions and times that an aircraft will follow
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct FlightPath {
+    /// The unique identifier for the flight
+    pub flight_identifier: String,
+
+    /// The unique identifier for the aircraft
+    pub aircraft_identifier: String,
+
+    /// If this is a simulated flight
+    pub simulated: bool,
+
+    /// The type of aircraft
+    pub aircraft_type: AircraftType,
+
+    /// The path of the aircraft
+    pub path: Vec<Position>,
+
+    /// The network timestamp of the flight path
+    pub timestamp_start: DateTime<Utc>,
+
+    /// The network timestamp of the flight path
+    pub timestamp_end: Option<DateTime<Utc>>,
+}

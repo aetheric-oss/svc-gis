@@ -7,6 +7,7 @@ pub mod macros;
 // pub mod nearest;
 pub mod aircraft;
 pub mod best_path;
+pub mod flight;
 pub mod pool;
 pub mod utils;
 pub mod vertiport;
@@ -17,6 +18,9 @@ pub use once_cell::sync::OnceCell;
 
 /// Global pool for PostgreSQL connections
 pub static DEADPOOL_POSTGIS: OnceCell<deadpool_postgres::Pool> = OnceCell::new();
+
+/// PostgreSQL schema for all tables
+pub const PSQL_SCHEMA: &str = "arrow";
 
 /// Error type for postgis actions
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -38,6 +42,9 @@ pub enum PostgisError {
 
     /// BestPath Error
     BestPath(best_path::PathError),
+
+    /// FlightPath Error
+    FlightPath(flight::FlightPathError),
 }
 
 impl std::error::Error for PostgisError {
@@ -55,6 +62,7 @@ impl std::fmt::Display for PostgisError {
             PostgisError::Waypoint(e) => write!(f, "Waypoint Error: {}", e),
             PostgisError::Zone(e) => write!(f, "Zone Error: {}", e),
             PostgisError::BestPath(e) => write!(f, "BestPath Error: {}", e),
+            PostgisError::FlightPath(e) => write!(f, "FlightPath Error: {}", e),
         }
     }
 }
@@ -167,6 +175,7 @@ pub async fn psql_init() -> Result<(), Box<dyn std::error::Error>> {
     vertiport::psql_init().await?;
     aircraft::psql_init().await?;
     waypoint::psql_init().await?;
+    flight::psql_init().await?;
 
     Ok(())
 }

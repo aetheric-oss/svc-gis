@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use postgis::ewkb::PointZ;
 use tonic::async_trait;
 
-use crate::types::{AircraftId, AircraftPosition, AircraftType, AircraftVelocity, Position};
+use crate::types::{AircraftId, AircraftPosition, AircraftType, AircraftVelocity};
 
 /// Allowed characters in a identifier
 pub const IDENTIFIER_REGEX: &str = r"^[\-0-9A-Za-z_\.]{1,255}$";
@@ -48,19 +48,6 @@ impl std::fmt::Display for AircraftError {
     }
 }
 
-impl TryFrom<Position> for PointZ {
-    type Error = ();
-
-    fn try_from(position: Position) -> Result<Self, Self::Error> {
-        Ok(PointZ::new(
-            position.longitude,
-            position.latitude,
-            position.altitude_meters,
-            Some(4326),
-        ))
-    }
-}
-
 /// Verifies that a identifier is valid
 pub fn check_identifier(identifier: &str) -> Result<(), StringError> {
     super::utils::check_string(identifier, IDENTIFIER_REGEX)
@@ -69,23 +56,23 @@ pub fn check_identifier(identifier: &str) -> Result<(), StringError> {
 /// Initializes the PostGIS database for aircraft.
 pub async fn psql_init() -> Result<(), PostgisError> {
     // Create Aircraft Table
-    let table_name = "arrow.aircraft";
+    let table_name = format!("{}.aircraft", super::PSQL_SCHEMA);
     let enum_name = "aircrafttype";
     let statements = vec![
         super::psql_enum_declaration::<AircraftType>(enum_name),
         format!(
             "CREATE TABLE IF NOT EXISTS {table_name} (
-            identifier VARCHAR(20) UNIQUE PRIMARY KEY NOT NULL,
-            aircraft_type {enum_name} NOT NULL DEFAULT '{}',
-            velocity_horizontal_ground_mps FLOAT(4),
-            velocity_horizontal_air_mps FLOAT(4),
-            velocity_vertical_mps FLOAT(4),
-            track_angle_degrees FLOAT(4),
-            geom GEOMETRY(POINTZ, 4326),
-            last_identifier_update TIMESTAMPTZ,
-            last_position_update TIMESTAMPTZ,
-            last_velocity_update TIMESTAMPTZ
-        );",
+                identifier VARCHAR(20) UNIQUE PRIMARY KEY NOT NULL,
+                aircraft_type {enum_name} NOT NULL DEFAULT '{}',
+                velocity_horizontal_ground_mps FLOAT(4),
+                velocity_horizontal_air_mps FLOAT(4),
+                velocity_vertical_mps FLOAT(4),
+                track_angle_degrees FLOAT(4),
+                geom GEOMETRY(POINTZ, 4326),
+                last_identifier_update TIMESTAMPTZ,
+                last_position_update TIMESTAMPTZ,
+                last_velocity_update TIMESTAMPTZ
+            );",
             AircraftType::Undeclared.to_string()
         ),
     ];
@@ -138,7 +125,7 @@ fn validate_identification(item: &AircraftId, now: &DateTime<Utc>) -> Result<(),
     Ok(())
 }
 
-/// Pulls queued aircraft id messages from Reliable Redis Queue
+/// Pulls queued aircraft id messages from Redis Queue
 /// Updates aircraft in the PostGIS database.
 /// Confirms with Redis Queue that item was processed.
 pub async fn update_aircraft_id(aircraft: Vec<AircraftId>) -> Result<(), PostgisError> {
@@ -167,16 +154,17 @@ pub async fn update_aircraft_id(aircraft: Vec<AircraftId>) -> Result<(), Postgis
         PostgisError::Aircraft(AircraftError::DBError)
     })?;
 
+    let table_name = format!("{}.aircraft", super::PSQL_SCHEMA);
     let stmt = transaction
-        .prepare_cached(
+        .prepare_cached(&format!(
             "
-        INSERT INTO arrow.aircraft(identifier, aircraft_type, last_identifier_update)
+        INSERT INTO {table_name}(identifier, aircraft_type, last_identifier_update)
         VALUES ($1, $2, $3)
         ON CONFLICT (identifier) DO UPDATE
             SET aircraft_type = $2,
                 last_identifier_update = $3;
         ",
-        )
+        ))
         .await
         .map_err(|e| {
             postgis_error!(
@@ -295,16 +283,17 @@ pub async fn update_aircraft_position(aircraft: Vec<AircraftPosition>) -> Result
         PostgisError::Aircraft(AircraftError::DBError)
     })?;
 
+    let table_name = format!("{}.aircraft", super::PSQL_SCHEMA);
     let stmt = transaction
-        .prepare_cached(
+        .prepare_cached(&format!(
             "
-        INSERT INTO arrow.aircraft (identifier, geom, last_position_update)
+        INSERT INTO {table_name} (identifier, geom, last_position_update)
         VALUES ($1, $2, $3)
         ON CONFLICT (identifier) DO UPDATE
             SET geom = $2,
                 last_position_update = $3;
         ",
-        )
+        ))
         .await
         .map_err(|e| {
             postgis_error!(
@@ -415,10 +404,11 @@ pub async fn update_aircraft_velocity(aircraft: Vec<AircraftVelocity>) -> Result
         PostgisError::Aircraft(AircraftError::DBError)
     })?;
 
+    let table_name = format!("{}.aircraft", super::PSQL_SCHEMA);
     let stmt = transaction
-        .prepare_cached(
+        .prepare_cached(&format!(
             "
-        INSERT INTO arrow.aircraft (
+        INSERT INTO {table_name} (
             identifier,
             velocity_horizontal_ground_mps,
             velocity_vertical_mps,
@@ -431,7 +421,7 @@ pub async fn update_aircraft_velocity(aircraft: Vec<AircraftVelocity>) -> Result
                 velocity_vertical_mps = $3,
                 track_angle_degrees = $4,
                 last_velocity_update = $5;",
-        )
+        ))
         .await
         .map_err(|e| {
             postgis_error!(
@@ -491,7 +481,8 @@ pub async fn update_aircraft_velocity(aircraft: Vec<AircraftVelocity>) -> Result
 
 /// Gets the geometry of an aircraft given its identifier.
 pub async fn get_aircraft_pointz(identifier: &str) -> Result<PointZ, PostgisError> {
-    let stmt = "SELECT geom FROM arrow.aircraft WHERE identifier = $1;";
+    let table_name = format!("{}.aircraft", super::PSQL_SCHEMA);
+    let stmt = format!("SELECT geom FROM {table_name} WHERE identifier = $1;");
 
     let Some(pool) = crate::postgis::DEADPOOL_POSTGIS.get() else {
         postgis_error!("(get_aircraft_pointz) could not get psql pool.");
@@ -507,7 +498,7 @@ pub async fn get_aircraft_pointz(identifier: &str) -> Result<PointZ, PostgisErro
     })?;
 
     client
-        .query_one(stmt, &[&identifier])
+        .query_one(&stmt, &[&identifier])
         .await
         .map_err(|e| {
             postgis_error!("(get_aircraft_pointz) could not prepare cached statement: {}", e);

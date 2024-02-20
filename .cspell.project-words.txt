@@ -89,6 +89,7 @@ powf
 sfcgal
 centroidz
 linestring
+linestringz
 polyhedralsurfacez
 loglevel
 flushdb
