@@ -2367,6 +2367,7 @@ dependencies = [
  "cfg-if",
  "chrono",
  "deadpool-postgres",
+ "geo",
  "lib-common",
  "log",
  "num-derive",

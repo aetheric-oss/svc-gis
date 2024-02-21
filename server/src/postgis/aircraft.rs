@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use postgis::ewkb::PointZ;
 use tonic::async_trait;
 
-use crate::types::{AircraftId, AircraftPosition, AircraftType, AircraftVelocity, Position};
+use crate::types::{AircraftId, AircraftPosition, AircraftType, AircraftVelocity};
 
 /// Allowed characters in a identifier
 pub const IDENTIFIER_REGEX: &str = r"^[\-0-9A-Za-z_\.]{1,255}$";
@@ -161,8 +161,8 @@ pub async fn update_aircraft_id(aircraft: Vec<AircraftId>) -> Result<(), Postgis
         INSERT INTO {table_name}(identifier, aircraft_type, last_identifier_update)
         VALUES ($1, $2, $3)
         ON CONFLICT (identifier) DO UPDATE
-            SET aircraft_type = $2,
-                last_identifier_update = $3;
+            SET aircraft_type = EXCLUDED.aircraft_type,
+                last_identifier_update = EXCLUDED.last_identifier_update;
         ",
         ))
         .await
@@ -290,8 +290,8 @@ pub async fn update_aircraft_position(aircraft: Vec<AircraftPosition>) -> Result
         INSERT INTO {table_name} (identifier, geom, last_position_update)
         VALUES ($1, $2, $3)
         ON CONFLICT (identifier) DO UPDATE
-            SET geom = $2,
-                last_position_update = $3;
+            SET geom = EXCLUDED.geom,
+                last_position_update = EXCLUDED.last_position_update;
         ",
         ))
         .await
@@ -417,10 +417,10 @@ pub async fn update_aircraft_velocity(aircraft: Vec<AircraftVelocity>) -> Result
         ) VALUES (
             $1, $2, $3, $4, $5
         ) ON CONFLICT (identifier) DO UPDATE
-            SET velocity_horizontal_ground_mps = $2,
-                velocity_vertical_mps = $3,
-                track_angle_degrees = $4,
-                last_velocity_update = $5;",
+            SET velocity_horizontal_ground_mps = EXCLUDED.velocity_horizontal_ground_mps,
+                velocity_vertical_mps = EXCLUDED.velocity_vertical_mps,
+                track_angle_degrees = EXCLUDED.track_angle_degrees,
+                last_velocity_update = EXCLUDED.last_velocity_update;",
         ))
         .await
         .map_err(|e| {
@@ -514,6 +514,7 @@ pub async fn get_aircraft_pointz(identifier: &str) -> Result<PointZ, PostgisErro
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::Position;
     use chrono::Duration;
 
     #[tokio::test]

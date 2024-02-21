@@ -85,6 +85,8 @@ rotorcraft
 kamino
 bespin
 coruscant
+fondor
+rideshare
 powf
 sfcgal
 centroidz

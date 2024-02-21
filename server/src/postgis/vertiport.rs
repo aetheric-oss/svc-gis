@@ -118,9 +118,8 @@ impl TryFrom<RequestVertiport> for Vertiport {
 /// Initialize the vertiports table in the PostGIS database
 pub async fn psql_init() -> Result<(), PostgisError> {
     // Create Vertiport Table
-    let table_name = "arrow.vertiports";
     let statements = vec![format!(
-        "CREATE TABLE IF NOT EXISTS {table_name} (
+        "CREATE TABLE IF NOT EXISTS {schema}.vertiports (
             identifier VARCHAR(255) UNIQUE PRIMARY KEY NOT NULL,
             label VARCHAR(255) NOT NULL,
             zone_id INTEGER NOT NULL,
@@ -129,8 +128,9 @@ pub async fn psql_init() -> Result<(), PostgisError> {
             last_updated TIMESTAMPTZ,
             CONSTRAINT fk_zone
                 FOREIGN KEY (zone_id)
-                REFERENCES arrow.zones(id)
-        );"
+                REFERENCES {schema}.zones(id)
+        );",
+        schema = super::PSQL_SCHEMA
     )];
 
     super::psql_transaction(statements).await
@@ -168,9 +168,9 @@ pub async fn update_vertiports(vertiports: Vec<RequestVertiport>) -> Result<(), 
     })?;
 
     let stmt = transaction
-        .prepare_cached(
+        .prepare_cached(&format!(
             "WITH tmp AS (
-                INSERT INTO arrow.zones (
+                INSERT INTO {schema}.zones (
                     identifier,
                     geom,
                     altitude_meters_min,
@@ -200,7 +200,7 @@ pub async fn update_vertiports(vertiports: Vec<RequestVertiport>) -> Result<(), 
                     ),
                     zone_type = $6
                 RETURNING id
-            ) INSERT INTO arrow.vertiports (
+            ) INSERT INTO {schema}.vertiports (
                 identifier,
                 zone_id,
                 geom,
@@ -217,12 +217,13 @@ pub async fn update_vertiports(vertiports: Vec<RequestVertiport>) -> Result<(), 
             )
             ON CONFLICT (identifier) DO UPDATE
                 SET
-                    label = coalesce($5, arrow.vertiports.label),
+                    label = coalesce($5, {schema}.vertiports.label),
                     zone_id = (SELECT id FROM tmp),
                     geom = $2::GEOMETRY,
                     altitude_meters = $3::FLOAT(4),
                     last_updated = $7::TIMESTAMPTZ;",
-        )
+            schema = super::PSQL_SCHEMA,
+        ))
         .await
         .map_err(|e| {
             postgis_error!(
@@ -268,7 +269,7 @@ pub async fn update_vertiports(vertiports: Vec<RequestVertiport>) -> Result<(), 
 /// Gets the central PointZ geometry of a vertiport (for routing) given its identifier.
 pub async fn get_vertiport_centroidz(identifier: &str) -> Result<PointZ, PostgisError> {
     postgis_debug!("(get_vertiport_centroidz) entry, vertiport: '{identifier}'.");
-    let stmt = "SELECT ST_Force3DZ(ST_Centroid(geom), altitude_meters) FROM arrow.vertiports WHERE identifier = $1;";
+    let stmt = format!("SELECT ST_Force3DZ(ST_Centroid(geom), altitude_meters) FROM {}.vertiports WHERE identifier = $1;", super::PSQL_SCHEMA);
 
     let Some(pool) = crate::postgis::DEADPOOL_POSTGIS.get() else {
         postgis_error!("(get_vertiport_centroidz) could not get psql pool.");
@@ -285,7 +286,7 @@ pub async fn get_vertiport_centroidz(identifier: &str) -> Result<PointZ, Postgis
     })?;
 
     client
-        .query_one(stmt, &[&identifier])
+        .query_one(&stmt, &[&identifier])
         .await
         .map_err(|e| {
             postgis_error!("(get_vertiport_centroidz) query failed: {}", e);

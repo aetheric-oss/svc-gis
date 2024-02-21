@@ -2,8 +2,9 @@
 //! Helps to use https://www.keene.edu/campus/maps/tool/ to create polygons on a map
 
 use chrono::Duration;
+use geo::{polygon, Centroid};
 use lib_common::grpc::get_endpoint_from_env;
-use lib_common::time::Utc;
+use lib_common::time::{DateTime, Utc};
 use svc_gis_client_grpc::prelude::{gis::*, *};
 
 const VERTIPORT_1_ID: &str = "Kamino";
@@ -150,51 +151,275 @@ async fn add_aircraft(connection: &mut redis::Connection) -> Result<(), ()> {
 
     pipe.query::<()>(connection).unwrap();
 
+    let aircraft: Vec<AircraftId> = sample
+        .iter()
+        .map(|(identifier, _, _, _)| AircraftId {
+            identifier: identifier.to_string(),
+            aircraft_type: AircraftType::Rotorcraft,
+            timestamp_network: Utc::now(),
+            timestamp_asset: None,
+        })
+        .collect();
+
+    let mut pipe = redis::pipe();
+    aircraft.iter().for_each(|aircraft| {
+        (&mut pipe).rpush(
+            REDIS_KEY_AIRCRAFT_ID,
+            serde_json::to_vec(&aircraft).unwrap(),
+        );
+    });
+
+    pipe.query::<()>(connection).unwrap();
+
+    let aircraft: Vec<AircraftVelocity> = sample
+        .iter()
+        .map(|(identifier, _, _, _)| AircraftVelocity {
+            identifier: identifier.to_string(),
+            velocity_horizontal_air_mps: None,
+            velocity_horizontal_ground_mps: 100.0,
+            velocity_vertical_mps: 10.0,
+            track_angle_degrees: 10.0,
+            timestamp_network: Utc::now(),
+            timestamp_asset: None,
+        })
+        .collect();
+
+    let mut pipe = redis::pipe();
+    aircraft.iter().for_each(|aircraft| {
+        (&mut pipe).rpush(
+            REDIS_KEY_AIRCRAFT_VELOCITY,
+            serde_json::to_vec(&aircraft).unwrap(),
+        );
+    });
+
+    pipe.query::<()>(connection).unwrap();
+
     Ok(())
 }
 
-fn display_paths(paths: &[Path]) {
-    println!("\x1b[33;3m{} paths found.\x1b[0m", paths.len());
+async fn add_flight_paths(connection: &mut redis::Connection) -> Result<(), ()> {
+    println!("\n\u{1F681} Add Flights");
 
-    for (idx, path) in paths.iter().enumerate() {
-        println!("\nPath {idx}: ({} meters):", path.distance_meters);
-        for node in &path.path {
-            println!("\t{}: {:?}", node.index, node);
-        }
-    }
+    let path = vec![
+        Position {
+            latitude: 52.3746,
+            longitude: 4.9160036,
+            altitude_meters: 100.,
+        },
+        Position {
+            latitude: 52.3749819,
+            longitude: 4.9157,
+            altitude_meters: 200.,
+        },
+        Position {
+            latitude: 52.37523,
+            longitude: 4.9153733,
+            altitude_meters: 50.,
+        },
+    ];
+
+    let sample: Vec<&str> = vec![AIRCRAFT_1_ID, "Mantis", "Ghost", "Phantom", "Falcon"];
+
+    let items: Vec<FlightPath> = sample
+        .into_iter()
+        .enumerate()
+        .map(|(i, aircraft_identifier)| FlightPath {
+            flight_identifier: format!("FLIGHT-{}", i),
+            aircraft_identifier: aircraft_identifier.to_string(),
+            path: path.clone(),
+            timestamp_start: Utc::now() - Duration::hours(7),
+            timestamp_end: Utc::now() - Duration::hours(6) + Duration::seconds(10),
+            simulated: false,
+            aircraft_type: AircraftType::Rotorcraft,
+        })
+        .collect();
+
+    let mut pipe = redis::pipe();
+    items.iter().for_each(|item| {
+        (&mut pipe).rpush(REDIS_KEY_FLIGHT_PATH, serde_json::to_vec(&item).unwrap());
+    });
+
+    pipe.query::<()>(connection).unwrap();
+
+    Ok(())
 }
 
-/// Example svc-gis-client-grpc
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let Ok(redis_client) = redis::Client::open(std::env::var("REDIS__URL").unwrap()) else {
-        panic!("Could not create redis client.");
+async fn best_path_flight_avoidance(
+    connection: &mut redis::Connection,
+    client: &GisClient,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Add two vertiports specifically for this test
+    // Place somewhere far from the others in this test
+    // No waypoints, only direct path between vertiports
+
+    const DEFAULT_ALTITUDE: f64 = 10.0;
+
+    const ALKMAAR_1_ID: &str = "ALKMAAR_1";
+    let alkmaar_1_polygon = geo::polygon![
+        (x: 4.713655228916873, y: 52.63040456142831),
+        (x: 4.713655228916873, y: 52.63006644856257),
+        (x: 4.714239138046231, y: 52.63006644856257),
+        (x: 4.714239138046231, y: 52.63040456142831),
+        (x: 4.713655228916873, y: 52.63040456142831)
+    ];
+
+    let vertices = alkmaar_1_polygon
+        .exterior()
+        .points()
+        .map(|pt| Coordinates {
+            latitude: pt.y(),
+            longitude: pt.x(),
+        })
+        .collect();
+
+    let alkmaar_1 = Vertiport {
+        identifier: ALKMAAR_1_ID.to_string(),
+        altitude_meters: DEFAULT_ALTITUDE as f32,
+        vertices,
+        label: Some("Alkmaar 1".to_string()),
+        timestamp_network: Some(Utc::now().into()),
     };
 
-    let Ok(mut connection) = redis_client.get_connection() else {
-        panic!("Could not get redis connection.");
+    const ALKMAAR_2_ID: &str = "ALKMAAR_2";
+    let alkmaar_2_polygon = geo::polygon![
+        (x: 4.7183918814820895, y: 52.63404933036138),
+        (x: 4.7183918814820895, y: 52.633870374451455),
+        (x: 4.718710818704621, y: 52.633870374451455),
+        (x: 4.718710818704621, y: 52.63404933036138),
+        (x: 4.7183918814820895, y: 52.63404933036138)
+    ];
+
+    let vertices = alkmaar_2_polygon
+        .exterior()
+        .points()
+        .map(|pt| Coordinates {
+            latitude: pt.y(),
+            longitude: pt.x(),
+        })
+        .collect();
+
+    let alkmaar_2 = Vertiport {
+        identifier: ALKMAAR_2_ID.to_string(),
+        altitude_meters: DEFAULT_ALTITUDE as f32,
+        vertices,
+        label: Some("Alkmaar 2".to_string()),
+        timestamp_network: Some(Utc::now().into()),
     };
 
-    let (host, port) = get_endpoint_from_env("SERVER_HOSTNAME", "SERVER_PORT_GRPC");
-    let client = GisClient::new_client(&host, port, "gis");
-    println!("Client created");
-    println!(
-        "NOTE: Ensure the server is running on {} or this example will fail.",
-        client.get_address()
-    );
+    let vertiports = vec![alkmaar_1.clone(), alkmaar_2.clone()];
+    let _ = client
+        .update_vertiports(UpdateVertiportsRequest { vertiports })
+        .await?;
 
-    {
-        println!("\n\u{1F44D} Ready Check");
-        let response = client.is_ready(ReadyRequest {}).await?.into_inner();
+    let time_start: DateTime<Utc> = Utc::now();
+    let time_end: DateTime<Utc> = Utc::now() + Duration::minutes(15);
 
-        println!("RESPONSE={:?}", response);
-        assert_eq!(response.ready, true);
-    }
+    // Best Path Request
+    println!("\n\u{1F426} Best Path Without Interrupting Flight");
+    let request = BestPathRequest {
+        origin_identifier: ALKMAAR_1_ID.to_string(),
+        target_identifier: ALKMAAR_2_ID.to_string(),
+        origin_type: NodeType::Vertiport as i32,
+        target_type: NodeType::Vertiport as i32,
+        time_start: Some(time_start.clone().into()),
+        time_end: Some(time_end.clone().into()),
+        limit: 1,
+    };
 
-    add_aircraft(&mut connection).await.unwrap();
-    add_vertiports(&client).await?;
-    add_waypoints(&client).await?;
+    let response = client.best_path(request).await?.into_inner();
+    let Some(path) = response.paths.first() else {
+        panic!("No path found.");
+    };
 
+    println!("(best_path_flight_avoidance) Found flight path at Alkmaar:");
+    display_paths(&vec![path.clone()]);
+
+    //
+    // Insert new flight plan
+    //
+    let path = [
+        alkmaar_1_polygon.centroid().unwrap(),
+        alkmaar_2_polygon.centroid().unwrap(),
+    ]
+    .into_iter()
+    .map(|pt| Position {
+        latitude: pt.y(),
+        longitude: pt.x(),
+        altitude_meters: DEFAULT_ALTITUDE,
+    })
+    .collect::<Vec<Position>>();
+
+    let flight_path = FlightPath {
+        flight_identifier: "FLIGHT-X".to_string(),
+        aircraft_identifier: "Fondor".to_string(),
+        path,
+        timestamp_start: time_start.clone(),
+        timestamp_end: time_end.clone(),
+        simulated: false,
+        aircraft_type: AircraftType::Rotorcraft,
+    };
+
+    let _ = redis::pipe()
+        .rpush(
+            REDIS_KEY_FLIGHT_PATH,
+            serde_json::to_vec(&flight_path).unwrap(),
+        )
+        .query::<()>(connection)
+        .unwrap();
+
+    // Might take a moment for the flight to be consumed from the queue by svc-gis
+    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+    //
+    // Try Best Path again during same time as other flight, should be none
+    //
+    println!("\n\u{1F426} Best Path With Interrupting Flight");
+    let request = BestPathRequest {
+        origin_identifier: ALKMAAR_1_ID.to_string(),
+        target_identifier: ALKMAAR_2_ID.to_string(),
+        origin_type: NodeType::Vertiport as i32,
+        target_type: NodeType::Vertiport as i32,
+        time_start: Some(time_start.clone().into()),
+        time_end: Some(time_end.clone().into()),
+        limit: 1,
+    };
+
+    let response = client.best_path(request).await?.into_inner();
+    match response.paths.first() {
+        Some(path) => {
+            println!("Path found when it should not have been possible.");
+            display_paths(&vec![path.clone()]);
+            panic!()
+        }
+        None => println!("No path found, as expected."),
+    };
+
+    //
+    // Best Path Request AFTER
+    //
+    println!("\n\u{1F426} Best Path AFTER Interrupting Flight");
+    let request = BestPathRequest {
+        origin_identifier: ALKMAAR_1_ID.to_string(),
+        target_identifier: ALKMAAR_2_ID.to_string(),
+        origin_type: NodeType::Vertiport as i32,
+        target_type: NodeType::Vertiport as i32,
+        time_start: Some((time_end.clone() + Duration::seconds(1)).into()),
+        time_end: Some((time_end.clone() + Duration::minutes(1)).into()),
+        limit: 1,
+    };
+
+    let response = client.best_path(request).await?.into_inner();
+    let Some(path) = response.paths.first() else {
+        panic!("No path found.");
+    };
+
+    println!("(best_path_flight_avoidance) Found flight path at Alkmaar:");
+    display_paths(&vec![path.clone()]);
+
+    Ok(())
+}
+
+async fn best_paths(client: &GisClient) -> Result<(), Box<dyn std::error::Error>> {
     // Best Path Without No-Fly Zone
     {
         println!("\n\u{1F426} Best Path WITHOUT Temporary No-Fly Zone");
@@ -355,6 +580,54 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("RESPONSE={:?}", response);
         display_paths(&response.paths);
     }
+
+    Ok(())
+}
+
+fn display_paths(paths: &[Path]) {
+    println!("\x1b[33;3m{} paths found.\x1b[0m", paths.len());
+
+    for (idx, path) in paths.iter().enumerate() {
+        println!("\nPath {idx}: ({} meters):", path.distance_meters);
+        for node in &path.path {
+            println!("\t{}: {:?}", node.index, node);
+        }
+    }
+}
+
+/// Example svc-gis-client-grpc
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let Ok(redis_client) = redis::Client::open(std::env::var("REDIS__URL").unwrap()) else {
+        panic!("Could not create redis client.");
+    };
+
+    let Ok(mut connection) = redis_client.get_connection() else {
+        panic!("Could not get redis connection.");
+    };
+
+    let (host, port) = get_endpoint_from_env("SERVER_HOSTNAME", "SERVER_PORT_GRPC");
+    let client = GisClient::new_client(&host, port, "gis");
+    println!("Client created");
+    println!(
+        "NOTE: Ensure the server is running on {} or this example will fail.",
+        client.get_address()
+    );
+
+    {
+        println!("\n\u{1F44D} Ready Check");
+        let response = client.is_ready(ReadyRequest {}).await?.into_inner();
+
+        println!("RESPONSE={:?}", response);
+        assert_eq!(response.ready, true);
+    }
+
+    add_aircraft(&mut connection).await.unwrap();
+    add_flight_paths(&mut connection).await.unwrap();
+    add_vertiports(&client).await?;
+    add_waypoints(&client).await?;
+    best_paths(&client).await?;
+    best_path_flight_avoidance(&mut connection, &client).await?;
 
     // // Nearest Neighbor to Vertiport
     // {

@@ -180,7 +180,7 @@ pub async fn nearest_neighbors(
     let target_type = request.end_type;
     let rows = match (start_type, end_type) {
         (NodeType::Vertiport, NodeType::Vertiport) => {
-            let query = "SELECT * FROM arrow.nearest_vertiports_to_vertiport($1, $2, $3);";
+            let query = format!("SELECT * FROM {}.nearest_vertiports_to_vertiport($1, $2, $3);", super::PSQL_SCHEMA);
             postgis_debug!("(nearest_neighbors) query [{}]", query);
 
             let stmt = client.prepare_cached(query).await.map_err(|e| {
@@ -191,7 +191,7 @@ pub async fn nearest_neighbors(
             nearest_neighbor_vertiport_source(stmt, client, request).await?
         }
         (NodeType::Aircraft, NodeType::Vertiport) => {
-            let query = "SELECT * FROM arrow.nearest_vertiports_to_aircraft($1, $2, $3);";
+            let query = format!("SELECT * FROM {}.nearest_vertiports_to_aircraft($1, $2, $3);", super::PSQL_SCHEMA);
             postgis_debug!("(nearest_neighbors) query [{}]", query);
 
             let stmt = client.prepare_cached(query).await.map_err(|e| {

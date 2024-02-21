@@ -28,7 +28,7 @@ cfg_if::cfg_if! {
                 cfg.dbname = Some("deadpool".to_string());
                 cfg.manager = Some(ManagerConfig { recycling_method: RecyclingMethod::Fast });
 
-                let pool = cfg.create_pool(Some(Runtime::Tokio1), NoTls).unwrap();
+                let _pool = cfg.create_pool(Some(Runtime::Tokio1), NoTls).unwrap();
                 let grpc_service = ServerImpl { };
                 lib_common::grpc::mock::start_mock_server(
                     server,

@@ -88,7 +88,7 @@ impl TryFrom<RequestWaypoint> for Waypoint {
 /// Initialize the vertiports table in the PostGIS database
 pub async fn psql_init() -> Result<(), PostgisError> {
     // Create Aircraft Table
-    let table_name = "arrow.waypoints";
+    let table_name = format!("{}.waypoints", super::PSQL_SCHEMA);
     let statements = vec![
         format!(
             "CREATE TABLE IF NOT EXISTS {table_name} (
@@ -134,12 +134,13 @@ pub async fn update_waypoints(waypoints: Vec<RequestWaypoint>) -> Result<(), Way
     })?;
 
     let stmt = transaction
-        .prepare_cached(
+        .prepare_cached(&format!(
             "\
-        INSERT INTO arrow.waypoints(identifier, geom)
+        INSERT INTO {schema}.waypoints (identifier, geom)
         VALUES ($1, $2)
         ON CONFLICT (identifier) DO UPDATE SET geom = $2;",
-        )
+            schema = super::PSQL_SCHEMA
+        ))
         .await
         .map_err(|e| {
             postgis_error!(
@@ -192,11 +193,14 @@ pub async fn get_waypoints_near_geometry(
 
     // Get a subset of waypoints within N meters of the line between the origin and target
     //  This saves computation time by doing shortest path on a smaller graph
-    let stmt = "SELECT identifier, geom FROM arrow.waypoints
-        WHERE ST_DWithin(geom, $1, $2::FLOAT(4), false);";
+    let stmt = format!(
+        "SELECT identifier, geom FROM {}.waypoints
+        WHERE ST_DWithin(geom, $1, $2::FLOAT(4), false);",
+        super::PSQL_SCHEMA
+    );
 
     Ok(client
-        .query(stmt, &[&geom, &range_meters])
+        .query(&stmt, &[&geom, &range_meters])
         .await
         .map_err(|e| {
             postgis_error!(

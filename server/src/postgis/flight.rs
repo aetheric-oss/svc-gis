@@ -57,7 +57,7 @@ pub fn check_flight_identifier(identifier: &str) -> Result<(), StringError> {
 /// Initializes the PostGIS database for aircraft.
 pub async fn psql_init() -> Result<(), PostgisError> {
     // Create Aircraft Table
-    let table_name = "arrow.flights";
+    let table_name = format!("{}.flights", super::PSQL_SCHEMA);
     let enum_name = "aircrafttype";
     let statements = vec![
         // super::psql_enum_declaration::<AircraftType>(enum_name), // should already exist
@@ -69,8 +69,8 @@ pub async fn psql_init() -> Result<(), PostgisError> {
                 simulated BOOLEAN NOT NULL DEFAULT FALSE,
                 geom GEOMETRY(LINESTRINGZ, 4326),
                 isa GEOMETRY NOT NULL,
-                start TIMESTAMPTZ,
-                end TIMESTAMPTZ,
+                time_start TIMESTAMPTZ,
+                time_end TIMESTAMPTZ
             );",
             AircraftType::Undeclared.to_string()
         ),
@@ -92,46 +92,44 @@ pub async fn psql_maintenance() -> Result<(), PostgisError> {
     const FREQUENCY_S: u64 = 60;
 
     let table_name = format!("{}.flights", super::PSQL_SCHEMA);
+
+    // Remove flights from postgis that are older than N hours
+    let stmt = format!("DELETE FROM {table_name} WHERE time_end < $1;",);
+
     tokio::spawn(async move {
         loop {
-            tokio::time::sleep(tokio::time::Duration::from_secs(FREQUENCY_S)).await;
-            postgis_debug!("(flight::psql_maintenance) running scheduled maintenance.");
+            postgis_info!("(flight::psql_maintenance) running scheduled maintenance.");
 
-            let client = match pool.get().await {
+            match pool.get().await {
+                Ok(client) => {
+                    match client
+                        .query(&stmt, &[&(Utc::now() - Duration::hours(DURATION_H))])
+                        .await
+                    {
+                        Ok(result) => {
+                            postgis_info!(
+                                "(flight::psql_maintenance) removed {} flights older than {} hours.",
+                                result.len(),
+                                DURATION_H
+                            );
+                        }
+                        Err(e) => {
+                            postgis_error!(
+                                "(flight::psql_maintenance) could not execute simple query: {}",
+                                e
+                            );
+                        }
+                    }
+                }
                 Err(e) => {
                     postgis_error!(
                         "(flight::psql_maintenance) could not get client from psql connection pool: {}",
                         e
                     );
-
-                    continue;
                 }
-                Ok(client) => client,
             };
 
-            // Remove flights from postgis that are older than N hours
-            let stmt = format!("DELETE FROM {table_name} WHERE end < $1;",);
-
-            let result = match client
-                .query(&stmt, &[&(Utc::now() - Duration::hours(DURATION_H))])
-                .await
-            {
-                Err(e) => {
-                    postgis_error!(
-                        "(flight::psql_maintenance) could not execute simple query: {}",
-                        e
-                    );
-
-                    continue;
-                }
-                Ok(result) => result,
-            };
-
-            postgis_debug!(
-                "(flight::psql_maintenance) removed {} flights older than {} hours.",
-                result.len(),
-                DURATION_H
-            );
+            tokio::time::sleep(tokio::time::Duration::from_secs(FREQUENCY_S)).await;
         }
     });
 
@@ -197,10 +195,10 @@ pub async fn update_flight_path(flights: Vec<FlightPath>) -> Result<(), PostgisE
             aircraft_identifier,
             aircraft_type,
             simulated,
-            start,
-            end,
+            time_start,
+            time_end,
             geom,
-            isa,
+            isa
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, ST_Envelope($7))
         ON CONFLICT (flight_identifier) DO UPDATE
@@ -208,9 +206,9 @@ pub async fn update_flight_path(flights: Vec<FlightPath>) -> Result<(), PostgisE
                 aircraft_type = EXCLUDED.aircraft_type,
                 simulated = EXCLUDED.simulated,
                 geom = EXCLUDED.geom,
-                isa = ST_Envelope(EXCLUDED.geom),
-                start = EXCLUDED.start,
-                end = EXCLUDED.end
+                isa = (ST_Envelope(EXCLUDED.geom)),
+                time_start = EXCLUDED.time_start,
+                time_end = EXCLUDED.time_end;
         ",
         ))
         .await
@@ -294,13 +292,16 @@ pub async fn get_flight_intersection_stmt(
             SELECT (
                 flight_identifier,
                 aircraft_identifier,
-                geom
+                geom,
+                time_start,
+                time_end
             )
             FROM {table_name}
             WHERE
                 ST_DWithin(geom, $1::GEOMETRY, $2)
                 AND (time_start <= $4 OR time_start IS NULL)
                 AND (time_end >= $3 OR time_end IS NULL)
+                AND (NOT simulated)
             LIMIT 1;
         ",
         ))

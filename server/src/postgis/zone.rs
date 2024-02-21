@@ -143,7 +143,7 @@ impl TryFrom<RequestZone> for Zone {
 pub async fn psql_init() -> Result<(), PostgisError> {
     // Create Aircraft Table
 
-    let table_name = "arrow.zones";
+    let table_name = format!("{}.zones", super::PSQL_SCHEMA);
     let zonetype_str = "zonetype";
     let statements = vec![
         super::psql_enum_declaration::<ZoneType>(zonetype_str),
@@ -198,9 +198,9 @@ pub async fn update_zones(zones: Vec<RequestZone>) -> Result<(), ZoneError> {
     })?;
 
     let stmt = transaction
-        .prepare_cached(
+        .prepare_cached(&format!(
             "\
-        INSERT INTO arrow.zones (
+        INSERT INTO {schema}.zones (
             identifier,
             zone_type,
             geom,
@@ -227,7 +227,8 @@ pub async fn update_zones(zones: Vec<RequestZone>) -> Result<(), ZoneError> {
             time_start = $6,
             time_end = $7;
         ",
-        )
+            schema = super::PSQL_SCHEMA
+        ))
         .await
         .map_err(|e| {
             postgis_error!("(update_zones) could not prepare cached statement: {}", e);
@@ -272,7 +273,7 @@ pub async fn get_zone_intersection_stmt(
     client: &Object,
 ) -> Result<tokio_postgres::Statement, PostgisError> {
     let result = client
-        .prepare_cached(
+        .prepare_cached(&format!(
             "
             SELECT (
                 identifier,
@@ -283,7 +284,7 @@ pub async fn get_zone_intersection_stmt(
                 time_start,
                 time_end
             )
-            FROM arrow.zones
+            FROM {schema}.zones
             WHERE
                 ST_3DIntersects(geom, $1::GEOMETRY)
                 AND (time_start <= $3 OR time_start IS NULL)
@@ -291,7 +292,8 @@ pub async fn get_zone_intersection_stmt(
                 AND identifier NOT IN ($4, $5)
             LIMIT 1;
         ",
-        )
+            schema = super::PSQL_SCHEMA
+        ))
         .await;
     match result {
         Ok(stmt) => Ok(stmt),
