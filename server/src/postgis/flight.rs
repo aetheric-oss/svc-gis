@@ -6,7 +6,7 @@ use crate::cache::{Consumer, Processor};
 use crate::postgis::utils::StringError;
 use chrono::{Duration, Utc};
 use deadpool_postgres::Object;
-use postgis::ewkb::PointZ;
+use postgis::ewkb::{LineStringT, PointZ};
 use tonic::async_trait;
 
 use crate::types::{AircraftType, FlightPath};
@@ -57,22 +57,34 @@ pub fn check_flight_identifier(identifier: &str) -> Result<(), StringError> {
 /// Initializes the PostGIS database for aircraft.
 pub async fn psql_init() -> Result<(), PostgisError> {
     // Create Aircraft Table
-    let table_name = format!("{}.flights", super::PSQL_SCHEMA);
     let enum_name = "aircrafttype";
     let statements = vec![
         // super::psql_enum_declaration::<AircraftType>(enum_name), // should already exist
         format!(
-            "CREATE TABLE IF NOT EXISTS {table_name} (
+            "CREATE TABLE IF NOT EXISTS {schema}.flights (
                 flight_identifier VARCHAR(20) UNIQUE PRIMARY KEY NOT NULL,
                 aircraft_identifier VARCHAR(20) NOT NULL,
-                aircraft_type {enum_name} NOT NULL DEFAULT '{}',
+                aircraft_type {enum_name} NOT NULL DEFAULT '{aircraft_type}',
                 simulated BOOLEAN NOT NULL DEFAULT FALSE,
-                geom GEOMETRY(LINESTRINGZ, 4326),
-                isa GEOMETRY NOT NULL,
+                geom GEOMETRY(LINESTRINGZ, 4326), -- full path
+                isa GEOMETRY NOT NULL, -- envelope
                 time_start TIMESTAMPTZ,
                 time_end TIMESTAMPTZ
-            );",
-            AircraftType::Undeclared.to_string()
+            );
+            
+            CREATE TABLE IF NOT EXISTS {schema}.flight_segments (
+                flight_identifier VARCHAR(20) NOT NULL,
+                geom GEOMETRY(LINESTRINGZ, 4326),
+                time_start TIMESTAMPTZ,
+                time_end TIMESTAMPTZ,
+                PRIMARY KEY (flight_identifier, time_start)
+            );
+            
+            CREATE INDEX IF NOT EXISTS flights_geom_idx ON {schema}.flights USING GIST (isa);
+            CREATE INDEX IF NOT EXISTS flight_paths_idx ON {schema}.flight_segments USING GIST (geom);
+            ",
+            schema = super::PSQL_SCHEMA,
+            aircraft_type = AircraftType::Undeclared.to_string()
         ),
     ];
 
@@ -91,10 +103,12 @@ pub async fn psql_maintenance() -> Result<(), PostgisError> {
     const DURATION_H: i64 = 6;
     const FREQUENCY_S: u64 = 60;
 
-    let table_name = format!("{}.flights", super::PSQL_SCHEMA);
-
     // Remove flights from postgis that are older than N hours
-    let stmt = format!("DELETE FROM {table_name} WHERE time_end < $1;",);
+    let stmt = format!(
+        "DELETE FROM {schema}.flight_segments WHERE time_end < $1;
+        DELETE FROM {schema}.flights WHERE time_end < $1;",
+        schema = super::PSQL_SCHEMA
+    );
 
     tokio::spawn(async move {
         loop {
@@ -186,11 +200,13 @@ pub async fn update_flight_path(flights: Vec<FlightPath>) -> Result<(), PostgisE
         PostgisError::FlightPath(FlightPathError::DBError)
     })?;
 
-    let table_name = format!("{}.flights", super::PSQL_SCHEMA);
     let stmt = transaction
         .prepare_cached(&format!(
             "
-        INSERT INTO {table_name}(
+
+        BEGIN;
+
+        INSERT INTO {schema}.flights (
             flight_identifier,
             aircraft_identifier,
             aircraft_type,
@@ -209,7 +225,26 @@ pub async fn update_flight_path(flights: Vec<FlightPath>) -> Result<(), PostgisE
                 isa = (ST_Envelope(EXCLUDED.geom)),
                 time_start = EXCLUDED.time_start,
                 time_end = EXCLUDED.time_end;
+
+        DELETE FROM {schema}.flight_segments WHERE flight_identifier = $1;
+
+        FOR row IN $8
+        LOOP
+            INSERT INTO {schema}.flight_segments (
+                flight_identifier,
+                geom,
+                time_start,
+                time_end
+            )
+            VALUES ($1, row.geom, row.time_start, row.time_end)
+            ON CONFLICT (flight_identifier, time_start) DO UPDATE
+                SET geom = EXCLUDED.geom,
+                    time_end = EXCLUDED.time_end;
+        END LOOP;
+        
+        COMMIT;
         ",
+            schema = super::PSQL_SCHEMA
         ))
         .await
         .map_err(|e| {
@@ -244,9 +279,19 @@ pub async fn update_flight_path(flights: Vec<FlightPath>) -> Result<(), PostgisE
                 PostgisError::FlightPath(FlightPathError::Location)
             })?;
 
-        let path = postgis::ewkb::LineStringT {
-            points,
+        // Subdivide the path into segments by length
+        let geom = LineStringT {
+            points: points.clone(),
             srid: Some(4326),
+        };
+
+        let Ok(segments) =
+            super::utils::segmentize(points, flight.timestamp_start, flight.timestamp_end).await
+        else {
+            postgis_error!("(update_flight_path) could not segmentize path.");
+
+            // continue to process other flights
+            continue;
         };
 
         transaction
@@ -259,7 +304,8 @@ pub async fn update_flight_path(flights: Vec<FlightPath>) -> Result<(), PostgisE
                     &flight.simulated,
                     &flight.timestamp_start,
                     &flight.timestamp_end,
-                    &path,
+                    &geom,
+                    &segments,
                 ],
             )
             .await
@@ -285,7 +331,6 @@ pub async fn update_flight_path(flights: Vec<FlightPath>) -> Result<(), PostgisE
 pub async fn get_flight_intersection_stmt(
     client: &Object,
 ) -> Result<tokio_postgres::Statement, PostgisError> {
-    let table_name = format!("{}.flights", super::PSQL_SCHEMA);
     let result = client
         .prepare_cached(&format!(
             "
@@ -296,7 +341,7 @@ pub async fn get_flight_intersection_stmt(
                 time_start,
                 time_end
             )
-            FROM {table_name}
+            FROM {schema}.flights
             WHERE
                 ST_DWithin(geom, $1::GEOMETRY, $2)
                 AND (time_start <= $4 OR time_start IS NULL)
@@ -304,6 +349,7 @@ pub async fn get_flight_intersection_stmt(
                 AND (NOT simulated)
             LIMIT 1;
         ",
+            schema = super::PSQL_SCHEMA,
         ))
         .await;
 

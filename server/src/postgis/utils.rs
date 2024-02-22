@@ -1,10 +1,13 @@
 //! Common functions for PostGIS operations
 
+use super::{PostgisError, PsqlError};
 use crate::grpc::server::grpc_server::Coordinates;
 use crate::types::Position;
+use chrono::{DateTime, Duration, Utc};
+use deadpool_postgres::tokio_postgres::{types::ToSql, Row};
 use geo::algorithm::haversine_distance::HaversineDistance;
 use geo::point;
-use postgis::ewkb::PointZ;
+use postgis::ewkb::{LineStringT, LineStringZ, Point, PointZ, PolygonZ};
 use regex;
 
 /// A polygon must have at least three vertices (a triangle)
@@ -133,7 +136,7 @@ impl TryFrom<Position> for PointZ {
 pub fn polygon_from_vertices_z(
     vertices: &[Coordinates],
     altitude_meters: f32,
-) -> Result<postgis::ewkb::PolygonZ, PolygonError> {
+) -> Result<PolygonZ, PolygonError> {
     let size = vertices.len();
 
     // Check that the zone has at least N vertices
@@ -161,8 +164,8 @@ pub fn polygon_from_vertices_z(
         return Err(PolygonError::OutOfBounds);
     }
 
-    Ok(postgis::ewkb::PolygonZ {
-        rings: vec![postgis::ewkb::LineStringT {
+    Ok(PolygonZ {
+        rings: vec![LineStringT {
             points: vertices
                 .iter()
                 .map(|vertex| PointZ {
@@ -180,7 +183,7 @@ pub fn polygon_from_vertices_z(
 
 /// Generate a PostGis 'Point' from a vertex
 /// Each vertex must be within the valid range of latitude and longitude
-pub fn point_from_vertex(vertex: &Coordinates) -> Result<postgis::ewkb::Point, PointError> {
+pub fn point_from_vertex(vertex: &Coordinates) -> Result<Point, PointError> {
     // Each coordinate must fit within the valid range of latitude and longitude
     if vertex.latitude < -90.0
         || vertex.latitude > 90.0
@@ -190,11 +193,144 @@ pub fn point_from_vertex(vertex: &Coordinates) -> Result<postgis::ewkb::Point, P
         return Err(PointError::OutOfBounds);
     }
 
-    Ok(postgis::ewkb::Point {
+    Ok(Point {
         x: vertex.longitude,
         y: vertex.latitude,
         srid: Some(4326),
     })
+}
+
+/// A segment of a flight path
+#[derive(Debug, ToSql)]
+pub struct Segment {
+    /// The geometry of the segment
+    pub geom: LineStringZ,
+
+    /// The time the segment starts
+    pub time_start: DateTime<Utc>,
+
+    /// The time the segment ends
+    pub time_end: DateTime<Utc>,
+}
+
+#[derive(Debug)]
+struct ExpectedResult {
+    // The index of the segment
+    idx: i32,
+
+    // The geometry of the segment
+    geom: LineStringZ,
+
+    // The distance of the segment in meters
+    distance_m: f64,
+}
+
+impl TryFrom<Row> for ExpectedResult {
+    type Error = PostgisError;
+
+    fn try_from(row: Row) -> Result<Self, Self::Error> {
+        let idx: i32 = row.get(0);
+        let geom: LineStringZ = row.get(1);
+        let distance_m: f64 = row.get(2);
+
+        Ok(ExpectedResult {
+            idx,
+            geom,
+            distance_m,
+        })
+    }
+}
+
+/// Subdivides a path into time segments by length and time start/end
+pub async fn segmentize(
+    points: Vec<PointZ>,
+    timestamp_start: DateTime<Utc>,
+    timestamp_end: DateTime<Utc>,
+) -> Result<Vec<Segment>, PostgisError> {
+    // TODO(R5): Configurable
+    const MAX_SEGMENT_LENGTH_M: f64 = 40.0;
+
+    let geom = LineStringT {
+        points,
+        srid: Some(4326),
+    };
+
+    let stmt = "WITH segments AS 
+    (
+        SELECT
+            geom,
+            ST_Length(ST_Transform(geom, 4326)::geography) AS distance_m
+        FROM ST_DumpSegments(
+            (
+                SELECT ST_Segmentize($1::geography, 40)::geometry
+            )
+        )
+    ), totals AS (
+        SELECT 
+            sum(segments.distance_m) AS total_length,
+            ($3 - $2) AS total_duration
+        FROM segments
+    ) SELECT 
+            ROW_NUMBER() OVER () AS idx,
+            segments.geom AS geom,
+            segments.distance_m AS distance_m,
+        FROM segments, totals;
+    ";
+
+    let Some(pool) = crate::postgis::DEADPOOL_POSTGIS.get() else {
+        postgis_error!("(get_subdivided) could not get psql pool.");
+        return Err(PostgisError::Psql(PsqlError::Client));
+    };
+
+    let client = pool.get().await.map_err(|e| {
+        postgis_error!(
+            "(get_waypoints_near_geometry) could not get client from psql connection pool: {}",
+            e
+        );
+        PostgisError::Psql(PsqlError::Client)
+    })?;
+
+    let results = client
+        .query(stmt, &[&geom, &timestamp_start, &timestamp_end])
+        .await
+        .map_err(|e| {
+            postgis_error!("(get_subdivided) could not execute query: {}", e);
+
+            PostgisError::Psql(PsqlError::Execute)
+        })?
+        .into_iter()
+        .map(ExpectedResult::try_from)
+        .collect::<Result<Vec<ExpectedResult>, PostgisError>>()?;
+
+    let mut cursor = timestamp_start;
+    let duration = timestamp_end - timestamp_start;
+    let velocity_m_s: f64 =
+        results.iter().map(|r| r.distance_m).sum::<f64>() / duration.num_seconds() as f64;
+
+    // TODO(R5): Checks for unreasonable speeds?
+
+    let results = results
+        .into_iter()
+        .map(|r| {
+            let segment_duration_ms = (r.distance_m / velocity_m_s) * 1000.;
+            let segment = Segment {
+                geom: r.geom,
+                time_start: cursor,
+                time_end: cursor + Duration::milliseconds(segment_duration_ms as i64),
+            };
+
+            cursor = segment.time_end;
+
+            segment
+        })
+        .collect::<Vec<Segment>>();
+
+    postgis_info!(
+        "(segmentize) found {} segments. craft velocity {} m/s.",
+        results.len(),
+        velocity_m_s
+    );
+    Ok(results)
 }
 
 #[cfg(test)]
@@ -216,7 +352,7 @@ mod tests {
         let point = point_from_vertex(&vertex).unwrap();
         assert_eq!(
             point,
-            postgis::ewkb::Point {
+            Point {
                 x: longitude,
                 y: latitude,
                 srid: Some(4326)
@@ -272,8 +408,8 @@ mod tests {
 
         let altitude_meters = 122.0;
         let polygon = polygon_from_vertices_z(&vertices, altitude_meters).unwrap();
-        let expected = postgis::ewkb::PolygonZ {
-            rings: vec![postgis::ewkb::LineStringT {
+        let expected = PolygonZ {
+            rings: vec![LineStringT {
                 points: vertices
                     .iter()
                     .map(|vertex| PointZ {
