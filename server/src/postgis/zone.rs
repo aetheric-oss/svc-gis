@@ -1,14 +1,14 @@
 //! This module contains functions for updating zones in the PostGIS database.
 //! Zones have various restrictions and can be permanent or temporary.
 
+use super::PostgisError;
+use super::DEFAULT_SRID;
 use crate::grpc::server::grpc_server;
 use chrono::{DateTime, Utc};
 use deadpool_postgres::Object;
 use grpc_server::Zone as RequestZone;
 use grpc_server::ZoneType;
 use num_traits::FromPrimitive;
-
-use super::PostgisError;
 
 /// Allowed characters in a identifier
 const IDENTIFIER_REGEX: &str = r"^[\-0-9A-Za-z_\.]{1,255}$";
@@ -152,7 +152,7 @@ pub async fn psql_init() -> Result<(), PostgisError> {
             id SERIAL UNIQUE NOT NULL,
             identifier VARCHAR(255) UNIQUE NOT NULL PRIMARY KEY,
             zone_type {zonetype_str} NOT NULL,
-            geom GEOMETRY NOT NULL,
+            geom GEOMETRY(POLYHEDRALSURFACEZ, {DEFAULT_SRID}) NOT NULL,
             altitude_meters_min FLOAT(4) NOT NULL,
             altitude_meters_max FLOAT(4) NOT NULL,
             time_start TIMESTAMPTZ,
@@ -213,7 +213,7 @@ pub async fn update_zones(zones: Vec<RequestZone>) -> Result<(), ZoneError> {
         VALUES (
             $1,
             $2,
-            ST_Extrude($3, 0, 0, ($5::FLOAT(4) - $4::FLOAT(4))),
+            ST_Extrude($3::GEOMETRY(POLYGONZ, {DEFAULT_SRID}), 0, 0, ($5::FLOAT(4) - $4::FLOAT(4))),
             $4,
             $5,
             $6,
@@ -221,7 +221,7 @@ pub async fn update_zones(zones: Vec<RequestZone>) -> Result<(), ZoneError> {
             NOW()
         )
         ON CONFLICT (identifier) DO UPDATE SET
-            geom = ST_Extrude($3, 0, 0, ($5::FLOAT(4) - $4::FLOAT(4))),
+            geom = ST_Extrude($3::GEOMETRY(POLYGONZ, {DEFAULT_SRID}), 0, 0, ($5::FLOAT(4) - $4::FLOAT(4))),
             altitude_meters_min = $4,
             altitude_meters_max = $5,
             time_start = $6,
@@ -286,10 +286,10 @@ pub async fn get_zone_intersection_stmt(
             )
             FROM {schema}.zones
             WHERE
-                ST_3DIntersects(geom, $1::GEOMETRY)
-                AND (time_start <= $3 OR time_start IS NULL)
+                (time_start <= $3 OR time_start IS NULL)
                 AND (time_end >= $2 OR time_end IS NULL)
                 AND identifier NOT IN ($4, $5)
+                AND ST_3DIntersects(geom, $1::GEOMETRY(LINESTRINGZ, {DEFAULT_SRID}))
             LIMIT 1;
         ",
             schema = super::PSQL_SCHEMA

@@ -22,6 +22,10 @@ pub static DEADPOOL_POSTGIS: OnceCell<deadpool_postgres::Pool> = OnceCell::new()
 /// PostgreSQL schema for all tables
 pub const PSQL_SCHEMA: &str = "arrow";
 
+/// Default Spatial Reference Identifier
+/// WGS84 with Z axis: https://spatialreference.org/ref/epsg/4326/
+pub const DEFAULT_SRID: i32 = 4326;
+
 /// Error type for postgis actions
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum PostgisError {
@@ -109,7 +113,7 @@ impl std::error::Error for PsqlError {
 pub async fn psql_transaction(statements: Vec<String>) -> Result<(), PostgisError> {
     let Some(pool) = DEADPOOL_POSTGIS.get() else {
         postgis_error!("(psql_transaction) could not get psql pool.");
-        return Err(PostgisError::Psql(PsqlError::Client));
+        return Err(PostgisError::Psql(PsqlError::Connection));
     };
 
     let mut client = pool.get().await.map_err(|e| {
@@ -122,7 +126,7 @@ pub async fn psql_transaction(statements: Vec<String>) -> Result<(), PostgisErro
 
     let transaction = client.transaction().await.map_err(|e| {
         postgis_error!("(psql_transaction) could not create transaction: {}", e);
-        PostgisError::Psql(PsqlError::Connection)
+        PostgisError::Psql(PsqlError::Client)
     })?;
 
     for stmt in statements.into_iter() {

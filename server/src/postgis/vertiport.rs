@@ -1,12 +1,12 @@
 //! Updates vertiports in the PostGIS database.
 
+use super::PostgisError;
+use super::DEFAULT_SRID;
 use crate::grpc::server::grpc_server;
 use chrono::{DateTime, Utc};
 use grpc_server::Vertiport as RequestVertiport;
 use grpc_server::ZoneType;
 use postgis::ewkb::PointZ;
-
-use super::PostgisError;
 
 /// Allowed characters in a label
 pub const IDENTIFIER_REGEX: &str = r"^[\-0-9A-Za-z_\.]{1,255}$";
@@ -180,7 +180,7 @@ pub async fn update_vertiports(vertiports: Vec<RequestVertiport>) -> Result<(), 
                 ) VALUES (
                     $1,
                     ST_EXTRUDE(
-                        $2::GEOMETRY(POLYGONZ, 4326),
+                        $2::GEOMETRY(POLYGONZ, {DEFAULT_SRID}),
                         0,
                         0,
                         ($4::FLOAT(4) - $3::FLOAT(4))
@@ -193,7 +193,7 @@ pub async fn update_vertiports(vertiports: Vec<RequestVertiport>) -> Result<(), 
                 ON CONFLICT (identifier) DO UPDATE
                 SET
                     geom = ST_EXTRUDE(
-                        $2::GEOMETRY(POLYGONZ, 4326),
+                        $2::GEOMETRY(POLYGONZ, {DEFAULT_SRID}),
                         0,
                         0,
                         ($4::FLOAT(4) - $3::FLOAT(4))

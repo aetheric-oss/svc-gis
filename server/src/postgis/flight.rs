@@ -2,6 +2,7 @@
 
 use super::psql_transaction;
 use super::PostgisError;
+use super::DEFAULT_SRID;
 use crate::cache::{Consumer, Processor};
 use crate::postgis::utils::StringError;
 use chrono::{Duration, Utc};
@@ -60,90 +61,99 @@ pub async fn psql_init() -> Result<(), PostgisError> {
     let enum_name = "aircrafttype";
     let statements = vec![
         // super::psql_enum_declaration::<AircraftType>(enum_name), // should already exist
-        format!(
-            "CREATE TABLE IF NOT EXISTS {schema}.flights (
+        format!("CREATE TABLE IF NOT EXISTS {schema}.flights (
                 flight_identifier VARCHAR(20) UNIQUE PRIMARY KEY NOT NULL,
                 aircraft_identifier VARCHAR(20) NOT NULL,
                 aircraft_type {enum_name} NOT NULL DEFAULT '{aircraft_type}',
                 simulated BOOLEAN NOT NULL DEFAULT FALSE,
-                geom GEOMETRY(LINESTRINGZ, 4326), -- full path
+                geom GEOMETRY(LINESTRINGZ, {DEFAULT_SRID}), -- full path
                 isa GEOMETRY NOT NULL, -- envelope
                 time_start TIMESTAMPTZ,
                 time_end TIMESTAMPTZ
-            );
-            
-            CREATE TABLE IF NOT EXISTS {schema}.flight_segments (
+            );", schema = super::PSQL_SCHEMA, enum_name = enum_name, aircraft_type = AircraftType::Undeclared.to_string()),
+        format!("CREATE TABLE IF NOT EXISTS {schema}.flight_segments (
                 flight_identifier VARCHAR(20) NOT NULL,
-                geom GEOMETRY(LINESTRINGZ, 4326),
+                geom GEOMETRY(LINESTRINGZ, {DEFAULT_SRID}),
                 time_start TIMESTAMPTZ,
                 time_end TIMESTAMPTZ,
                 PRIMARY KEY (flight_identifier, time_start)
-            );
-            
-            CREATE INDEX IF NOT EXISTS flights_geom_idx ON {schema}.flights USING GIST (isa);
-            CREATE INDEX IF NOT EXISTS flight_paths_idx ON {schema}.flight_segments USING GIST (geom);
-            ",
-            schema = super::PSQL_SCHEMA,
-            aircraft_type = AircraftType::Undeclared.to_string()
-        ),
+            );", schema = super::PSQL_SCHEMA),
+        format!("CREATE INDEX IF NOT EXISTS flights_geom_idx ON {schema}.flights USING GIST (isa);", schema = super::PSQL_SCHEMA),
+        format!("CREATE INDEX IF NOT EXISTS flight_paths_idx ON {schema}.flight_segments USING GIST (ST_Transform(geom, 4978));", schema = super::PSQL_SCHEMA),
     ];
 
     psql_transaction(statements).await
 }
 
+/// Commits a transaction to the PostGIS database to clean up old flights
+async fn cleanup(pool: &deadpool_postgres::Pool) -> Result<(), PostgisError> {
+    // TODO(R5): Config setting
+    const DURATION_H: i64 = 6;
+    let expiration = Utc::now() - Duration::hours(DURATION_H);
+    let stmts = vec![
+        format!(
+            "DELETE FROM {schema}.flight_segments WHERE time_end < $1;",
+            schema = super::PSQL_SCHEMA
+        ),
+        format!(
+            "DELETE FROM {schema}.flights WHERE time_end < $1;",
+            schema = super::PSQL_SCHEMA
+        ),
+    ];
+
+    let mut client = pool.get().await.map_err(|e| {
+        postgis_error!(
+            "(flight::cleanup) could not get client from psql connection pool: {}",
+            e
+        );
+        PostgisError::FlightPath(FlightPathError::Client)
+    })?;
+
+    let transaction = client.transaction().await.map_err(|e| {
+        postgis_error!("(flight::cleanup) could not create transaction: {}", e);
+        PostgisError::FlightPath(FlightPathError::Client)
+    })?;
+
+    for stmt in &stmts {
+        transaction
+            .execute(stmt, &[&expiration])
+            .await
+            .map_err(|e| {
+                postgis_error!("(flight::cleanup) could not execute statement: {}", e);
+                PostgisError::FlightPath(FlightPathError::DBError)
+            })?;
+    }
+
+    transaction.commit().await.map_err(|e| {
+        postgis_error!("(flight::cleanup) could not commit transaction: {}", e);
+        PostgisError::FlightPath(FlightPathError::DBError)
+    })?;
+
+    Ok(())
+}
+
 /// Starts a thread that will remove old flights from the PostGIS flights table
 pub async fn psql_maintenance() -> Result<(), PostgisError> {
     postgis_info!("(flight::psql_maintenance) start.");
+
+    // TODO(R5): Config setting
+    const SLEEP_S: u64 = 60;
+
     let Some(pool) = crate::postgis::DEADPOOL_POSTGIS.get() else {
-        postgis_error!("(psql_maintenance) could not get psql pool.");
-        return Err(PostgisError::FlightPath(FlightPathError::Client));
+        postgis_error!("(flight::psql_maintenance) could not get psql pool.");
+        return Err(PostgisError::FlightPath(FlightPathError::DBError));
     };
 
-    // TODO(R5): These should be config settings
-    const DURATION_H: i64 = 6;
-    const FREQUENCY_S: u64 = 60;
-
     // Remove flights from postgis that are older than N hours
-    let stmt = format!(
-        "DELETE FROM {schema}.flight_segments WHERE time_end < $1;
-        DELETE FROM {schema}.flights WHERE time_end < $1;",
-        schema = super::PSQL_SCHEMA
-    );
-
     tokio::spawn(async move {
         loop {
             postgis_info!("(flight::psql_maintenance) running scheduled maintenance.");
 
-            match pool.get().await {
-                Ok(client) => {
-                    match client
-                        .query(&stmt, &[&(Utc::now() - Duration::hours(DURATION_H))])
-                        .await
-                    {
-                        Ok(result) => {
-                            postgis_info!(
-                                "(flight::psql_maintenance) removed {} flights older than {} hours.",
-                                result.len(),
-                                DURATION_H
-                            );
-                        }
-                        Err(e) => {
-                            postgis_error!(
-                                "(flight::psql_maintenance) could not execute simple query: {}",
-                                e
-                            );
-                        }
-                    }
-                }
-                Err(e) => {
-                    postgis_error!(
-                        "(flight::psql_maintenance) could not get client from psql connection pool: {}",
-                        e
-                    );
-                }
-            };
+            if let Err(e) = cleanup(pool).await {
+                postgis_error!("(flight::psql_maintenance) could not cleanup: {}", e);
+            }
 
-            tokio::time::sleep(tokio::time::Duration::from_secs(FREQUENCY_S)).await;
+            tokio::time::sleep(tokio::time::Duration::from_secs(SLEEP_S)).await;
         }
     });
 
@@ -154,6 +164,10 @@ pub async fn psql_maintenance() -> Result<(), PostgisError> {
 #[async_trait]
 impl Processor<FlightPath> for Consumer {
     async fn process(&mut self, items: Vec<FlightPath>) -> Result<(), ()> {
+        if items.is_empty() {
+            return Ok(());
+        }
+
         update_flight_path(items).await.map_err(|_| ())
     }
 }
@@ -180,33 +194,8 @@ pub async fn update_flight_path(flights: Vec<FlightPath>) -> Result<(), PostgisE
         return Ok(());
     }
 
-    let Some(pool) = crate::postgis::DEADPOOL_POSTGIS.get() else {
-        postgis_error!("(update_flight_path) could not get psql pool.");
-        return Err(PostgisError::FlightPath(FlightPathError::Client));
-    };
-
-    let mut client = pool.get().await.map_err(|e| {
-        postgis_error!(
-            "(update_flight_path) could not get client from psql connection pool: {}",
-            e
-        );
-
-        PostgisError::FlightPath(FlightPathError::Client)
-    })?;
-
-    let transaction = client.transaction().await.map_err(|e| {
-        postgis_error!("(update_flight_path) could not create transaction: {}", e);
-
-        PostgisError::FlightPath(FlightPathError::DBError)
-    })?;
-
-    let stmt = transaction
-        .prepare_cached(&format!(
-            "
-
-        BEGIN;
-
-        INSERT INTO {schema}.flights (
+    let flights_insertion_stmt: String = format!(
+        "INSERT INTO {schema}.flights (
             flight_identifier,
             aircraft_identifier,
             aircraft_type,
@@ -224,36 +213,42 @@ pub async fn update_flight_path(flights: Vec<FlightPath>) -> Result<(), PostgisE
                 geom = EXCLUDED.geom,
                 isa = (ST_Envelope(EXCLUDED.geom)),
                 time_start = EXCLUDED.time_start,
-                time_end = EXCLUDED.time_end;
+                time_end = EXCLUDED.time_end;",
+        schema = super::PSQL_SCHEMA
+    );
 
-        DELETE FROM {schema}.flight_segments WHERE flight_identifier = $1;
+    let segments_deletion_stmt = format!(
+        "DELETE FROM {schema}.flight_segments WHERE flight_identifier = $1;",
+        schema = super::PSQL_SCHEMA
+    );
 
-        FOR row IN $8
-        LOOP
-            INSERT INTO {schema}.flight_segments (
-                flight_identifier,
-                geom,
-                time_start,
-                time_end
-            )
-            VALUES ($1, row.geom, row.time_start, row.time_end)
-            ON CONFLICT (flight_identifier, time_start) DO UPDATE
-                SET geom = EXCLUDED.geom,
-                    time_end = EXCLUDED.time_end;
-        END LOOP;
-        
-        COMMIT;
-        ",
-            schema = super::PSQL_SCHEMA
-        ))
-        .await
-        .map_err(|e| {
-            postgis_error!(
-                "(update_flight_path) could not prepare cached statement: {}",
-                e
-            );
-            PostgisError::FlightPath(FlightPathError::DBError)
-        })?;
+    let segment_insertion_stmt = format!(
+        "INSERT INTO {schema}.flight_segments (
+            flight_identifier,
+            geom,
+            time_start,
+            time_end
+        ) VALUES ( $1, $2, $3, $4 );",
+        schema = super::PSQL_SCHEMA
+    );
+
+    let Some(pool) = crate::postgis::DEADPOOL_POSTGIS.get() else {
+        postgis_error!("(update_flight_path) could not get psql pool.");
+        return Err(PostgisError::FlightPath(FlightPathError::DBError));
+    };
+
+    let mut client = pool.get().await.map_err(|e| {
+        postgis_error!(
+            "(update_flight_path) could not get client from psql connection pool: {}",
+            e
+        );
+        PostgisError::FlightPath(FlightPathError::Client)
+    })?;
+
+    let transaction = client.transaction().await.map_err(|e| {
+        postgis_error!("(update_flight_path) could not create transaction: {}", e);
+        PostgisError::FlightPath(FlightPathError::Client)
+    })?;
 
     for flight in &flights {
         if let Err(e) = validate_flight_path(flight) {
@@ -282,8 +277,10 @@ pub async fn update_flight_path(flights: Vec<FlightPath>) -> Result<(), PostgisE
         // Subdivide the path into segments by length
         let geom = LineStringT {
             points: points.clone(),
-            srid: Some(4326),
+            srid: Some(DEFAULT_SRID),
         };
+
+        postgis_debug!("(update_flight_path) segmentizing path.");
 
         let Ok(segments) =
             super::utils::segmentize(points, flight.timestamp_start, flight.timestamp_end).await
@@ -294,9 +291,11 @@ pub async fn update_flight_path(flights: Vec<FlightPath>) -> Result<(), PostgisE
             continue;
         };
 
+        postgis_debug!("(update_flight_path) found segments: {:?}", segments);
+
         transaction
             .execute(
-                &stmt,
+                &flights_insertion_stmt,
                 &[
                     &flight.flight_identifier,
                     &flight.aircraft_identifier,
@@ -305,26 +304,57 @@ pub async fn update_flight_path(flights: Vec<FlightPath>) -> Result<(), PostgisE
                     &flight.timestamp_start,
                     &flight.timestamp_end,
                     &geom,
-                    &segments,
                 ],
             )
             .await
             .map_err(|e| {
-                postgis_error!("(update_flight_path) could not execute transaction: {}", e);
+                postgis_error!(
+                    "(update_flight_path) could not execute transaction to insert flight: {}",
+                    e
+                );
                 PostgisError::FlightPath(FlightPathError::DBError)
             })?;
+
+        transaction
+            .execute(&segments_deletion_stmt, &[&flight.flight_identifier])
+            .await
+            .map_err(|e| {
+                postgis_error!(
+                    "(update_flight_path) could not execute transaction to delete segments: {}",
+                    e
+                );
+                PostgisError::FlightPath(FlightPathError::DBError)
+            })?;
+
+        for segment in segments {
+            transaction
+                .execute(
+                    &segment_insertion_stmt,
+                    &[
+                        &flight.flight_identifier,
+                        &segment.geom,
+                        &segment.time_start,
+                        &segment.time_end,
+                    ],
+                )
+                .await
+                .map_err(|e| {
+                    postgis_error!(
+                        "(update_flight_path) could not execute transaction to insert segment: {}",
+                        e
+                    );
+                    PostgisError::FlightPath(FlightPathError::DBError)
+                })?;
+        }
     }
 
-    match transaction.commit().await {
-        Ok(_) => {
-            postgis_debug!("(update_flight_path) success.");
-            Ok(())
-        }
-        Err(e) => {
-            postgis_error!("(update_flight_path) could not commit transaction: {}", e);
-            Err(PostgisError::FlightPath(FlightPathError::DBError))
-        }
-    }
+    transaction.commit().await.map_err(|e| {
+        postgis_error!("(update_flight_path) could not commit transaction: {}", e);
+        PostgisError::FlightPath(FlightPathError::DBError)
+    })?;
+
+    postgis_info!("(update_flight_path) success.");
+    Ok(())
 }
 
 /// Prepares a statement that checks zone intersections with the provided geometry
@@ -333,20 +363,31 @@ pub async fn get_flight_intersection_stmt(
 ) -> Result<tokio_postgres::Statement, PostgisError> {
     let result = client
         .prepare_cached(&format!(
-            "
-            SELECT (
+            "WITH segments AS (
+                SELECT (
+                    flight_identifier,
+                    geom,
+                    time_start,
+                    time_end
+                )
+                FROM {schema}.flight_segments
+                WHERE
+                    (time_start <= $4 OR time_start IS NULL) -- easy checks first
+                    AND (time_end >= $3 OR time_end IS NULL)
+                    AND ST_3DDWithin(
+                        ST_Transform(geom, 4978),
+                        ST_Transform($1, 4978),
+                        $2 -- meters
+                    )
+            ) SELECT
                 flight_identifier,
                 aircraft_identifier,
                 geom,
                 time_start,
                 time_end
-            )
             FROM {schema}.flights
-            WHERE
-                ST_DWithin(geom, $1::GEOMETRY, $2)
-                AND (time_start <= $4 OR time_start IS NULL)
-                AND (time_end >= $3 OR time_end IS NULL)
-                AND (NOT simulated)
+            WHERE flight_identifier IN (SELECT flight_identifier FROM segments)
+                AND simulated = FALSE
             LIMIT 1;
         ",
             schema = super::PSQL_SCHEMA,
@@ -385,7 +426,7 @@ mod tests {
         };
 
         let result = update_flight_path(vec![item]).await.unwrap_err();
-        assert_eq!(result, PostgisError::FlightPath(FlightPathError::Client));
+        assert_eq!(result, PostgisError::FlightPath(FlightPathError::DBError));
 
         ut_info!("(ut_client_failure) success");
     }

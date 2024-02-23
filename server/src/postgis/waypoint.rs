@@ -34,7 +34,7 @@ impl std::fmt::Display for WaypointError {
             WaypointError::Identifier => write!(f, "Invalid identifier provided."),
             WaypointError::Location => write!(f, "Invalid location provided."),
             WaypointError::Client => write!(f, "Could not get backend client."),
-            WaypointError::DBError => write!(f, "Unknown backend error."),
+            WaypointError::DBError => write!(f, "Database error."),
         }
     }
 }
@@ -93,10 +93,10 @@ pub async fn psql_init() -> Result<(), PostgisError> {
         format!(
             "CREATE TABLE IF NOT EXISTS {table_name} (
             identifier VARCHAR(255) UNIQUE NOT NULL,
-            geom GEOMETRY(POINT, 4326) NOT NULL
+            geog GEOGRAPHY NOT NULL
         );"
         ),
-        format!("CREATE INDEX IF NOT EXISTS waypoints_geom_idx ON {table_name} USING GIST (geom);"),
+        format!("CREATE INDEX IF NOT EXISTS waypoints_geog_idx ON {table_name} USING GIST (geog);"),
     ];
 
     super::psql_transaction(statements).await
@@ -136,9 +136,9 @@ pub async fn update_waypoints(waypoints: Vec<RequestWaypoint>) -> Result<(), Way
     let stmt = transaction
         .prepare_cached(&format!(
             "\
-        INSERT INTO {schema}.waypoints (identifier, geom)
-        VALUES ($1, $2)
-        ON CONFLICT (identifier) DO UPDATE SET geom = $2;",
+        INSERT INTO {schema}.waypoints (identifier, geog)
+        VALUES ($1, $2::geography)
+        ON CONFLICT (identifier) DO UPDATE SET geog = $2::geography;",
             schema = super::PSQL_SCHEMA
         ))
         .await
@@ -173,6 +173,8 @@ pub async fn update_waypoints(waypoints: Vec<RequestWaypoint>) -> Result<(), Way
 }
 
 /// Get a subset of waypoints within N meters of another geometry
+///  Make sure the geometry is in the same SRID as the waypoints
+///  (4326)
 pub async fn get_waypoints_near_geometry(
     geom: &postgis::ewkb::GeometryZ,
     range_meters: f32,
@@ -194,8 +196,13 @@ pub async fn get_waypoints_near_geometry(
     // Get a subset of waypoints within N meters of the line between the origin and target
     //  This saves computation time by doing shortest path on a smaller graph
     let stmt = format!(
-        "SELECT identifier, geom FROM {}.waypoints
-        WHERE ST_DWithin(geom, $1, $2::FLOAT(4), false);",
+        "SELECT identifier, geog FROM {}.waypoints
+        WHERE ST_DWithin(
+            geog,
+            $1::geography, -- ignores Z-axis
+            $2::FLOAT(4),
+            false
+        );",
         super::PSQL_SCHEMA
     );
 

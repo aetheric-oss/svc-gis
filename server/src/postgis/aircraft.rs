@@ -2,6 +2,7 @@
 
 use super::psql_transaction;
 use super::PostgisError;
+use super::DEFAULT_SRID;
 use crate::cache::{Consumer, Processor};
 use crate::postgis::utils::StringError;
 use chrono::{DateTime, Utc};
@@ -68,7 +69,7 @@ pub async fn psql_init() -> Result<(), PostgisError> {
                 velocity_horizontal_air_mps FLOAT(4),
                 velocity_vertical_mps FLOAT(4),
                 track_angle_degrees FLOAT(4),
-                geom GEOMETRY(POINTZ, 4326),
+                geom GEOMETRY(POINTZ, {DEFAULT_SRID}),
                 last_identifier_update TIMESTAMPTZ,
                 last_position_update TIMESTAMPTZ,
                 last_velocity_update TIMESTAMPTZ
@@ -83,6 +84,10 @@ pub async fn psql_init() -> Result<(), PostgisError> {
 #[async_trait]
 impl Processor<AircraftId> for Consumer {
     async fn process(&mut self, items: Vec<AircraftId>) -> Result<(), ()> {
+        if items.is_empty() {
+            return Ok(());
+        }
+
         update_aircraft_id(items).await.map_err(|_| ())
     }
 }
@@ -90,6 +95,10 @@ impl Processor<AircraftId> for Consumer {
 #[async_trait]
 impl Processor<AircraftPosition> for Consumer {
     async fn process(&mut self, items: Vec<AircraftPosition>) -> Result<(), ()> {
+        if items.is_empty() {
+            return Ok(());
+        }
+
         update_aircraft_position(items).await.map_err(|_| ())
     }
 }
@@ -97,6 +106,10 @@ impl Processor<AircraftPosition> for Consumer {
 #[async_trait]
 impl Processor<AircraftVelocity> for Consumer {
     async fn process(&mut self, items: Vec<AircraftVelocity>) -> Result<(), ()> {
+        if items.is_empty() {
+            return Ok(());
+        }
+
         update_aircraft_velocity(items).await.map_err(|_| ())
     }
 }

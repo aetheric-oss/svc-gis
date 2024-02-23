@@ -1,5 +1,6 @@
 //! This module contains functions for routing between nodes.
 use super::PostgisError;
+use super::DEFAULT_SRID;
 use crate::grpc::server::grpc_server::{
     BestPathRequest, NodeType, Path as GrpcPath, PathNode as GrpcPathNode, PointZ as GrpcPointZ,
 };
@@ -257,6 +258,104 @@ impl TryFrom<BestPathRequest> for PathRequest {
     }
 }
 
+/// Checks if the path intersects with any no-fly zones or existing flights
+async fn intersection_checks(
+    client: &deadpool_postgres::Client,
+    points: Vec<PointZ>,
+    time_start: DateTime<Utc>,
+    time_end: DateTime<Utc>,
+    origin_identifier: &str,
+    target_identifier: &str,
+) -> Result<(), PostgisError> {
+    // TODO(R5): This is dependent on the aircraft type
+    //  Small drones can come closer to one another than large drones
+    //  or rideshare vehicles
+    const ALLOWABLE_DISTANCE_M: f64 = 10.0;
+
+    let segments = super::utils::segmentize(points.clone(), time_start, time_end)
+        .await
+        .map_err(|e| {
+            postgis_error!("(intersection_checks) could not segmentize path: {}", e);
+            PostgisError::BestPath(PathError::DBError)
+        })?;
+
+    postgis_debug!("(intersection_checks) segments: {:?}", segments);
+
+    let geom = LineStringT {
+        points,
+        srid: Some(DEFAULT_SRID),
+    };
+
+    // Check if any of the zones overlap this path
+    let zone_stmt = crate::postgis::zone::get_zone_intersection_stmt(client).await?;
+    let result = client
+        .query(
+            &zone_stmt,
+            &[
+                &geom,
+                &time_start,
+                &time_end,
+                &origin_identifier,
+                &target_identifier,
+            ],
+        )
+        .await
+        .map_err(|e| {
+            postgis_error!(
+                "(intersection_checks) could not query for zone intersection: {}",
+                e
+            );
+            PostgisError::BestPath(PathError::DBError)
+        })?;
+
+    // If there are any zone intersection results, this path is invalid
+    if !result.is_empty() {
+        postgis_debug!("(intersection_checks) flight path intersects with no-fly zones");
+        return Err(PostgisError::BestPath(PathError::NoPath));
+    }
+
+    // Check if this conflicts with other flights' segments
+    let flights_stmt = crate::postgis::flight::get_flight_intersection_stmt(client).await?;
+
+    // TODO(R5): Is it faster to do a join statement on the segments table?
+    for segment in segments {
+        let result = client
+            .query(
+                &flights_stmt,
+                &[
+                    &segment.geom,
+                    &ALLOWABLE_DISTANCE_M,
+                    &segment.time_start,
+                    &segment.time_end,
+                ],
+            )
+            .await
+            .map_err(|e| {
+                postgis_error!(
+                "(intersection_checks) could not query for existing flight paths intersection: {}",
+                e
+            );
+                PostgisError::BestPath(PathError::DBError)
+            })?;
+
+        // If any intersections found, reject this
+        if !result.is_empty() {
+            postgis_debug!(
+                "(intersection_checks) flight path intersects with existing flight paths"
+            );
+
+            postgis_debug!(
+                "(intersection_checks) flight path: {:?}, intersects with: {:?}",
+                segment.geom.points,
+                result
+            );
+            return Err(PostgisError::BestPath(PathError::NoPath));
+        }
+    }
+
+    Ok(())
+}
+
 /// Modified A* algorithm for finding the best path between two points
 ///  Potentials are sorted by (distance to target + distance traversed)
 async fn mod_a_star(
@@ -267,12 +366,7 @@ async fn mod_a_star(
     waypoints: Vec<super::waypoint::Waypoint>,
     limit: usize,
 ) -> Result<Vec<Path>, PostgisError> {
-    postgis_info!("(mod_a_star) entry.");
-
-    // TODO(R5): This is dependent on the aircraft type
-    //  Small drones can come closer to one another than large drones
-    //  or rideshare vehicles
-    let allowable_distance_m = 10.0;
+    postgis_debug!("(mod_a_star) entry.");
 
     // Using a binary heap to store potential paths
     //  means potentials are sorted on insert with O(log n)
@@ -331,8 +425,6 @@ async fn mod_a_star(
     // TODO(R5): Conditional approval zones
     //  For now all zones are considered no-fly zones
     //  So limit query to one result
-    let zone_stmt = crate::postgis::zone::get_zone_intersection_stmt(&client).await?;
-    let flights_stmt = crate::postgis::flight::get_flight_intersection_stmt(&client).await?;
 
     // Run until we have 'limit' paths or we run out of potentials
     while completed.len() < limit && !potentials.is_empty() {
@@ -376,53 +468,26 @@ async fn mod_a_star(
             //  to ensure flight safety
 
             // Path 3D linestring for zone intersection check
-            let linestring = LineStringT {
-                points: tmp.path.iter().map(|p| p.geom).collect::<Vec<PointZ>>(),
-                srid: Some(4326),
-            };
+            let points = tmp.path.iter().map(|p| p.geom).collect::<Vec<PointZ>>();
 
-            // Check if any of the zones overlap this path
-            let Ok(result) = client
-                .query(
-                    &zone_stmt,
-                    &[
-                        &linestring,
-                        &time_start,
-                        &time_end,
-                        &origin_node.identifier,
-                        &target_node.identifier,
-                    ],
-                )
-                .await
-            else {
-                postgis_error!("(mod_a_star) could not query for zone intersection");
-                return Err(PostgisError::BestPath(PathError::DBError));
-            };
-
-            // If there are any zone intersection results, this path is invalid
-            if !result.is_empty() {
-                postgis_debug!("(mod_a_star) flight path intersects with no-fly zones");
-                continue;
-            }
-
-            // Check if this conflicts with other flights' segments
-            let Ok(result) = client
-                .query(
-                    &flights_stmt,
-                    &[&linestring, &allowable_distance_m, &time_start, &time_end],
-                )
-                .await
-            else {
-                postgis_error!(
-                    "(mod_a_star) could not query for existing flight paths intersection"
-                );
-                return Err(PostgisError::BestPath(PathError::DBError));
-            };
-
-            // If any intersections found, reject this
-            if !result.is_empty() {
-                postgis_debug!("(mod_a_star) flight path intersects with existing flight paths");
-                continue;
+            match intersection_checks(
+                &client,
+                points,
+                time_start,
+                time_end,
+                &origin_node.identifier,
+                &target_node.identifier,
+            )
+            .await
+            {
+                Ok(_) => (),
+                Err(PostgisError::BestPath(PathError::NoPath)) => {
+                    continue;
+                }
+                Err(e) => {
+                    postgis_error!("(mod_a_star) intersection checks failed: {}", e);
+                    return Err(e);
+                }
             }
 
             // Valid routes are pushed
@@ -479,7 +544,7 @@ pub async fn best_path(request: BestPathRequest) -> Result<Vec<GrpcPath>, Postgi
     let waypoints = crate::postgis::waypoint::get_waypoints_near_geometry(
         &(postgis::ewkb::GeometryT::LineString(LineStringT {
             points: vec![origin_geom, target_geom],
-            srid: Some(4326),
+            srid: Some(DEFAULT_SRID),
         })),
         WAYPOINT_RANGE_METERS,
     )

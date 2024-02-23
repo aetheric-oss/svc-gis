@@ -1,5 +1,6 @@
 //! Common functions for PostGIS operations
 
+use super::DEFAULT_SRID;
 use super::{PostgisError, PsqlError};
 use crate::grpc::server::grpc_server::Coordinates;
 use crate::types::Position;
@@ -124,7 +125,7 @@ impl TryFrom<Position> for PointZ {
             position.longitude,
             position.latitude,
             position.altitude_meters,
-            Some(4326),
+            Some(DEFAULT_SRID),
         ))
     }
 }
@@ -156,7 +157,7 @@ pub fn polygon_from_vertices_z(
                 x: pt.longitude,
                 y: pt.latitude,
                 z: altitude_meters as f64,
-                srid: Some(4326),
+                srid: Some(DEFAULT_SRID),
             }),
         )
         .is_err()
@@ -172,12 +173,12 @@ pub fn polygon_from_vertices_z(
                     x: vertex.longitude,
                     y: vertex.latitude,
                     z: altitude_meters as f64,
-                    srid: Some(4326),
+                    srid: Some(DEFAULT_SRID),
                 })
                 .collect(),
-            srid: Some(4326),
+            srid: Some(DEFAULT_SRID),
         }],
-        srid: Some(4326),
+        srid: Some(DEFAULT_SRID),
     })
 }
 
@@ -196,7 +197,7 @@ pub fn point_from_vertex(vertex: &Coordinates) -> Result<Point, PointError> {
     Ok(Point {
         x: vertex.longitude,
         y: vertex.latitude,
-        srid: Some(4326),
+        srid: Some(DEFAULT_SRID),
     })
 }
 
@@ -216,7 +217,7 @@ pub struct Segment {
 #[derive(Debug)]
 struct ExpectedResult {
     // The index of the segment
-    idx: i32,
+    idx: i64,
 
     // The geometry of the segment
     geom: LineStringZ,
@@ -229,7 +230,7 @@ impl TryFrom<Row> for ExpectedResult {
     type Error = PostgisError;
 
     fn try_from(row: Row) -> Result<Self, Self::Error> {
-        let idx: i32 = row.get(0);
+        let idx: i64 = row.get(0);
         let geom: LineStringZ = row.get(1);
         let distance_m: f64 = row.get(2);
 
@@ -248,59 +249,60 @@ pub async fn segmentize(
     timestamp_end: DateTime<Utc>,
 ) -> Result<Vec<Segment>, PostgisError> {
     // TODO(R5): Configurable
+    /// The maximum length of a flight segment in meters
     const MAX_SEGMENT_LENGTH_M: f64 = 40.0;
 
     let geom = LineStringT {
         points,
-        srid: Some(4326),
+        srid: Some(DEFAULT_SRID),
     };
 
-    let stmt = "WITH segments AS 
-    (
+    let stmt = "WITH segments AS (
         SELECT
             geom,
-            ST_Length(ST_Transform(geom, 4326)::geography) AS distance_m
+            ST_3DLength(geom) AS distance_m
         FROM ST_DumpSegments(
             (
-                SELECT ST_Segmentize($1::geography, 40)::geometry
+                SELECT ST_Segmentize(
+                    $1::geography,
+                    $2::FLOAT
+                )::geometry
             )
         )
-    ), totals AS (
-        SELECT 
-            sum(segments.distance_m) AS total_length,
-            ($3 - $2) AS total_duration
-        FROM segments
     ) SELECT 
             ROW_NUMBER() OVER () AS idx,
             segments.geom AS geom,
-            segments.distance_m AS distance_m,
-        FROM segments, totals;
-    ";
+            segments.distance_m AS distance_m
+        FROM segments;
+    "
+    .to_string();
 
     let Some(pool) = crate::postgis::DEADPOOL_POSTGIS.get() else {
-        postgis_error!("(get_subdivided) could not get psql pool.");
+        postgis_error!("(segmentize) could not get psql pool.");
         return Err(PostgisError::Psql(PsqlError::Client));
     };
 
     let client = pool.get().await.map_err(|e| {
         postgis_error!(
-            "(get_waypoints_near_geometry) could not get client from psql connection pool: {}",
+            "(segmentize) could not get client from psql connection pool: {}",
             e
         );
         PostgisError::Psql(PsqlError::Client)
     })?;
 
-    let results = client
-        .query(stmt, &[&geom, &timestamp_start, &timestamp_end])
+    let mut results = client
+        .query(&stmt, &[&geom, &MAX_SEGMENT_LENGTH_M])
         .await
         .map_err(|e| {
-            postgis_error!("(get_subdivided) could not execute query: {}", e);
+            postgis_error!("(segmentize) could not execute query: {}", e);
 
             PostgisError::Psql(PsqlError::Execute)
         })?
         .into_iter()
         .map(ExpectedResult::try_from)
         .collect::<Result<Vec<ExpectedResult>, PostgisError>>()?;
+
+    results.sort_by(|a, b| a.idx.cmp(&b.idx));
 
     let mut cursor = timestamp_start;
     let duration = timestamp_end - timestamp_start;
@@ -325,11 +327,12 @@ pub async fn segmentize(
         })
         .collect::<Vec<Segment>>();
 
-    postgis_info!(
+    postgis_debug!(
         "(segmentize) found {} segments. craft velocity {} m/s.",
         results.len(),
         velocity_m_s
     );
+
     Ok(results)
 }
 
@@ -355,7 +358,7 @@ mod tests {
             Point {
                 x: longitude,
                 y: latitude,
-                srid: Some(4326)
+                srid: Some(DEFAULT_SRID)
             }
         );
     }
@@ -416,12 +419,12 @@ mod tests {
                         x: vertex.longitude,
                         y: vertex.latitude,
                         z: altitude_meters as f64,
-                        srid: Some(4326),
+                        srid: Some(DEFAULT_SRID),
                     })
                     .collect(),
-                srid: Some(4326),
+                srid: Some(DEFAULT_SRID),
             }],
-            srid: Some(4326),
+            srid: Some(DEFAULT_SRID),
         };
 
         assert_eq!(polygon, expected);

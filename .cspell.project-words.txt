@@ -100,3 +100,5 @@ nanos
 rpop
 rpush
 typname
+segmentize
+segmentizing

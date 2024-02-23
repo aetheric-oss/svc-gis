@@ -315,7 +315,65 @@ async fn best_path_flight_avoidance(
     let time_end: DateTime<Utc> = Utc::now() + Duration::minutes(15);
 
     // Best Path Request
-    println!("\n\u{1F426} Best Path Without Interrupting Flight");
+    println!("\n\u{1F426} Best Path With Zero Other Flight Paths Prior");
+    let request = BestPathRequest {
+        origin_identifier: ALKMAAR_1_ID.to_string(),
+        target_identifier: ALKMAAR_2_ID.to_string(),
+        origin_type: NodeType::Vertiport as i32,
+        target_type: NodeType::Vertiport as i32,
+        time_start: Some(time_start.clone().into()),
+        time_end: Some(time_end.clone().into()),
+        limit: 1,
+    };
+
+    let response = client.best_path(request).await?.into_inner();
+    let Some(path) = response.paths.first() else {
+        panic!("No path found.");
+    };
+
+    println!("(best_path_flight_avoidance) Found flight path at Alkmaar:");
+    display_paths(&vec![path.clone()]);
+
+    //
+    // Insert new flight plan for the same time and path, but at a different altitude
+    //  PostGIS does a 2D comparison of the flight paths first
+    //  If the 2D representation of the flight paths intersect/come close, then the
+    //  3D comparison is done to see if the flight paths are at different altitudes
+    let path = [
+        alkmaar_1_polygon.centroid().unwrap(),
+        alkmaar_2_polygon.centroid().unwrap(),
+    ]
+    .into_iter()
+    .map(|pt| Position {
+        latitude: pt.y(),
+        longitude: pt.x(),
+        altitude_meters: 200.0,
+    })
+    .collect::<Vec<Position>>();
+
+    let flight_path = FlightPath {
+        flight_identifier: "FLIGHT-Y".to_string(),
+        aircraft_identifier: "Razor Crest".to_string(),
+        path,
+        timestamp_start: time_start.clone(),
+        timestamp_end: time_end.clone(),
+        simulated: false,
+        aircraft_type: AircraftType::Rotorcraft,
+    };
+
+    let _ = redis::pipe()
+        .rpush(
+            REDIS_KEY_FLIGHT_PATH,
+            serde_json::to_vec(&flight_path).unwrap(),
+        )
+        .query::<()>(connection)
+        .unwrap();
+
+    // Might take a moment for the flight to be consumed from the queue by svc-gis
+    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+    // Best Path Request
+    println!("\n\u{1F426} Best Path With Prior Flight Path @ Different Altitude (No-Intersect)");
     let request = BestPathRequest {
         origin_identifier: ALKMAAR_1_ID.to_string(),
         target_identifier: ALKMAAR_2_ID.to_string(),
@@ -405,6 +463,28 @@ async fn best_path_flight_avoidance(
         target_type: NodeType::Vertiport as i32,
         time_start: Some((time_end.clone() + Duration::seconds(1)).into()),
         time_end: Some((time_end.clone() + Duration::minutes(1)).into()),
+        limit: 1,
+    };
+
+    let response = client.best_path(request).await?.into_inner();
+    let Some(path) = response.paths.first() else {
+        panic!("No path found.");
+    };
+
+    println!("(best_path_flight_avoidance) Found flight path at Alkmaar:");
+    display_paths(&vec![path.clone()]);
+
+    //
+    // Try Best Path again during same time as other flight, with offset of time
+    //
+    println!("\n\u{1F426} Best Path With Identical Flight at Time Offset");
+    let request = BestPathRequest {
+        origin_identifier: ALKMAAR_1_ID.to_string(),
+        target_identifier: ALKMAAR_2_ID.to_string(),
+        origin_type: NodeType::Vertiport as i32,
+        target_type: NodeType::Vertiport as i32,
+        time_start: Some((time_end - Duration::seconds(2)).into()),
+        time_end: Some((time_end + Duration::minutes(13)).into()),
         limit: 1,
     };
 
@@ -533,10 +613,15 @@ async fn best_paths(client: &GisClient) -> Result<(), Box<dyn std::error::Error>
             limit: 1,
         };
 
-        let response = client.best_path(request).await?.into_inner();
+        let mut response = client.best_path(request).await?.into_inner();
 
         println!("RESPONSE={:?}", response);
         display_paths(&response.paths);
+
+        let expected = 3;
+        if response.paths.pop().unwrap().path.len() != expected {
+            panic!("Expected {expected} paths, got {}", response.paths.len());
+        }
     }
 
     // Best Path After Temporary No-Fly Zone
