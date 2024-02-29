@@ -102,3 +102,4 @@ rpush
 typname
 segmentize
 segmentizing
+formatcp

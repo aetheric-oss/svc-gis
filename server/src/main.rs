@@ -1,6 +1,5 @@
 //! Main function starting the server and initializing dependencies.
 
-use crate::postgis::psql_maintenance;
 use crate::types::{
     AircraftId, AircraftPosition, AircraftVelocity, FlightPath, REDIS_KEY_AIRCRAFT_ID,
     REDIS_KEY_AIRCRAFT_POSITION, REDIS_KEY_AIRCRAFT_VELOCITY, REDIS_KEY_FLIGHT_PATH,
@@ -61,12 +60,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     postgis::psql_init().await?;
-
-    // Start the maintenance threads
-    if psql_maintenance().await.is_err() {
-        log::error!("(main) Could not start maintenance threads.");
-        panic!("Could not start maintenance threads.");
-    }
 
     // Start the Redis consumers
     if start_redis_consumers(&config).await.is_err() {

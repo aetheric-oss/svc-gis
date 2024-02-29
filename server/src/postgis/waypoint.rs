@@ -3,7 +3,7 @@
 use crate::grpc::server::grpc_server;
 use grpc_server::Waypoint as RequestWaypoint;
 
-use super::PostgisError;
+use super::{PostgisError, PSQL_SCHEMA};
 
 /// Allowed characters in a waypoint identifier
 const IDENTIFIER_REGEX: &str = r"^[\-0-9A-Za-z_\.]{1,255}$";
@@ -37,6 +37,12 @@ impl std::fmt::Display for WaypointError {
             WaypointError::DBError => write!(f, "Database error."),
         }
     }
+}
+
+/// Gets the name of this module's table
+fn get_table_name() -> &'static str {
+    static FULL_NAME: &str = const_format::formatcp!(r#""{PSQL_SCHEMA}"."waypoints""#,);
+    FULL_NAME
 }
 
 /// Waypoint type
@@ -88,15 +94,18 @@ impl TryFrom<RequestWaypoint> for Waypoint {
 /// Initialize the vertiports table in the PostGIS database
 pub async fn psql_init() -> Result<(), PostgisError> {
     // Create Aircraft Table
-    let table_name = format!("{}.waypoints", super::PSQL_SCHEMA);
     let statements = vec![
         format!(
-            "CREATE TABLE IF NOT EXISTS {table_name} (
-            identifier VARCHAR(255) UNIQUE NOT NULL,
-            geog GEOGRAPHY NOT NULL
-        );"
+            r#"CREATE TABLE IF NOT EXISTS {table_name} (
+            "identifier" VARCHAR(255) UNIQUE NOT NULL,
+            "geog" GEOGRAPHY NOT NULL
+        );"#,
+            table_name = get_table_name()
         ),
-        format!("CREATE INDEX IF NOT EXISTS waypoints_geog_idx ON {table_name} USING GIST (geog);"),
+        format!(
+            r#"CREATE INDEX IF NOT EXISTS "waypoints_geog_idx" ON {table_name} USING GIST ("geog");"#,
+            table_name = get_table_name()
+        ),
     ];
 
     super::psql_transaction(statements).await
@@ -135,11 +144,16 @@ pub async fn update_waypoints(waypoints: Vec<RequestWaypoint>) -> Result<(), Way
 
     let stmt = transaction
         .prepare_cached(&format!(
-            "\
-        INSERT INTO {schema}.waypoints (identifier, geog)
+            r#"INSERT INTO {table_name} (
+            "identifier",
+            "geog"
+        )
         VALUES ($1, $2::geography)
-        ON CONFLICT (identifier) DO UPDATE SET geog = $2::geography;",
-            schema = super::PSQL_SCHEMA
+        ON CONFLICT ("identifier")
+        DO UPDATE
+            SET "geog" = EXCLUDED."geog";
+        "#,
+            table_name = get_table_name()
         ))
         .await
         .map_err(|e| {
@@ -196,14 +210,17 @@ pub async fn get_waypoints_near_geometry(
     // Get a subset of waypoints within N meters of the line between the origin and target
     //  This saves computation time by doing shortest path on a smaller graph
     let stmt = format!(
-        "SELECT identifier, geog FROM {}.waypoints
+        r#"SELECT
+            "identifier",
+            "geog"
+        FROM {table_name}
         WHERE ST_DWithin(
-            geog,
+            "geog",
             $1::geography, -- ignores Z-axis
             $2::FLOAT(4),
             false
-        );",
-        super::PSQL_SCHEMA
+        );"#,
+        table_name = get_table_name()
     );
 
     Ok(client

@@ -1,8 +1,7 @@
 //! This module contains functions for updating aircraft in the PostGIS database.
 
-use super::psql_transaction;
-use super::PostgisError;
-use super::DEFAULT_SRID;
+use super::{psql_transaction, PostgisError, DEFAULT_SRID, PSQL_SCHEMA};
+
 use crate::cache::{Consumer, Processor};
 use crate::postgis::utils::StringError;
 use chrono::{DateTime, Utc};
@@ -49,6 +48,12 @@ impl std::fmt::Display for AircraftError {
     }
 }
 
+/// Gets the name of this module's table
+fn get_table_name() -> &'static str {
+    static FULL_NAME: &str = const_format::formatcp!(r#""{PSQL_SCHEMA}"."aircraft""#,);
+    FULL_NAME
+}
+
 /// Verifies that a identifier is valid
 pub fn check_identifier(identifier: &str) -> Result<(), StringError> {
     super::utils::check_string(identifier, IDENTIFIER_REGEX)
@@ -57,24 +62,24 @@ pub fn check_identifier(identifier: &str) -> Result<(), StringError> {
 /// Initializes the PostGIS database for aircraft.
 pub async fn psql_init() -> Result<(), PostgisError> {
     // Create Aircraft Table
-    let table_name = format!("{}.aircraft", super::PSQL_SCHEMA);
     let enum_name = "aircrafttype";
     let statements = vec![
         super::psql_enum_declaration::<AircraftType>(enum_name),
         format!(
-            "CREATE TABLE IF NOT EXISTS {table_name} (
-                identifier VARCHAR(20) UNIQUE PRIMARY KEY NOT NULL,
-                aircraft_type {enum_name} NOT NULL DEFAULT '{}',
-                velocity_horizontal_ground_mps FLOAT(4),
-                velocity_horizontal_air_mps FLOAT(4),
-                velocity_vertical_mps FLOAT(4),
-                track_angle_degrees FLOAT(4),
-                geom GEOMETRY(POINTZ, {DEFAULT_SRID}),
-                last_identifier_update TIMESTAMPTZ,
-                last_position_update TIMESTAMPTZ,
-                last_velocity_update TIMESTAMPTZ
-            );",
-            AircraftType::Undeclared.to_string()
+            r#"CREATE TABLE IF NOT EXISTS {table_name} (
+                "identifier" VARCHAR(20) UNIQUE PRIMARY KEY NOT NULL,
+                "aircraft_type" {enum_name} NOT NULL DEFAULT '{enum_default}',
+                "velocity_horizontal_ground_mps" FLOAT(4),
+                "velocity_horizontal_air_mps" FLOAT(4),
+                "velocity_vertical_mps" FLOAT(4),
+                "track_angle_degrees" FLOAT(4),
+                "geom" GEOMETRY(POINTZ, {DEFAULT_SRID}),
+                "last_identifier_update" TIMESTAMPTZ,
+                "last_position_update" TIMESTAMPTZ,
+                "last_velocity_update" TIMESTAMPTZ
+            );"#,
+            table_name = get_table_name(),
+            enum_default = AircraftType::Undeclared.to_string()
         ),
     ];
 
@@ -167,16 +172,20 @@ pub async fn update_aircraft_id(aircraft: Vec<AircraftId>) -> Result<(), Postgis
         PostgisError::Aircraft(AircraftError::DBError)
     })?;
 
-    let table_name = format!("{}.aircraft", super::PSQL_SCHEMA);
     let stmt = transaction
         .prepare_cached(&format!(
-            "
-        INSERT INTO {table_name}(identifier, aircraft_type, last_identifier_update)
+            r#"
+        INSERT INTO {table_name} (
+            "identifier",
+            "aircraft_type",
+            "last_identifier_update"
+        )
         VALUES ($1, $2, $3)
-        ON CONFLICT (identifier) DO UPDATE
-            SET aircraft_type = EXCLUDED.aircraft_type,
-                last_identifier_update = EXCLUDED.last_identifier_update;
-        ",
+        ON CONFLICT ("identifier") DO UPDATE
+            SET "aircraft_type" = EXCLUDED."aircraft_type",
+                "last_identifier_update" = EXCLUDED."last_identifier_update";
+        "#,
+            table_name = get_table_name()
         ))
         .await
         .map_err(|e| {
@@ -296,16 +305,20 @@ pub async fn update_aircraft_position(aircraft: Vec<AircraftPosition>) -> Result
         PostgisError::Aircraft(AircraftError::DBError)
     })?;
 
-    let table_name = format!("{}.aircraft", super::PSQL_SCHEMA);
     let stmt = transaction
         .prepare_cached(&format!(
-            "
-        INSERT INTO {table_name} (identifier, geom, last_position_update)
+            r#"
+        INSERT INTO {table_name} (
+            "identifier",
+            "geom",
+            "last_position_update"
+        )
         VALUES ($1, $2, $3)
-        ON CONFLICT (identifier) DO UPDATE
-            SET geom = EXCLUDED.geom,
-                last_position_update = EXCLUDED.last_position_update;
-        ",
+        ON CONFLICT ("identifier") DO UPDATE
+            SET "geom" = EXCLUDED."geom",
+                "last_position_update" = EXCLUDED."last_position_update";
+        "#,
+            table_name = get_table_name()
         ))
         .await
         .map_err(|e| {
@@ -417,23 +430,23 @@ pub async fn update_aircraft_velocity(aircraft: Vec<AircraftVelocity>) -> Result
         PostgisError::Aircraft(AircraftError::DBError)
     })?;
 
-    let table_name = format!("{}.aircraft", super::PSQL_SCHEMA);
     let stmt = transaction
         .prepare_cached(&format!(
-            "
+            r#"
         INSERT INTO {table_name} (
-            identifier,
-            velocity_horizontal_ground_mps,
-            velocity_vertical_mps,
-            track_angle_degrees,
-            last_velocity_update
+            "identifier",
+            "velocity_horizontal_ground_mps",
+            "velocity_vertical_mps",
+            "track_angle_degrees",
+            "last_velocity_update"
         ) VALUES (
             $1, $2, $3, $4, $5
         ) ON CONFLICT (identifier) DO UPDATE
-            SET velocity_horizontal_ground_mps = EXCLUDED.velocity_horizontal_ground_mps,
-                velocity_vertical_mps = EXCLUDED.velocity_vertical_mps,
-                track_angle_degrees = EXCLUDED.track_angle_degrees,
-                last_velocity_update = EXCLUDED.last_velocity_update;",
+            SET "velocity_horizontal_ground_mps" = EXCLUDED."velocity_horizontal_ground_mps",
+                "velocity_vertical_mps" = EXCLUDED."velocity_vertical_mps",
+                "track_angle_degrees" = EXCLUDED."track_angle_degrees",
+                "last_velocity_update" = EXCLUDED."last_velocity_update";"#,
+            table_name = get_table_name()
         ))
         .await
         .map_err(|e| {
@@ -494,8 +507,10 @@ pub async fn update_aircraft_velocity(aircraft: Vec<AircraftVelocity>) -> Result
 
 /// Gets the geometry of an aircraft given its identifier.
 pub async fn get_aircraft_pointz(identifier: &str) -> Result<PointZ, PostgisError> {
-    let table_name = format!("{}.aircraft", super::PSQL_SCHEMA);
-    let stmt = format!("SELECT geom FROM {table_name} WHERE identifier = $1;");
+    let stmt = format!(
+        r#"SELECT "geom" FROM {table_name} WHERE "identifier" = $1;"#,
+        table_name = get_table_name()
+    );
 
     let Some(pool) = crate::postgis::DEADPOOL_POSTGIS.get() else {
         postgis_error!("(get_aircraft_pointz) could not get psql pool.");

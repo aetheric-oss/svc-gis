@@ -1,7 +1,6 @@
 //! Updates vertiports in the PostGIS database.
 
-use super::PostgisError;
-use super::DEFAULT_SRID;
+use super::{PostgisError, DEFAULT_SRID, PSQL_SCHEMA};
 use crate::grpc::server::grpc_server;
 use chrono::{DateTime, Utc};
 use grpc_server::Vertiport as RequestVertiport;
@@ -51,6 +50,12 @@ impl std::fmt::Display for VertiportError {
             VertiportError::Timestamp => write!(f, "Invalid timestamp provided."),
         }
     }
+}
+
+/// Gets the name of this module's table
+fn get_table_name() -> &'static str {
+    static FULL_NAME: &str = const_format::formatcp!(r#""{PSQL_SCHEMA}"."vertiports""#,);
+    FULL_NAME
 }
 
 /// Helper Struct for Validating Requests
@@ -119,18 +124,19 @@ impl TryFrom<RequestVertiport> for Vertiport {
 pub async fn psql_init() -> Result<(), PostgisError> {
     // Create Vertiport Table
     let statements = vec![format!(
-        "CREATE TABLE IF NOT EXISTS {schema}.vertiports (
-            identifier VARCHAR(255) UNIQUE PRIMARY KEY NOT NULL,
-            label VARCHAR(255) NOT NULL,
-            zone_id INTEGER NOT NULL,
-            geom GEOMETRY, -- 3D Polygon
-            altitude_meters FLOAT(4),
-            last_updated TIMESTAMPTZ,
-            CONSTRAINT fk_zone
-                FOREIGN KEY (zone_id)
-                REFERENCES {schema}.zones(id)
-        );",
-        schema = super::PSQL_SCHEMA
+        r#"CREATE TABLE IF NOT EXISTS {vertiports_table_name} (
+            "identifier" VARCHAR(255) UNIQUE PRIMARY KEY NOT NULL,
+            "label" VARCHAR(255) NOT NULL,
+            "zone_id" INTEGER NOT NULL,
+            "geom" GEOMETRY, -- 3D Polygon
+            "altitude_meters" FLOAT(4),
+            "last_updated" TIMESTAMPTZ,
+            CONSTRAINT "fk_zone"
+                FOREIGN KEY ("zone_id")
+                REFERENCES {zones_table_name} ("id")
+        );"#,
+        vertiports_table_name = get_table_name(),
+        zones_table_name = super::zone::get_table_name(),
     )];
 
     super::psql_transaction(statements).await
@@ -169,14 +175,14 @@ pub async fn update_vertiports(vertiports: Vec<RequestVertiport>) -> Result<(), 
 
     let stmt = transaction
         .prepare_cached(&format!(
-            "WITH tmp AS (
-                INSERT INTO {schema}.zones (
-                    identifier,
-                    geom,
-                    altitude_meters_min,
-                    altitude_meters_max,
-                    zone_type,
-                    last_updated
+            r#"WITH "tmp" AS (
+                INSERT INTO {zones_table_name} (
+                    "identifier",
+                    "geom",
+                    "altitude_meters_min",
+                    "altitude_meters_max",
+                    "zone_type",
+                    "last_updated"
                 ) VALUES (
                     $1,
                     ST_EXTRUDE(
@@ -190,39 +196,35 @@ pub async fn update_vertiports(vertiports: Vec<RequestVertiport>) -> Result<(), 
                     $6,
                     $7
                 )
-                ON CONFLICT (identifier) DO UPDATE
+                ON CONFLICT ("identifier") DO UPDATE
                 SET
-                    geom = ST_EXTRUDE(
-                        $2::GEOMETRY(POLYGONZ, {DEFAULT_SRID}),
-                        0,
-                        0,
-                        ($4::FLOAT(4) - $3::FLOAT(4))
-                    ),
-                    zone_type = $6
-                RETURNING id
-            ) INSERT INTO {schema}.vertiports (
-                identifier,
-                zone_id,
-                geom,
-                label,
-                altitude_meters,
-                last_updated
+                    "geom" = EXCLUDED."geom",
+                    "zone_type" = EXCLUDED."zone_type"
+                RETURNING "id"
+            ) INSERT INTO {vertiports_table_name} (
+                "identifier",
+                "zone_id",
+                "geom",
+                "label",
+                "altitude_meters",
+                "last_updated"
             ) VALUES (
                 $1::VARCHAR,
-                (SELECT id FROM tmp),
+                (SELECT "id" FROM "tmp"),
                 $2::GEOMETRY,
                 $5::VARCHAR,
                 $3::FLOAT(4),
                 $7::TIMESTAMPTZ
             )
-            ON CONFLICT (identifier) DO UPDATE
+            ON CONFLICT ("identifier") DO UPDATE
                 SET
-                    label = coalesce($5, {schema}.vertiports.label),
-                    zone_id = (SELECT id FROM tmp),
-                    geom = $2::GEOMETRY,
-                    altitude_meters = $3::FLOAT(4),
-                    last_updated = $7::TIMESTAMPTZ;",
-            schema = super::PSQL_SCHEMA,
+                    "label" = coalesce($5, {vertiports_table_name}."label"),
+                    "zone_id" = EXCLUDED."zone_id",
+                    "geom" = EXCLUDED."geom",
+                    "altitude_meters" = EXCLUDED."altitude_meters",
+                    "last_updated" = EXCLUDED."last_updated";"#,
+            vertiports_table_name = get_table_name(),
+            zones_table_name = super::zone::get_table_name(),
         ))
         .await
         .map_err(|e| {
@@ -269,7 +271,16 @@ pub async fn update_vertiports(vertiports: Vec<RequestVertiport>) -> Result<(), 
 /// Gets the central PointZ geometry of a vertiport (for routing) given its identifier.
 pub async fn get_vertiport_centroidz(identifier: &str) -> Result<PointZ, PostgisError> {
     postgis_debug!("(get_vertiport_centroidz) entry, vertiport: '{identifier}'.");
-    let stmt = format!("SELECT ST_Force3DZ(ST_Centroid(geom), altitude_meters) FROM {}.vertiports WHERE identifier = $1;", super::PSQL_SCHEMA);
+    let stmt = format!(
+        r#"
+        SELECT ST_Force3DZ (
+            ST_Centroid("geom"),
+            "altitude_meters"
+        )
+        FROM {table_name}
+        WHERE "identifier" = $1;"#,
+        table_name = get_table_name()
+    );
 
     let Some(pool) = crate::postgis::DEADPOOL_POSTGIS.get() else {
         postgis_error!("(get_vertiport_centroidz) could not get psql pool.");

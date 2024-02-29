@@ -183,10 +183,3 @@ pub async fn psql_init() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
-
-/// Performs maintenance tasks (removing old records, etc.) on the PostgreSQL database
-pub async fn psql_maintenance() -> Result<(), Box<dyn std::error::Error>> {
-    flight::psql_maintenance().await?;
-
-    Ok(())
-}
