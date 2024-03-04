@@ -20,6 +20,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client_config = server_config.clone();
 
     client_config
+        .extern_path(".grpc.AircraftType", "crate::prelude::AircraftType")
+        .extern_path(
+            ".grpc.OperationalStatus",
+            "crate::prelude::OperationalStatus",
+        )
         .build_server(false)
         .out_dir("../client-grpc/src/")
         .compile(&[proto_file], &[proto_dir])?;

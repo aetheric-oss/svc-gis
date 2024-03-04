@@ -22,6 +22,8 @@ pub const REDIS_KEY_FLIGHT_PATH: &str = "gis:flight";
 #[derive(postgres_types::ToSql)]
 #[derive(num_derive::FromPrimitive)]
 #[postgres(name = "aircrafttype")]
+#[derive(::prost::Enumeration)]
+#[repr(i32)]
 pub enum AircraftType {
     /// Undeclared aircraft type
     Undeclared = 0,
@@ -72,6 +74,34 @@ pub enum AircraftType {
     Other = 15,
 }
 
+/// Operational Status
+#[derive(Serialize, Deserialize, Debug, Copy, Clone)]
+#[derive(strum::EnumString)]
+#[derive(strum::Display)]
+#[derive(strum::EnumIter)]
+#[derive(postgres_types::FromSql)]
+#[derive(postgres_types::ToSql)]
+#[derive(num_derive::FromPrimitive)]
+#[postgres(name = "opstatus")]
+#[derive(::prost::Enumeration)]
+#[repr(i32)]
+pub enum OperationalStatus {
+    /// Undeclared status
+    Undeclared = 0,
+
+    /// Ground
+    Ground = 1,
+
+    /// Airborne
+    Airborne = 2,
+
+    /// Emergency
+    Emergency = 3,
+
+    /// RemoteID System Failure
+    RemoteIdSystemFailure = 4,
+}
+
 /// 3D Point with Altitude
 #[derive(Serialize, Deserialize, Debug, Copy, Clone)]
 pub struct Position {
@@ -116,7 +146,7 @@ pub struct AircraftId {
     pub timestamp_network: DateTime<Utc>,
 
     /// The timestamp reported by the asset
-    pub timestamp_asset: Option<DateTime<Utc>>,
+    pub timestamp_asset: Option<DateTime<Utc>>
 }
 
 /// Generic Velocity Information for an Aircraft

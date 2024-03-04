@@ -103,3 +103,5 @@ typname
 segmentize
 segmentizing
 formatcp
+opstatus
+isas

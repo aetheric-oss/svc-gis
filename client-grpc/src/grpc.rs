@@ -194,6 +194,94 @@ pub struct BestPathResponse {
     #[prost(message, repeated, tag = "1")]
     pub paths: ::prost::alloc::vec::Vec<Path>,
 }
+/// Get Flights Request object
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetFlightsRequest {
+    /// GPS Rectangular Window Corner Min X
+    #[prost(double, tag = "1")]
+    pub window_min_x: f64,
+    /// GPS Rectangular Window Corner Min Y
+    #[prost(double, tag = "2")]
+    pub window_min_y: f64,
+    /// GPS Rectangular Window Corner Max X
+    #[prost(double, tag = "3")]
+    pub window_max_x: f64,
+    /// GPS Rectangular Window Corner Max Y
+    #[prost(double, tag = "4")]
+    pub window_max_y: f64,
+    /// Time window start
+    #[prost(message, optional, tag = "5")]
+    pub time_start: ::core::option::Option<::lib_common::time::Timestamp>,
+    /// Time window end
+    #[prost(message, optional, tag = "6")]
+    pub time_end: ::core::option::Option<::lib_common::time::Timestamp>,
+}
+/// Timestamped position of an aircraft
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct TimePosition {
+    /// Aircraft Position
+    #[prost(message, optional, tag = "1")]
+    pub position: ::core::option::Option<PointZ>,
+    /// Timestamp
+    #[prost(message, optional, tag = "2")]
+    pub timestamp: ::core::option::Option<::lib_common::time::Timestamp>,
+}
+/// The state of the aircraft including position, status, and velocity
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AircraftState {
+    /// The timestamp of the state
+    #[prost(message, optional, tag = "1")]
+    pub timestamp: ::core::option::Option<::lib_common::time::Timestamp>,
+    /// The operational status of the aircraft
+    #[prost(enumeration = "crate::prelude::OperationalStatus", tag = "2")]
+    pub status: i32,
+    /// The position of the aircraft
+    #[prost(message, optional, tag = "3")]
+    pub position: ::core::option::Option<PointZ>,
+    /// The track angle of the aircraft
+    #[prost(float, tag = "4")]
+    pub track_angle_degrees: f32,
+    /// The ground speed of the aircraft
+    #[prost(float, tag = "5")]
+    pub ground_speed_mps: f32,
+    /// The vertical speed of the aircraft
+    #[prost(float, tag = "6")]
+    pub vertical_speed_mps: f32,
+}
+/// Aircraft Flight Information
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Flight {
+    /// Flight identifier, if on assigned flight
+    #[prost(string, optional, tag = "1")]
+    pub identifier: ::core::option::Option<::prost::alloc::string::String>,
+    /// Aircraft identifier
+    #[prost(string, tag = "2")]
+    pub aircraft_id: ::prost::alloc::string::String,
+    /// If this is a simulated aircraft
+    #[prost(bool, tag = "3")]
+    pub simulated: bool,
+    /// The timestamped positions of the aircraft
+    #[prost(message, repeated, tag = "4")]
+    pub positions: ::prost::alloc::vec::Vec<TimePosition>,
+    /// The type of aircraft
+    #[prost(enumeration = "crate::prelude::AircraftType", tag = "5")]
+    pub aircraft_type: i32,
+    /// The state of the aircraft
+    #[prost(message, optional, tag = "6")]
+    pub state: ::core::option::Option<AircraftState>,
+}
+/// Get Flights Response object
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetFlightsResponse {
+    /// Flights in the requested zone
+    #[prost(message, repeated, tag = "1")]
+    pub flights: ::prost::alloc::vec::Vec<Flight>,
+}
 /// The nodes involved in the best path request
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
@@ -261,7 +349,6 @@ pub mod rpc_service_client {
     #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
     use tonic::codegen::*;
     use tonic::codegen::http::Uri;
-    /// Heartbeat
     #[derive(Debug, Clone)]
     pub struct RpcServiceClient<T> {
         inner: tonic::client::Grpc<T>,
@@ -342,7 +429,6 @@ pub mod rpc_service_client {
             self.inner = self.inner.max_encoding_message_size(limit);
             self
         }
-        /// Common Interfaces
         pub async fn is_ready(
             &mut self,
             request: impl tonic::IntoRequest<super::ReadyRequest>,
@@ -448,6 +534,31 @@ pub mod rpc_service_client {
             let path = http::uri::PathAndQuery::from_static("/grpc.RpcService/bestPath");
             let mut req = request.into_request();
             req.extensions_mut().insert(GrpcMethod::new("grpc.RpcService", "bestPath"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn get_flights(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetFlightsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetFlightsResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/grpc.RpcService/getFlights",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("grpc.RpcService", "getFlights"));
             self.inner.unary(req, path, codec).await
         }
     }

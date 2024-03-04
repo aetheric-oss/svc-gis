@@ -1,16 +1,14 @@
-// Test Documentation
 syntax = "proto3";
 import "google/protobuf/timestamp.proto";
 package grpc;
 
-// Heartbeat
 service RpcService {
-    // Common Interfaces
     rpc isReady(ReadyRequest) returns (ReadyResponse);
     rpc updateVertiports(updateVertiportsRequest) returns (UpdateResponse);
     rpc updateWaypoints(updateWaypointsRequest) returns (UpdateResponse);
     rpc updateZones(UpdateZonesRequest) returns (UpdateResponse);
     rpc bestPath(BestPathRequest) returns (BestPathResponse);
+    rpc getFlights(GetFlightsRequest) returns (GetFlightsResponse);
     // rpc nearestNeighbors(NearestNeighborRequest) returns (NearestNeighborResponse);
 }
 
@@ -33,7 +31,6 @@ message ReadyRequest {
 
 // Ready Response object
 message ReadyResponse {
-
     // True if ready
     bool ready = 1;
 }
@@ -196,6 +193,100 @@ message Path {
 message BestPathResponse {
     // Best paths
     repeated Path paths = 1;
+}
+
+// Get Flights Request object
+message GetFlightsRequest {
+    // GPS Rectangular Window Corner Min X
+    double window_min_x = 1;
+
+    // GPS Rectangular Window Corner Min Y
+    double window_min_y = 2;
+
+    // GPS Rectangular Window Corner Max X
+    double window_max_x = 3;
+
+    // GPS Rectangular Window Corner Max Y
+    double window_max_y = 4;
+
+    // Time window start
+    google.protobuf.Timestamp time_start = 5;
+
+    // Time window end
+    google.protobuf.Timestamp time_end = 6;
+}
+
+// Timestamped position of an aircraft
+message TimePosition {
+    // Aircraft Position
+    PointZ position = 1;
+
+    // Timestamp
+    google.protobuf.Timestamp timestamp = 2;
+}
+
+// Operational Status of an aircraft
+// Will be replaced by OperationalStatus enum
+//  in crate::types::OperationalStatus
+enum OperationalStatus {
+    // will be replaced
+    OPERATIONAL_STATUS = 0;
+}
+
+// Aircraft Type
+// Will be replaced by AircraftType enum
+//  in crate::types::AircraftType
+enum AircraftType {
+    // will be replaced
+    AIRCRAFT_TYPE = 0;
+}
+
+// The state of the aircraft including position, status, and velocity
+message AircraftState {
+    // The timestamp of the state
+    google.protobuf.Timestamp timestamp = 1;
+
+    // The operational status of the aircraft
+    OperationalStatus status = 2;
+
+    // The position of the aircraft
+    PointZ position = 3;
+
+    // The track angle of the aircraft
+    float track_angle_degrees = 4;
+
+    // The ground speed of the aircraft
+    float ground_speed_mps = 5;
+
+    // The vertical speed of the aircraft
+    float vertical_speed_mps = 6;
+}
+
+// Aircraft Flight Information
+message Flight {
+    // Flight identifier, if on assigned flight
+    optional string identifier = 1;
+
+    // Aircraft identifier
+    string aircraft_id = 2;
+
+    // If this is a simulated aircraft
+    bool simulated = 3;
+
+    // The timestamped positions of the aircraft
+    repeated TimePosition positions = 4;
+
+    // The type of aircraft
+    AircraftType aircraft_type = 5;
+
+    // The state of the aircraft
+    AircraftState state = 6;
+}
+
+// Get Flights Response object
+message GetFlightsResponse {
+    // Flights in the requested zone
+    repeated Flight flights = 1;
 }
 
 // // Nearest Neighbor Request object

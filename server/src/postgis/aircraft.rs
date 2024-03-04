@@ -8,7 +8,9 @@ use chrono::{DateTime, Utc};
 use postgis::ewkb::PointZ;
 use tonic::async_trait;
 
-use crate::types::{AircraftId, AircraftPosition, AircraftType, AircraftVelocity};
+use crate::types::{
+    AircraftId, AircraftPosition, AircraftType, AircraftVelocity, OperationalStatus,
+};
 
 /// Allowed characters in a identifier
 pub const IDENTIFIER_REGEX: &str = r"^[\-0-9A-Za-z_\.]{1,255}$";
@@ -49,7 +51,7 @@ impl std::fmt::Display for AircraftError {
 }
 
 /// Gets the name of this module's table
-fn get_table_name() -> &'static str {
+pub(super) fn get_table_name() -> &'static str {
     static FULL_NAME: &str = const_format::formatcp!(r#""{PSQL_SCHEMA}"."aircraft""#,);
     FULL_NAME
 }
@@ -62,13 +64,15 @@ pub fn check_identifier(identifier: &str) -> Result<(), StringError> {
 /// Initializes the PostGIS database for aircraft.
 pub async fn psql_init() -> Result<(), PostgisError> {
     // Create Aircraft Table
-    let enum_name = "aircrafttype";
+    let type_enum_name = "aircrafttype";
+    let status_enum_name = "opstatus";
     let statements = vec![
-        super::psql_enum_declaration::<AircraftType>(enum_name),
+        super::psql_enum_declaration::<AircraftType>(type_enum_name),
+        super::psql_enum_declaration::<OperationalStatus>(status_enum_name),
         format!(
             r#"CREATE TABLE IF NOT EXISTS {table_name} (
                 "identifier" VARCHAR(20) UNIQUE PRIMARY KEY NOT NULL,
-                "aircraft_type" {enum_name} NOT NULL DEFAULT '{enum_default}',
+                "aircraft_type" {type_enum_name} NOT NULL DEFAULT '{type_enum_default}',
                 "velocity_horizontal_ground_mps" FLOAT(4),
                 "velocity_horizontal_air_mps" FLOAT(4),
                 "velocity_vertical_mps" FLOAT(4),
@@ -76,10 +80,13 @@ pub async fn psql_init() -> Result<(), PostgisError> {
                 "geom" GEOMETRY(POINTZ, {DEFAULT_SRID}),
                 "last_identifier_update" TIMESTAMPTZ,
                 "last_position_update" TIMESTAMPTZ,
-                "last_velocity_update" TIMESTAMPTZ
+                "last_velocity_update" TIMESTAMPTZ,
+                "simulated" BOOLEAN DEFAULT FALSE,
+                "op_status" {status_enum_name} NOT NULL DEFAULT '{status_enum_default}'
             );"#,
             table_name = get_table_name(),
-            enum_default = AircraftType::Undeclared.to_string()
+            type_enum_default = AircraftType::Undeclared.to_string(),
+            status_enum_default = OperationalStatus::Undeclared.to_string()
         ),
     ];
 

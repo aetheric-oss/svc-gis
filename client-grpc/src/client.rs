@@ -118,6 +118,15 @@ impl crate::service::Client<RpcServiceClient<Channel>> for GisClient {
         self.get_client().await?.best_path(request).await
     }
 
+    async fn get_flights(
+        &self,
+        request: GetFlightsRequest,
+    ) -> Result<tonic::Response<GetFlightsResponse>, tonic::Status> {
+        grpc_info!("(get_flights) {} client.", self.get_name());
+        grpc_debug!("(get_flights) request: {:?}", request);
+        self.get_client().await?.get_flights(request).await
+    }
+
     // async fn nearest_neighbors(
     //     &self,
     //     request: NearestNeighborRequest,
@@ -190,6 +199,43 @@ impl crate::service::Client<RpcServiceClient<Channel>> for GisClient {
                 }],
                 distance_meters: 0.0,
             }],
+        }))
+    }
+
+    async fn get_flights(
+        &self,
+        request: GetFlightsRequest,
+    ) -> Result<tonic::Response<GetFlightsResponse>, tonic::Status> {
+        grpc_info!("(get_flights) {} client.", self.get_name());
+        grpc_debug!("(get_flights) request: {:?}", request);
+        Ok(tonic::Response::new(GetFlightsResponse {
+            flights: vec![Flight {
+                identifier: Some("mock flight".to_string()),
+                aircraft_id: "mock aircraft".to_string(),
+                positions: vec![TimePosition {
+                    position: Some(PointZ {
+                        latitude: 52.64248776887166,
+                        longitude: 5.11111373021763,
+                        altitude_meters: 50.0,
+                    }),
+                    timestamp: Some(chrono::Utc::now().into()),
+                }],
+                simulated: true,
+                aircraft_type: crate::prelude::AircraftType::Undeclared.into(),
+                state: Some(crate::AircraftState {
+                    timestamp: Some(chrono::Utc::now().into()),
+                    status: crate::prelude::OperationalStatus::Undeclared.into(),
+                    position: Some(PointZ {
+                        latitude: 52.64248776887166,
+                        longitude: 5.11111373021763,
+                        altitude_meters: 50.0,
+                    }),
+                    track_angle_degrees: 12.0,
+                    ground_speed_mps: 5.0,
+                    vertical_speed_mps: 1.0,
+                }),
+            }],
+            // isas: vec![],
         }))
     }
 

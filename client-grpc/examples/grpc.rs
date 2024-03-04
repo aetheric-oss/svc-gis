@@ -218,7 +218,7 @@ async fn add_flight_paths(connection: &mut redis::Connection) -> Result<(), ()> 
         },
     ];
 
-    let sample: Vec<&str> = vec![AIRCRAFT_1_ID, "Mantis", "Ghost", "Phantom", "Falcon"];
+    let sample: Vec<&str> = vec![AIRCRAFT_1_ID, "Mantis", "Ghost", "Phantom"]; // leave off falcon
 
     let items: Vec<FlightPath> = sample
         .into_iter()
@@ -227,8 +227,8 @@ async fn add_flight_paths(connection: &mut redis::Connection) -> Result<(), ()> 
             flight_identifier: format!("FLIGHT-{}", i),
             aircraft_identifier: aircraft_identifier.to_string(),
             path: path.clone(),
-            timestamp_start: Utc::now() - Duration::hours(7),
-            timestamp_end: Utc::now() - Duration::hours(6) + Duration::seconds(10),
+            timestamp_start: Utc::now(),
+            timestamp_end: Utc::now() + Duration::minutes(20),
             simulated: false,
             aircraft_type: AircraftType::Rotorcraft,
         })
@@ -499,6 +499,32 @@ async fn best_path_flight_avoidance(
     Ok(())
 }
 
+/// Get active flights
+async fn get_flights(client: &GisClient) -> Result<(), Box<dyn std::error::Error>> {
+    {
+        println!("\n\u{1F426} Get Active Flights");
+        let time_start: Timestamp = (Utc::now() - Duration::seconds(30)).into();
+        let time_end: Timestamp = Utc::now().into();
+        let request = GetFlightsRequest {
+            window_min_x: 4.915,
+            window_min_y: 52.374,
+            window_max_x: 4.917,
+            window_max_y: 52.376,
+            time_start: Some(time_start),
+            time_end: Some(time_end),
+        };
+
+        let response = client.get_flights(request).await?.into_inner();
+
+        println!("RESPONSE={:?}", response);
+        if response.flights.is_empty() {
+            panic!("No flights found.")
+        }
+    }
+
+    Ok(())
+}
+
 async fn best_paths(client: &GisClient) -> Result<(), Box<dyn std::error::Error>> {
     // Best Path Without No-Fly Zone
     {
@@ -709,6 +735,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     add_aircraft(&mut connection).await.unwrap();
     add_flight_paths(&mut connection).await.unwrap();
+
+    // might take a moment for the flight paths to
+    //  be picked up from the redis queue
+    std::thread::sleep(std::time::Duration::from_secs(1));
+
+    get_flights(&client).await?;
     add_vertiports(&client).await?;
     add_waypoints(&client).await?;
     best_paths(&client).await?;

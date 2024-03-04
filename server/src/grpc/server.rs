@@ -103,6 +103,28 @@ impl RpcService for ServerImpl {
         }
     }
 
+    #[cfg(not(tarpaulin_include))]
+    async fn get_flights(
+        &self,
+        request: Request<grpc_server::GetFlightsRequest>,
+    ) -> Result<Response<grpc_server::GetFlightsResponse>, Status> {
+        grpc_debug!("(get_flights) entry.");
+        let request = request.into_inner();
+        match flight::get_flights(request).await {
+            Ok(flights) => {
+                let response = grpc_server::GetFlightsResponse {
+                    flights,
+                    // isas: vec![],
+                };
+                Ok(Response::new(response))
+            }
+            Err(e) => {
+                grpc_error!("(get_flights) error getting flights: {}", e);
+                Err(Status::internal(e.to_string()))
+            }
+        }
+    }
+
     // #[cfg(not(tarpaulin_include))]
     // async fn nearest_neighbors(
     //     &self,
@@ -233,6 +255,25 @@ impl RpcService for ServerImpl {
             }
             Err(e) => {
                 grpc_error!("(best_path MOCK) error getting best path.");
+                Err(Status::internal(e.to_string()))
+            }
+        }
+    }
+
+    #[cfg(not(tarpaulin_include))]
+    async fn get_flights(
+        &self,
+        request: Request<grpc_server::GetFlightsRequest>,
+    ) -> Result<Response<grpc_server::GetFlightsResponse>, Status> {
+        grpc_warn!("(get_flights MOCK) entry.");
+        let request = request.into_inner();
+        match flight::get_flights(request).await {
+            Ok(flights) => {
+                let response = grpc_server::GetFlightsResponse { flights };
+                Ok(Response::new(response))
+            }
+            Err(e) => {
+                grpc_error!("(get_flights MOCK) error getting flights.");
                 Err(Status::internal(e.to_string()))
             }
         }

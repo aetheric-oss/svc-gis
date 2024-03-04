@@ -48,7 +48,7 @@ pub enum PostgisError {
     BestPath(best_path::PathError),
 
     /// FlightPath Error
-    FlightPath(flight::FlightPathError),
+    FlightPath(flight::FlightError),
 }
 
 impl std::error::Error for PostgisError {

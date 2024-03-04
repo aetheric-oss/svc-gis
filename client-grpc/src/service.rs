@@ -159,6 +159,43 @@ where
         request: super::BestPathRequest,
     ) -> Result<tonic::Response<super::BestPathResponse>, tonic::Status>;
 
+    /// Returns a [`tonic::Response`] containing a [`GetFlightsResponse`](super::GetFlightsResponse)
+    /// Takes an [`GetFlightsRequest`](super::GetFlightsRequest).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`tonic::Status`] with [`Code::Unknown`](tonic::Code::Unknown) if
+    /// the server is not ready.
+    ///
+    /// # Examples
+    /// ```
+    /// use lib_common::grpc::get_endpoint_from_env;
+    /// use lib_common::time::{Utc, Timestamp};
+    /// use svc_gis_client_grpc::prelude::*;
+    ///
+    /// async fn example () -> Result<(), Box<dyn std::error::Error>> {
+    ///     let (host, port) = get_endpoint_from_env("SERVER_HOSTNAME", "SERVER_PORT_GRPC");
+    ///     let client = GisClient::new_client(&host, port, "gis");
+    ///     let time_start: Timestamp = Utc::now().into();
+    ///     let time_end: Timestamp = Utc::now().into();
+    ///     let request = gis::GetFlightsRequest {
+    ///         window_min_x: 0.0,
+    ///         window_min_y: 0.0,
+    ///         window_max_x: 0.0,
+    ///         window_max_y: 0.0,
+    ///         time_start: Some(time_start),
+    ///         time_end: Some(time_end),
+    ///     };
+    ///     let response = client.get_flights(request).await?;
+    ///     println!("RESPONSE={:?}", response.into_inner());
+    ///     Ok(())
+    /// }
+    /// ```
+    async fn get_flights(
+        &self,
+        request: super::GetFlightsRequest,
+    ) -> Result<tonic::Response<super::GetFlightsResponse>, tonic::Status>;
+
     // /// Returns a [`tonic::Response`] containing a [`NearestNeighborResponse`](super::NearestNeighborResponse)
     // /// Takes an [`NearestNeighborRequest`](super::NearestNeighborRequest).
     // ///
