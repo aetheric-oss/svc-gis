@@ -539,7 +539,7 @@ pub async fn get_aircraft_pointz(identifier: &str) -> Result<PointZ, PostgisErro
             postgis_error!("(get_aircraft_pointz) could not prepare cached statement: {}", e);
             PostgisError::Aircraft(AircraftError::DBError)
         })?
-        .try_get::<_, PointZ>(0)
+        .try_get::<_, PointZ>("geom")
         .map_err(|e| {
             postgis_error!("(get_aircraft_pointz) zero or more than one records found for aircraft '{identifier}': {}", e);
             PostgisError::Aircraft(AircraftError::DBError)

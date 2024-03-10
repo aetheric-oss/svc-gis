@@ -235,12 +235,12 @@ pub async fn get_waypoints_near_geometry(
         })?
         .into_iter()
         .filter_map(|row| {
-            let Ok(identifier) = row.try_get(0) else {
+            let Ok(identifier) = row.try_get("identifier") else {
                 postgis_error!("(get_waypoints_near_geometry) could not get identifier from row.");
                 return None;
             };
 
-            let Ok(geom) = row.try_get(1) else {
+            let Ok(geom) = row.try_get("geog") else {
                 postgis_error!("(get_waypoints_near_geometry) could not get geom from row.");
                 return None;
             };

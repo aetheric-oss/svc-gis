@@ -402,29 +402,33 @@ pub async fn get_flights(request: GetFlightsRequest) -> Result<Vec<Flight>, Flig
         FlightError::Client
     })?;
 
+    let identifier_str = "flight_identifier";
+    let aircraft_id_str = "aircraft_identifier";
+    let aircraft_type_str = "aircraft_type";
+    let simulated_str = "simulated";
     let stmt = client
         .prepare_cached(&format!(
             r#"
             SELECT 
-                flights."flight_identifier",
-                aircraft."identifier",
-                aircraft."aircraft_type",
-                aircraft."simulated"
-            FROM {aircraft_table_name} as aircraft
-            LEFT JOIN {flights_table_name} as flights
-                ON flights."aircraft_identifier" = aircraft."identifier"
+                "flights"."flight_identifier" as "{identifier_str}",
+                "aircraft"."identifier" as "{aircraft_id_str}",
+                "aircraft"."aircraft_type" as "{aircraft_type_str}",
+                "aircraft"."simulated" as "{simulated_str}"
+            FROM {aircraft_table_name} as "aircraft"
+            LEFT JOIN {flights_table_name} as "flights"
+                ON "flights"."aircraft_identifier" = "aircraft"."identifier"
             WHERE 
                 (
                     -- get grounded aircraft without a scheduled flight
-                    ST_Intersects(ST_Envelope($1), aircraft."geom")
-                    AND aircraft."last_position_update" >= $2
-                    AND aircraft."last_position_update" <= $3
+                    ST_Intersects(ST_Envelope($1), "aircraft"."geom")
+                    AND "aircraft"."last_position_update" >= $2
+                    AND "aircraft"."last_position_update" <= $3
                 ) OR (
                     -- get aircraft in flight
-                    flights."geom" IS NOT NULL
-                    AND ST_Intersects(ST_Envelope($1), flights."geom")
-                    AND flights."time_end" >= $2
-                    AND flights."time_start" <= $3
+                    "flights"."geom" IS NOT NULL
+                    AND ST_Intersects(ST_Envelope($1), "flights"."geom")
+                    AND "flights"."time_end" >= $2
+                    AND "flights"."time_start" <= $3
                 );
             "#,
             flights_table_name = get_flights_table_name(),
@@ -447,10 +451,10 @@ pub async fn get_flights(request: GetFlightsRequest) -> Result<Vec<Flight>, Flig
     let mut flights = result
         .iter()
         .map(|row| {
-            let identifier: Option<String> = row.try_get(0)?;
-            let aircraft_id: String = row.try_get(1)?;
-            let aircraft_type: AircraftType = row.try_get(2)?;
-            let simulated: bool = row.try_get(3)?;
+            let identifier: Option<String> = row.try_get(identifier_str)?;
+            let aircraft_id: String = row.try_get(aircraft_id_str)?;
+            let aircraft_type: AircraftType = row.try_get(aircraft_type_str)?;
+            let simulated: bool = row.try_get(simulated_str)?;
 
             Ok(Flight {
                 identifier,
@@ -496,12 +500,12 @@ pub async fn get_flights(request: GetFlightsRequest) -> Result<Vec<Flight>, Flig
         row: tokio_postgres::Row,
         flight: &mut Flight,
     ) -> Result<(), tokio_postgres::error::Error> {
-        let geom: PointZ = row.try_get(0)?;
-        let velocity_horizontal_ground_mps: f32 = row.try_get(1)?;
-        let velocity_vertical_mps: f32 = row.try_get(2)?;
-        let track_angle_degrees: f32 = row.try_get(3)?;
-        let last_position_update: DateTime<Utc> = row.try_get(4)?;
-        let status: OperationalStatus = row.try_get(5)?;
+        let geom: PointZ = row.try_get("geom")?;
+        let velocity_horizontal_ground_mps: f32 = row.try_get("velocity_horizontal_ground_mps")?;
+        let velocity_vertical_mps: f32 = row.try_get("velocity_vertical_mps")?;
+        let track_angle_degrees: f32 = row.try_get("track_angle_degrees")?;
+        let last_position_update: DateTime<Utc> = row.try_get("last_position_update")?;
+        let status: OperationalStatus = row.try_get("op_status")?;
 
         flight.positions.push(TimePosition {
             position: Some(GrpcPointZ {

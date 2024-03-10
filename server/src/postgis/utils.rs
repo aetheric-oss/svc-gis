@@ -191,6 +191,7 @@ pub fn point_from_vertex(vertex: &Coordinates) -> Result<Point, PointError> {
         || vertex.longitude < -180.0
         || vertex.longitude > 180.0
     {
+        postgis_warn!("(point_from_vertex) vertex out of bounds: {:?}", vertex);
         return Err(PointError::OutOfBounds);
     }
 
