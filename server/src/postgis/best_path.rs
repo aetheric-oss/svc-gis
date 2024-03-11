@@ -233,8 +233,13 @@ impl TryFrom<BestPathRequest> for PathRequest {
             Some(time) => time.into(),
         };
 
+        let Some(delta) = Duration::try_days(1) else {
+            postgis_error!("(try_from BestPathRequest) could not get time delta for 1 day.");
+            return Err(PostgisError::BestPath(PathError::InvalidTimeWindow));
+        };
+
         let time_end: DateTime<Utc> = match request.time_end {
-            None => Utc::now() + Duration::days(1),
+            None => Utc::now() + delta,
             Some(time) => time.into(),
         };
 

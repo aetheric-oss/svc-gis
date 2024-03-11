@@ -316,17 +316,31 @@ pub async fn segmentize(
         .into_iter()
         .map(|r| {
             let segment_duration_ms = (r.distance_m / velocity_m_s) * 1000.;
+
+            let Some(time_delta) = Duration::try_milliseconds(segment_duration_ms as i64) else {
+                postgis_error!(
+                    "(segmentize) could not create time delta from segment duration: {}",
+                    segment_duration_ms
+                );
+
+                return Err(PostgisError::Psql(PsqlError::Execute));
+            };
+
             let segment = Segment {
                 geom: r.geom,
                 time_start: cursor,
-                time_end: cursor + Duration::milliseconds(segment_duration_ms as i64),
+                time_end: cursor + time_delta,
             };
 
             cursor = segment.time_end;
 
-            segment
+            Ok(segment)
         })
-        .collect::<Vec<Segment>>();
+        .collect::<Result<Vec<Segment>, PostgisError>>()
+        .map_err(|e| {
+            postgis_error!("(segmentize) could not create segment: {}", e);
+            PostgisError::Psql(PsqlError::Execute)
+        })?;
 
     postgis_debug!(
         "(segmentize) found {} segments. craft velocity {} m/s.",

@@ -29,7 +29,8 @@ async fn test_add_aircraft() -> Result<(), ()> {
     //     .iter()
     //     .map(
     //         |(identifier, latitude, longitude, altitude)| AircraftPosition {
-    //             identifier: identifier.to_string(),
+    //             identifier: Some(identifier.to_string()),
+    //             session_id: None,
     //             geom: Some(PointZ {
     //                 latitude: *latitude,
     //                 longitude: *longitude,
@@ -50,7 +51,8 @@ async fn test_add_aircraft() -> Result<(), ()> {
     // let aircraft = sample
     //     .iter()
     //     .map(|(identifier, _, _, _)| AircraftId {
-    //         identifier: identifier.to_string(),
+    //         identifier: Some(identifier.to_string()),
+    //         session_id: None,
     //         aircraft_type: AircraftType::Rotorcraft as i32,
     //         timestamp_network: Some(Utc::now().into()),
     //     })
@@ -65,7 +67,8 @@ async fn test_add_aircraft() -> Result<(), ()> {
     // let aircraft = sample
     //     .iter()
     //     .map(|(identifier, _, _, _)| AircraftVelocity {
-    //         identifier: identifier.to_string(),
+    //         identifier: Some(identifier.to_string()),
+    //         session_id: None,
     //         velocity_horizontal_air_mps: None,
     //         velocity_horizontal_ground_mps: 100.0,
     //         velocity_vertical_mps: 10.0,

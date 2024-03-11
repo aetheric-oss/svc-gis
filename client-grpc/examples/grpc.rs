@@ -129,7 +129,8 @@ async fn add_aircraft(connection: &mut redis::Connection) -> Result<(), ()> {
         .iter()
         .map(
             |(identifier, latitude, longitude, altitude_meters)| AircraftPosition {
-                identifier: identifier.to_string(),
+                identifier: Some(identifier.to_string()),
+                session_id: None,
                 position: Position {
                     latitude: *latitude,
                     longitude: *longitude,
@@ -154,7 +155,8 @@ async fn add_aircraft(connection: &mut redis::Connection) -> Result<(), ()> {
     let aircraft: Vec<AircraftId> = sample
         .iter()
         .map(|(identifier, _, _, _)| AircraftId {
-            identifier: identifier.to_string(),
+            identifier: Some(identifier.to_string()),
+            session_id: None,
             aircraft_type: AircraftType::Rotorcraft,
             timestamp_network: Utc::now(),
             timestamp_asset: None,
@@ -174,7 +176,8 @@ async fn add_aircraft(connection: &mut redis::Connection) -> Result<(), ()> {
     let aircraft: Vec<AircraftVelocity> = sample
         .iter()
         .map(|(identifier, _, _, _)| AircraftVelocity {
-            identifier: identifier.to_string(),
+            identifier: Some(identifier.to_string()),
+            session_id: None,
             velocity_horizontal_air_mps: None,
             velocity_horizontal_ground_mps: 100.0,
             velocity_vertical_mps: 10.0,
@@ -228,7 +231,7 @@ async fn add_flight_paths(connection: &mut redis::Connection) -> Result<(), ()> 
             aircraft_identifier: aircraft_identifier.to_string(),
             path: path.clone(),
             timestamp_start: Utc::now(),
-            timestamp_end: Utc::now() + Duration::minutes(20),
+            timestamp_end: Utc::now() + Duration::try_minutes(20).unwrap(),
             simulated: false,
             aircraft_type: AircraftType::Rotorcraft,
         })
@@ -312,7 +315,7 @@ async fn best_path_flight_avoidance(
         .await?;
 
     let time_start: DateTime<Utc> = Utc::now();
-    let time_end: DateTime<Utc> = Utc::now() + Duration::minutes(15);
+    let time_end: DateTime<Utc> = Utc::now() + Duration::try_minutes(15).unwrap();
 
     // Best Path Request
     println!("\n\u{1F426} Best Path With Zero Other Flight Paths Prior");
@@ -461,8 +464,8 @@ async fn best_path_flight_avoidance(
         target_identifier: ALKMAAR_2_ID.to_string(),
         origin_type: NodeType::Vertiport as i32,
         target_type: NodeType::Vertiport as i32,
-        time_start: Some((time_end.clone() + Duration::seconds(1)).into()),
-        time_end: Some((time_end.clone() + Duration::minutes(1)).into()),
+        time_start: Some((time_end.clone() + Duration::try_seconds(1).unwrap()).into()),
+        time_end: Some((time_end.clone() + Duration::try_minutes(1).unwrap()).into()),
         limit: 1,
     };
 
@@ -483,8 +486,8 @@ async fn best_path_flight_avoidance(
         target_identifier: ALKMAAR_2_ID.to_string(),
         origin_type: NodeType::Vertiport as i32,
         target_type: NodeType::Vertiport as i32,
-        time_start: Some((time_end - Duration::seconds(2)).into()),
-        time_end: Some((time_end + Duration::minutes(13)).into()),
+        time_start: Some((time_end - Duration::try_seconds(2).unwrap()).into()),
+        time_end: Some((time_end + Duration::try_minutes(13).unwrap()).into()),
         limit: 1,
     };
 
@@ -503,7 +506,7 @@ async fn best_path_flight_avoidance(
 async fn get_flights(client: &GisClient) -> Result<(), Box<dyn std::error::Error>> {
     {
         println!("\n\u{1F426} Get Active Flights");
-        let time_start: Timestamp = (Utc::now() - Duration::seconds(30)).into();
+        let time_start: Timestamp = (Utc::now() - Duration::try_seconds(30).unwrap()).into();
         let time_end: Timestamp = Utc::now().into();
         let request = GetFlightsRequest {
             window_min_x: 4.915,
@@ -653,7 +656,7 @@ async fn best_paths(client: &GisClient) -> Result<(), Box<dyn std::error::Error>
     // Best Path After Temporary No-Fly Zone
     {
         println!("\n\u{1F681} Best Path AFTER Temporary No-Fly Zone Expires");
-        let time_start: Timestamp = (no_fly_end_time + Duration::seconds(1)).into();
+        let time_start: Timestamp = (no_fly_end_time + Duration::try_seconds(1).unwrap()).into();
         let time_end: Timestamp = (no_fly_end_time + Duration::hours(1)).into();
         let request = BestPathRequest {
             origin_identifier: VERTIPORT_1_ID.to_string(),

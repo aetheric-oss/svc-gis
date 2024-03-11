@@ -18,17 +18,14 @@ pub const IDENTIFIER_REGEX: &str = r"^[\-0-9A-Za-z_\.]{1,255}$";
 /// Possible errors with aircraft requests
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum AircraftError {
-    /// Invalid Aircraft ID
-    AircraftId,
-
     /// Invalid Location
     Location,
 
     /// Invalid Time Provided
     Time,
 
-    /// Invalid Label
-    Label,
+    /// Invalid Identifier
+    Identifier,
 
     /// Could not get client
     Client,
@@ -40,10 +37,9 @@ pub enum AircraftError {
 impl std::fmt::Display for AircraftError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            AircraftError::AircraftId => write!(f, "Invalid aircraft ID provided."),
             AircraftError::Location => write!(f, "Invalid location provided."),
             AircraftError::Time => write!(f, "Invalid time provided."),
-            AircraftError::Label => write!(f, "Invalid label provided."),
+            AircraftError::Identifier => write!(f, "Invalid identifier(s) provided."),
             AircraftError::Client => write!(f, "Could not get backend client."),
             AircraftError::DBError => write!(f, "Unknown backend error."),
         }
@@ -71,7 +67,8 @@ pub async fn psql_init() -> Result<(), PostgisError> {
         super::psql_enum_declaration::<OperationalStatus>(status_enum_name),
         format!(
             r#"CREATE TABLE IF NOT EXISTS {table_name} (
-                "identifier" VARCHAR(20) UNIQUE PRIMARY KEY NOT NULL,
+                "identifier" VARCHAR(20) UNIQUE,
+                "session_id" UNIQUE VARCHAR(20),
                 "aircraft_type" {type_enum_name} NOT NULL DEFAULT '{type_enum_default}',
                 "velocity_horizontal_ground_mps" FLOAT(4),
                 "velocity_horizontal_air_mps" FLOAT(4),
@@ -82,7 +79,8 @@ pub async fn psql_init() -> Result<(), PostgisError> {
                 "last_position_update" TIMESTAMPTZ,
                 "last_velocity_update" TIMESTAMPTZ,
                 "simulated" BOOLEAN DEFAULT FALSE,
-                "op_status" {status_enum_name} NOT NULL DEFAULT '{status_enum_default}'
+                "op_status" {status_enum_name} NOT NULL DEFAULT '{status_enum_default}',
+                PRIMARY KEY ("identifier", "session_id")
             );"#,
             table_name = get_table_name(),
             type_enum_default = AircraftType::Undeclared.to_string(),
@@ -127,20 +125,46 @@ impl Processor<AircraftVelocity> for Consumer {
 }
 
 /// Validates the provided aircraft identification.
-fn validate_identification(item: &AircraftId, now: &DateTime<Utc>) -> Result<(), PostgisError> {
-    if let Err(e) = check_identifier(&item.identifier) {
+fn validate_identification(
+    caa_identifier: &Option<String>,
+    session_id: &Option<String>,
+) -> Result<(), PostgisError> {
+    if let Some(identifier) = caa_identifier {
+        check_identifier(identifier).ok().ok_or_else(|| {
+            postgis_error!("(validate_id_message) invalid identifier: {:?}", identifier);
+
+            PostgisError::Aircraft(AircraftError::Identifier)
+        })?;
+    }
+
+    if let Some(session_id) = session_id {
+        super::flight::check_flight_identifier(session_id)
+            .ok()
+            .ok_or_else(|| {
+                postgis_error!("(validate_id_message) invalid session_id: {:?}", session_id);
+
+                PostgisError::Aircraft(AircraftError::Identifier)
+            })?;
+    }
+
+    if caa_identifier.is_none() && session_id.is_none() {
         postgis_error!(
-            "(validate_identification) invalid identifier {}: {}",
-            item.identifier,
-            e
+            "(validate_id_message) aircraft ID must have at least one of: [CAA-assigned aircraft ID, session ID]"
         );
 
-        return Err(PostgisError::Aircraft(AircraftError::Label));
+        return Err(PostgisError::Aircraft(AircraftError::Identifier));
     }
+
+    Ok(())
+}
+
+/// Validates the provided aircraft identification.
+fn validate_id_message(item: &AircraftId, now: &DateTime<Utc>) -> Result<(), PostgisError> {
+    validate_identification(&item.identifier, &item.session_id)?;
 
     if item.timestamp_network > *now {
         postgis_error!(
-            "(validate_identification) could not validate timestamp_network (in future): {}",
+            "(validate_id_message) could not validate timestamp_network (in future): {}",
             item.timestamp_network
         );
 
@@ -155,6 +179,13 @@ fn validate_identification(item: &AircraftId, now: &DateTime<Utc>) -> Result<(),
 /// Confirms with Redis Queue that item was processed.
 pub async fn update_aircraft_id(aircraft: Vec<AircraftId>) -> Result<(), PostgisError> {
     postgis_debug!("(update_aircraft_id) entry.");
+
+    let now = Utc::now();
+    let aircraft: Vec<AircraftId> = aircraft
+        .into_iter()
+        .filter(|item| validate_id_message(item, &now).is_ok())
+        .collect();
+
     if aircraft.is_empty() {
         return Ok(());
     }
@@ -184,12 +215,15 @@ pub async fn update_aircraft_id(aircraft: Vec<AircraftId>) -> Result<(), Postgis
             r#"
         INSERT INTO {table_name} (
             "identifier",
+            "session_id",
             "aircraft_type",
             "last_identifier_update"
         )
-        VALUES ($1, $2, $3)
-        ON CONFLICT ("identifier") DO UPDATE
-            SET "aircraft_type" = EXCLUDED."aircraft_type",
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT ("identifier", "session_id") DO UPDATE
+            SET "identifier" = EXCLUDED."identifier",
+                "session_id" = EXCLUDED."session_id",
+                "aircraft_type" = EXCLUDED."aircraft_type",
                 "last_identifier_update" = EXCLUDED."last_identifier_update";
         "#,
             table_name = get_table_name()
@@ -203,23 +237,13 @@ pub async fn update_aircraft_id(aircraft: Vec<AircraftId>) -> Result<(), Postgis
             PostgisError::Aircraft(AircraftError::DBError)
         })?;
 
-    let now = Utc::now();
     for craft in &aircraft {
-        if let Err(e) = validate_identification(craft, &now) {
-            postgis_error!(
-                "(update_aircraft_id) could not validate id for aircraft {}: {:?}",
-                craft.identifier,
-                e
-            );
-
-            continue;
-        }
-
         transaction
             .execute(
                 &stmt,
                 &[
                     &craft.identifier,
+                    &craft.session_id,
                     &craft.aircraft_type,
                     &craft.timestamp_network,
                 ],
@@ -244,10 +268,13 @@ pub async fn update_aircraft_id(aircraft: Vec<AircraftId>) -> Result<(), Postgis
 }
 
 /// Validates the provided aircraft position.
-fn validate_position(item: &AircraftPosition, now: &DateTime<Utc>) -> Result<(), PostgisError> {
+fn validate_position_message(
+    item: &AircraftPosition,
+    now: &DateTime<Utc>,
+) -> Result<(), PostgisError> {
     if item.position.latitude < -90.0 || item.position.latitude > 90.0 {
         postgis_error!(
-            "(validate_position) could not validate latitude: {}",
+            "(validate_position_message) could not validate latitude: {}",
             item.position.latitude
         );
         return Err(PostgisError::Aircraft(AircraftError::Location));
@@ -255,26 +282,18 @@ fn validate_position(item: &AircraftPosition, now: &DateTime<Utc>) -> Result<(),
 
     if item.position.longitude < -180.0 || item.position.longitude > 180.0 {
         postgis_error!(
-            "(validate_position) could not validate longitude: {}",
+            "(validate_position_message) could not validate longitude: {}",
             item.position.longitude
         );
 
         return Err(PostgisError::Aircraft(AircraftError::Location));
     }
 
-    if let Err(e) = check_identifier(&item.identifier) {
-        postgis_error!(
-            "(validate_position) invalid identifier {}: {}",
-            item.identifier,
-            e
-        );
-
-        return Err(PostgisError::Aircraft(AircraftError::Label));
-    }
+    validate_identification(&item.identifier, &item.session_id)?;
 
     if item.timestamp_network > *now {
         postgis_error!(
-            "(validate_position) could not validate timestamp_network (in future): {}",
+            "(validate_position_message) could not validate timestamp_network (in future): {}",
             item.timestamp_network
         );
 
@@ -287,6 +306,13 @@ fn validate_position(item: &AircraftPosition, now: &DateTime<Utc>) -> Result<(),
 /// Updates aircraft position in the PostGIS database.
 pub async fn update_aircraft_position(aircraft: Vec<AircraftPosition>) -> Result<(), PostgisError> {
     postgis_debug!("(update_aircraft_position) entry.");
+
+    let now = Utc::now();
+    let aircraft: Vec<AircraftPosition> = aircraft
+        .into_iter()
+        .filter(|item| validate_position_message(item, &now).is_ok())
+        .collect();
+
     if aircraft.is_empty() {
         return Ok(());
     }
@@ -317,11 +343,12 @@ pub async fn update_aircraft_position(aircraft: Vec<AircraftPosition>) -> Result
             r#"
         INSERT INTO {table_name} (
             "identifier",
+            "session_id",
             "geom",
             "last_position_update"
         )
-        VALUES ($1, $2, $3)
-        ON CONFLICT ("identifier") DO UPDATE
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT ("identifier", "session_id") DO UPDATE
             SET "geom" = EXCLUDED."geom",
                 "last_position_update" = EXCLUDED."last_position_update";
         "#,
@@ -336,21 +363,10 @@ pub async fn update_aircraft_position(aircraft: Vec<AircraftPosition>) -> Result
             PostgisError::Aircraft(AircraftError::DBError)
         })?;
 
-    let now = Utc::now();
     for craft in &aircraft {
-        if let Err(e) = validate_position(craft, &now) {
-            postgis_error!(
-                "(update_aircraft_position) could not validate position for aircraft {}: {:?}",
-                craft.identifier,
-                e
-            );
-
-            continue;
-        }
-
         let Ok(geom) = PointZ::try_from(craft.position) else {
             postgis_error!(
-                "(update_aircraft_position) could not convert position to PointZ for aircraft {}: {:?}",
+                "(update_aircraft_position) could not convert position to PointZ for aircraft {:?}: {:?}",
                 craft.identifier,
                 craft.position
             );
@@ -359,7 +375,15 @@ pub async fn update_aircraft_position(aircraft: Vec<AircraftPosition>) -> Result
         };
 
         transaction
-            .execute(&stmt, &[&craft.identifier, &geom, &craft.timestamp_network])
+            .execute(
+                &stmt,
+                &[
+                    &craft.identifier,
+                    &craft.session_id,
+                    &geom,
+                    &craft.timestamp_network,
+                ],
+            )
             .await
             .map_err(|e| {
                 postgis_error!(
@@ -386,20 +410,15 @@ pub async fn update_aircraft_position(aircraft: Vec<AircraftPosition>) -> Result
 }
 
 /// Validates the provided aircraft velocity
-fn validate_velocity(item: &AircraftVelocity, now: &DateTime<Utc>) -> Result<(), PostgisError> {
-    if let Err(e) = check_identifier(&item.identifier) {
-        postgis_error!(
-            "(validate_velocity) invalid identifier {}: {}",
-            item.identifier,
-            e
-        );
-
-        return Err(PostgisError::Aircraft(AircraftError::Label));
-    }
+fn validate_velocity_message(
+    item: &AircraftVelocity,
+    now: &DateTime<Utc>,
+) -> Result<(), PostgisError> {
+    validate_identification(&item.identifier, &item.session_id)?;
 
     if item.timestamp_network > *now {
         postgis_error!(
-            "(validate_velocity) could not validate timestamp_network (in future): {}",
+            "(validate_velocity_message) could not validate timestamp_network (in future): {}",
             item.timestamp_network
         );
 
@@ -412,6 +431,13 @@ fn validate_velocity(item: &AircraftVelocity, now: &DateTime<Utc>) -> Result<(),
 /// Updates aircraft velocity in the PostGIS database.
 pub async fn update_aircraft_velocity(aircraft: Vec<AircraftVelocity>) -> Result<(), PostgisError> {
     postgis_debug!("(update_aircraft_velocity) entry.");
+
+    let now = Utc::now();
+    let aircraft: Vec<AircraftVelocity> = aircraft
+        .into_iter()
+        .filter(|item| validate_velocity_message(item, &now).is_ok())
+        .collect();
+
     if aircraft.is_empty() {
         return Ok(());
     }
@@ -442,13 +468,14 @@ pub async fn update_aircraft_velocity(aircraft: Vec<AircraftVelocity>) -> Result
             r#"
         INSERT INTO {table_name} (
             "identifier",
+            "session_id",
             "velocity_horizontal_ground_mps",
             "velocity_vertical_mps",
             "track_angle_degrees",
             "last_velocity_update"
         ) VALUES (
-            $1, $2, $3, $4, $5
-        ) ON CONFLICT (identifier) DO UPDATE
+            $1, $2, $3, $4, $5, $6
+        ) ON CONFLICT ("identifier", "session_id") DO UPDATE
             SET "velocity_horizontal_ground_mps" = EXCLUDED."velocity_horizontal_ground_mps",
                 "velocity_vertical_mps" = EXCLUDED."velocity_vertical_mps",
                 "track_angle_degrees" = EXCLUDED."track_angle_degrees",
@@ -464,23 +491,13 @@ pub async fn update_aircraft_velocity(aircraft: Vec<AircraftVelocity>) -> Result
             PostgisError::Aircraft(AircraftError::DBError)
         })?;
 
-    let now = Utc::now();
     for craft in &aircraft {
-        if let Err(e) = validate_velocity(craft, &now) {
-            postgis_error!(
-                "(update_aircraft_velocity) could not validate velocity for aircraft {}: {:?}",
-                craft.identifier,
-                e
-            );
-
-            continue;
-        }
-
         transaction
             .execute(
                 &stmt,
                 &[
                     &craft.identifier,
+                    &craft.session_id,
                     &craft.velocity_horizontal_ground_mps,
                     &craft.velocity_vertical_mps,
                     &craft.track_angle_degrees,
@@ -561,7 +578,8 @@ mod tests {
         let aircraft: Vec<AircraftPosition> = nodes
             .iter()
             .map(|(label, latitude, longitude)| AircraftPosition {
-                identifier: label.to_string(),
+                identifier: Some(label.to_string()),
+                session_id: None,
                 position: Position {
                     latitude: *latitude,
                     longitude: *longitude,
@@ -591,7 +609,8 @@ mod tests {
             &"X".repeat(1000),
         ] {
             let position = AircraftPosition {
-                identifier: label.to_string(),
+                identifier: Some(label.to_string()),
+                session_id: None,
                 position: Position {
                     latitude: 0.0,
                     longitude: 0.0,
@@ -602,7 +621,8 @@ mod tests {
             };
 
             let velocity = AircraftVelocity {
-                identifier: label.to_string(),
+                identifier: Some(label.to_string()),
+                session_id: None,
                 timestamp_network: Utc::now(),
                 velocity_horizontal_ground_mps: 0.0,
                 velocity_horizontal_air_mps: None,
@@ -612,23 +632,43 @@ mod tests {
             };
 
             let id = AircraftId {
-                identifier: label.to_string(),
+                identifier: Some(label.to_string()),
+                session_id: None,
                 timestamp_network: Utc::now(),
                 aircraft_type: AircraftType::Rotorcraft,
                 timestamp_asset: None,
             };
 
-            let result = validate_position(&position, &Utc::now()).unwrap_err();
-            assert_eq!(result, PostgisError::Aircraft(AircraftError::Label));
+            let result = validate_position_message(&position, &Utc::now()).unwrap_err();
+            assert_eq!(result, PostgisError::Aircraft(AircraftError::Identifier));
 
-            let result = validate_velocity(&velocity, &Utc::now()).unwrap_err();
-            assert_eq!(result, PostgisError::Aircraft(AircraftError::Label));
+            let result = validate_velocity_message(&velocity, &Utc::now()).unwrap_err();
+            assert_eq!(result, PostgisError::Aircraft(AircraftError::Identifier));
 
-            let result = validate_identification(&id, &Utc::now()).unwrap_err();
-            assert_eq!(result, PostgisError::Aircraft(AircraftError::Label));
+            let result = validate_id_message(&id, &Utc::now()).unwrap_err();
+            assert_eq!(result, PostgisError::Aircraft(AircraftError::Identifier));
         }
 
         ut_info!("(ut_aircraft_position_to_gis_invalid_label) success");
+    }
+
+    #[tokio::test]
+    async fn ut_aircraft_id_no_identifier() {
+        crate::get_log_handle().await;
+        ut_info!("(ut_aircraft_id_no_identifier) start");
+
+        let id = AircraftId {
+            identifier: None,
+            session_id: None,
+            timestamp_network: Utc::now(),
+            aircraft_type: AircraftType::Rotorcraft,
+            timestamp_asset: None,
+        };
+
+        let result = validate_id_message(&id, &Utc::now()).unwrap_err();
+        assert_eq!(result, PostgisError::Aircraft(AircraftError::Identifier));
+
+        ut_info!("(ut_aircraft_id_no_identifier) success");
     }
 
     #[tokio::test]
@@ -644,12 +684,13 @@ mod tests {
                     longitude: coord.1,
                     altitude_meters: 100.0,
                 },
-                identifier: "Aircraft".to_string(),
+                identifier: Some("Aircraft".to_string()),
+                session_id: None,
                 timestamp_network: Utc::now(),
                 timestamp_asset: None,
             };
 
-            let result = validate_position(&aircraft, &Utc::now()).unwrap_err();
+            let result = validate_position_message(&aircraft, &Utc::now()).unwrap_err();
             assert_eq!(result, PostgisError::Aircraft(AircraftError::Location));
         }
 
@@ -661,7 +702,7 @@ mod tests {
         crate::get_log_handle().await;
         ut_info!("(ut_aircraft_position_to_gis_invalid_time) start");
 
-        let timestamp_network = Utc::now() + Duration::days(1);
+        let timestamp_network = Utc::now() + Duration::try_days(1).unwrap();
         let position = AircraftPosition {
             timestamp_network,
             position: Position {
@@ -669,13 +710,15 @@ mod tests {
                 longitude: 0.0,
                 altitude_meters: 0.0,
             },
-            identifier: "Aircraft".to_string(),
+            identifier: Some("Aircraft".to_string()),
+            session_id: None,
             timestamp_asset: None,
         };
 
         let velocity = AircraftVelocity {
             timestamp_network,
-            identifier: "Aircraft".to_string(),
+            identifier: Some("Aircraft".to_string()),
+            session_id: None,
             velocity_horizontal_ground_mps: 0.0,
             velocity_horizontal_air_mps: None,
             velocity_vertical_mps: 0.0,
@@ -685,18 +728,19 @@ mod tests {
 
         let id = AircraftId {
             timestamp_network,
-            identifier: "Aircraft".to_string(),
+            identifier: Some("Aircraft".to_string()),
+            session_id: None,
             aircraft_type: AircraftType::Rotorcraft,
             timestamp_asset: None,
         };
 
-        let result = validate_position(&position, &Utc::now()).unwrap_err();
+        let result = validate_position_message(&position, &Utc::now()).unwrap_err();
         assert_eq!(result, PostgisError::Aircraft(AircraftError::Time));
 
-        let result = validate_velocity(&velocity, &Utc::now()).unwrap_err();
+        let result = validate_velocity_message(&velocity, &Utc::now()).unwrap_err();
         assert_eq!(result, PostgisError::Aircraft(AircraftError::Time));
 
-        let result = validate_identification(&id, &Utc::now()).unwrap_err();
+        let result = validate_id_message(&id, &Utc::now()).unwrap_err();
         assert_eq!(result, PostgisError::Aircraft(AircraftError::Time));
 
         ut_info!("(ut_aircraft_position_to_gis_invalid_time) success");
