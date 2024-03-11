@@ -265,10 +265,10 @@ message AircraftState {
 // Aircraft Flight Information
 message Flight {
     // Flight identifier, if on assigned flight
-    optional string identifier = 1;
+    optional string session_id = 1;
 
     // Aircraft identifier
-    string aircraft_id = 2;
+    optional string aircraft_id = 2;
 
     // If this is a simulated aircraft
     bool simulated = 3;

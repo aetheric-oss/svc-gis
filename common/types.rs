@@ -119,10 +119,7 @@ pub struct Position {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AircraftPosition {
     /// The unique identifier for the aircraft
-    pub identifier: Option<String>,
-
-    /// The flight ID of this aircraft
-    pub session_id: Option<String>,
+    pub identifier: String,
 
     /// The 3D position of the aircraft
     pub position: Position,
@@ -159,10 +156,8 @@ pub struct AircraftId {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AircraftVelocity {
     /// The unique identifier for the aircraft
-    pub identifier: Option<String>,
-
-    /// The flight ID of this aircraft
-    pub session_id: Option<String>,
+    /// Could be a CAA-assigned ID, a serial number, etc.
+    pub identifier: String,
 
     /// The velocity of the aircraft relative to ground in meters per second
     ///  If the aircraft has a headwind of 100 kph and is not moving

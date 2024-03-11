@@ -67,8 +67,8 @@ pub async fn psql_init() -> Result<(), PostgisError> {
         super::psql_enum_declaration::<OperationalStatus>(status_enum_name),
         format!(
             r#"CREATE TABLE IF NOT EXISTS {table_name} (
-                "identifier" VARCHAR(20) UNIQUE,
-                "session_id" UNIQUE VARCHAR(20),
+                "identifier" VARCHAR(20) UNIQUE PRIMARY KEY,
+                "session_id" VARCHAR(20) UNIQUE,
                 "aircraft_type" {type_enum_name} NOT NULL DEFAULT '{type_enum_default}',
                 "velocity_horizontal_ground_mps" FLOAT(4),
                 "velocity_horizontal_air_mps" FLOAT(4),
@@ -79,8 +79,7 @@ pub async fn psql_init() -> Result<(), PostgisError> {
                 "last_position_update" TIMESTAMPTZ,
                 "last_velocity_update" TIMESTAMPTZ,
                 "simulated" BOOLEAN DEFAULT FALSE,
-                "op_status" {status_enum_name} NOT NULL DEFAULT '{status_enum_default}',
-                PRIMARY KEY ("identifier", "session_id")
+                "op_status" {status_enum_name} NOT NULL DEFAULT '{status_enum_default}'
             );"#,
             table_name = get_table_name(),
             type_enum_default = AircraftType::Undeclared.to_string(),
@@ -220,9 +219,8 @@ pub async fn update_aircraft_id(aircraft: Vec<AircraftId>) -> Result<(), Postgis
             "last_identifier_update"
         )
         VALUES ($1, $2, $3, $4)
-        ON CONFLICT ("identifier", "session_id") DO UPDATE
-            SET "identifier" = EXCLUDED."identifier",
-                "session_id" = EXCLUDED."session_id",
+        ON CONFLICT ("identifier") DO UPDATE
+            SET "session_id" = EXCLUDED."session_id",
                 "aircraft_type" = EXCLUDED."aircraft_type",
                 "last_identifier_update" = EXCLUDED."last_identifier_update";
         "#,
@@ -289,7 +287,14 @@ fn validate_position_message(
         return Err(PostgisError::Aircraft(AircraftError::Location));
     }
 
-    validate_identification(&item.identifier, &item.session_id)?;
+    if let Err(e) = check_identifier(&item.identifier) {
+        postgis_error!(
+            "(validate_position_message) could not validate identifier: {}",
+            e
+        );
+
+        return Err(PostgisError::Aircraft(AircraftError::Identifier));
+    }
 
     if item.timestamp_network > *now {
         postgis_error!(
@@ -343,12 +348,11 @@ pub async fn update_aircraft_position(aircraft: Vec<AircraftPosition>) -> Result
             r#"
         INSERT INTO {table_name} (
             "identifier",
-            "session_id",
             "geom",
             "last_position_update"
         )
-        VALUES ($1, $2, $3, $4)
-        ON CONFLICT ("identifier", "session_id") DO UPDATE
+        VALUES ($1, $2, $3)
+        ON CONFLICT ("identifier") DO UPDATE
             SET "geom" = EXCLUDED."geom",
                 "last_position_update" = EXCLUDED."last_position_update";
         "#,
@@ -375,15 +379,7 @@ pub async fn update_aircraft_position(aircraft: Vec<AircraftPosition>) -> Result
         };
 
         transaction
-            .execute(
-                &stmt,
-                &[
-                    &craft.identifier,
-                    &craft.session_id,
-                    &geom,
-                    &craft.timestamp_network,
-                ],
-            )
+            .execute(&stmt, &[&craft.identifier, &geom, &craft.timestamp_network])
             .await
             .map_err(|e| {
                 postgis_error!(
@@ -414,7 +410,14 @@ fn validate_velocity_message(
     item: &AircraftVelocity,
     now: &DateTime<Utc>,
 ) -> Result<(), PostgisError> {
-    validate_identification(&item.identifier, &item.session_id)?;
+    if let Err(e) = check_identifier(&item.identifier) {
+        postgis_error!(
+            "(validate_velocity_message) could not validate identifier: {}",
+            e
+        );
+
+        return Err(PostgisError::Aircraft(AircraftError::Identifier));
+    }
 
     if item.timestamp_network > *now {
         postgis_error!(
@@ -468,14 +471,13 @@ pub async fn update_aircraft_velocity(aircraft: Vec<AircraftVelocity>) -> Result
             r#"
         INSERT INTO {table_name} (
             "identifier",
-            "session_id",
             "velocity_horizontal_ground_mps",
             "velocity_vertical_mps",
             "track_angle_degrees",
             "last_velocity_update"
         ) VALUES (
-            $1, $2, $3, $4, $5, $6
-        ) ON CONFLICT ("identifier", "session_id") DO UPDATE
+            $1, $2, $3, $4, $5
+        ) ON CONFLICT ("identifier") DO UPDATE
             SET "velocity_horizontal_ground_mps" = EXCLUDED."velocity_horizontal_ground_mps",
                 "velocity_vertical_mps" = EXCLUDED."velocity_vertical_mps",
                 "track_angle_degrees" = EXCLUDED."track_angle_degrees",
@@ -497,7 +499,6 @@ pub async fn update_aircraft_velocity(aircraft: Vec<AircraftVelocity>) -> Result
                 &stmt,
                 &[
                     &craft.identifier,
-                    &craft.session_id,
                     &craft.velocity_horizontal_ground_mps,
                     &craft.velocity_vertical_mps,
                     &craft.track_angle_degrees,
@@ -578,8 +579,7 @@ mod tests {
         let aircraft: Vec<AircraftPosition> = nodes
             .iter()
             .map(|(label, latitude, longitude)| AircraftPosition {
-                identifier: Some(label.to_string()),
-                session_id: None,
+                identifier: label.to_string(),
                 position: Position {
                     latitude: *latitude,
                     longitude: *longitude,
@@ -609,8 +609,7 @@ mod tests {
             &"X".repeat(1000),
         ] {
             let position = AircraftPosition {
-                identifier: Some(label.to_string()),
-                session_id: None,
+                identifier: label.to_string(),
                 position: Position {
                     latitude: 0.0,
                     longitude: 0.0,
@@ -621,8 +620,7 @@ mod tests {
             };
 
             let velocity = AircraftVelocity {
-                identifier: Some(label.to_string()),
-                session_id: None,
+                identifier: label.to_string(),
                 timestamp_network: Utc::now(),
                 velocity_horizontal_ground_mps: 0.0,
                 velocity_horizontal_air_mps: None,
@@ -684,8 +682,7 @@ mod tests {
                     longitude: coord.1,
                     altitude_meters: 100.0,
                 },
-                identifier: Some("Aircraft".to_string()),
-                session_id: None,
+                identifier: "Aircraft".to_string(),
                 timestamp_network: Utc::now(),
                 timestamp_asset: None,
             };
@@ -710,15 +707,13 @@ mod tests {
                 longitude: 0.0,
                 altitude_meters: 0.0,
             },
-            identifier: Some("Aircraft".to_string()),
-            session_id: None,
+            identifier: "Aircraft".to_string(),
             timestamp_asset: None,
         };
 
         let velocity = AircraftVelocity {
             timestamp_network,
-            identifier: Some("Aircraft".to_string()),
-            session_id: None,
+            identifier: "Aircraft".to_string(),
             velocity_horizontal_ground_mps: 0.0,
             velocity_horizontal_air_mps: None,
             velocity_vertical_mps: 0.0,

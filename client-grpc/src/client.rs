@@ -210,8 +210,8 @@ impl crate::service::Client<RpcServiceClient<Channel>> for GisClient {
         grpc_debug!("(get_flights) request: {:?}", request);
         Ok(tonic::Response::new(GetFlightsResponse {
             flights: vec![Flight {
-                identifier: Some("mock flight".to_string()),
-                aircraft_id: "mock aircraft".to_string(),
+                session_id: Some("mock flight".to_string()),
+                aircraft_id: Some("mock aircraft".to_string()),
                 positions: vec![TimePosition {
                     position: Some(PointZ {
                         latitude: 52.64248776887166,

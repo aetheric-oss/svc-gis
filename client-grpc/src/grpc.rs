@@ -257,10 +257,10 @@ pub struct AircraftState {
 pub struct Flight {
     /// Flight identifier, if on assigned flight
     #[prost(string, optional, tag = "1")]
-    pub identifier: ::core::option::Option<::prost::alloc::string::String>,
+    pub session_id: ::core::option::Option<::prost::alloc::string::String>,
     /// Aircraft identifier
-    #[prost(string, tag = "2")]
-    pub aircraft_id: ::prost::alloc::string::String,
+    #[prost(string, optional, tag = "2")]
+    pub aircraft_id: ::core::option::Option<::prost::alloc::string::String>,
     /// If this is a simulated aircraft
     #[prost(bool, tag = "3")]
     pub simulated: bool,

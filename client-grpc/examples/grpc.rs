@@ -129,8 +129,7 @@ async fn add_aircraft(connection: &mut redis::Connection) -> Result<(), ()> {
         .iter()
         .map(
             |(identifier, latitude, longitude, altitude_meters)| AircraftPosition {
-                identifier: Some(identifier.to_string()),
-                session_id: None,
+                identifier: identifier.to_string(),
                 position: Position {
                     latitude: *latitude,
                     longitude: *longitude,
@@ -176,8 +175,7 @@ async fn add_aircraft(connection: &mut redis::Connection) -> Result<(), ()> {
     let aircraft: Vec<AircraftVelocity> = sample
         .iter()
         .map(|(identifier, _, _, _)| AircraftVelocity {
-            identifier: Some(identifier.to_string()),
-            session_id: None,
+            identifier: identifier.to_string(),
             velocity_horizontal_air_mps: None,
             velocity_horizontal_ground_mps: 100.0,
             velocity_vertical_mps: 10.0,

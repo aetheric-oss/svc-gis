@@ -402,7 +402,7 @@ pub async fn get_flights(request: GetFlightsRequest) -> Result<Vec<Flight>, Flig
         FlightError::Client
     })?;
 
-    let identifier_str = "flight_identifier";
+    let session_id_str = "flight_identifier";
     let aircraft_id_str = "aircraft_identifier";
     let aircraft_type_str = "aircraft_type";
     let simulated_str = "simulated";
@@ -410,13 +410,16 @@ pub async fn get_flights(request: GetFlightsRequest) -> Result<Vec<Flight>, Flig
         .prepare_cached(&format!(
             r#"
             SELECT 
-                "flights"."flight_identifier" as "{identifier_str}",
+                "flights"."flight_identifier" as "{session_id_str}",
                 "aircraft"."identifier" as "{aircraft_id_str}",
                 "aircraft"."aircraft_type" as "{aircraft_type_str}",
                 "aircraft"."simulated" as "{simulated_str}"
             FROM {aircraft_table_name} as "aircraft"
             LEFT JOIN {flights_table_name} as "flights"
-                ON "flights"."aircraft_identifier" = "aircraft"."identifier"
+                ON (
+                    "flights"."aircraft_identifier" = "aircraft"."identifier"
+                    OR "flights"."flight_identifier" = "aircraft"."session_id"
+                )
             WHERE 
                 (
                     -- get grounded aircraft without a scheduled flight
@@ -424,7 +427,7 @@ pub async fn get_flights(request: GetFlightsRequest) -> Result<Vec<Flight>, Flig
                     AND "aircraft"."last_position_update" >= $2
                     AND "aircraft"."last_position_update" <= $3
                 ) OR (
-                    -- get aircraft in flight
+                    -- flights that intersect this window
                     "flights"."geom" IS NOT NULL
                     AND ST_Intersects(ST_Envelope($1), "flights"."geom")
                     AND "flights"."time_end" >= $2
@@ -451,13 +454,13 @@ pub async fn get_flights(request: GetFlightsRequest) -> Result<Vec<Flight>, Flig
     let mut flights = result
         .iter()
         .map(|row| {
-            let identifier: Option<String> = row.try_get(identifier_str)?;
-            let aircraft_id: String = row.try_get(aircraft_id_str)?;
+            let session_id: Option<String> = row.try_get(session_id_str)?;
+            let aircraft_id: Option<String> = row.try_get(aircraft_id_str)?;
             let aircraft_type: AircraftType = row.try_get(aircraft_type_str)?;
             let simulated: bool = row.try_get(simulated_str)?;
 
             Ok(Flight {
-                identifier,
+                session_id,
                 aircraft_id,
                 simulated,
                 positions: vec![],
@@ -478,6 +481,8 @@ pub async fn get_flights(request: GetFlightsRequest) -> Result<Vec<Flight>, Flig
     let stmt = client
         .prepare_cached(&format!(
             r#"SELECT
+                    "identifier",
+                    "session_id",
                     "geom",
                     "velocity_horizontal_ground_mps",
                     "velocity_vertical_mps",
@@ -485,7 +490,9 @@ pub async fn get_flights(request: GetFlightsRequest) -> Result<Vec<Flight>, Flig
                     "last_position_update",
                     "op_status"
                 FROM {table_name} 
-                WHERE "identifier" = $1
+                WHERE
+                    "session_id" = $1 
+                    OR "identifier" = $2 
                 LIMIT 1;
         "#,
             table_name = super::aircraft::get_table_name(),
@@ -500,6 +507,8 @@ pub async fn get_flights(request: GetFlightsRequest) -> Result<Vec<Flight>, Flig
         row: tokio_postgres::Row,
         flight: &mut Flight,
     ) -> Result<(), tokio_postgres::error::Error> {
+        let identifier: Option<String> = row.try_get("identifier")?;
+        let session_id: Option<String> = row.try_get("session_id")?;
         let geom: PointZ = row.try_get("geom")?;
         let velocity_horizontal_ground_mps: f32 = row.try_get("velocity_horizontal_ground_mps")?;
         let velocity_vertical_mps: f32 = row.try_get("velocity_vertical_mps")?;
@@ -507,6 +516,8 @@ pub async fn get_flights(request: GetFlightsRequest) -> Result<Vec<Flight>, Flig
         let last_position_update: DateTime<Utc> = row.try_get("last_position_update")?;
         let status: OperationalStatus = row.try_get("op_status")?;
 
+        flight.session_id = session_id;
+        flight.aircraft_id = identifier;
         flight.positions.push(TimePosition {
             position: Some(GrpcPointZ {
                 latitude: geom.y,
@@ -534,25 +545,31 @@ pub async fn get_flights(request: GetFlightsRequest) -> Result<Vec<Flight>, Flig
         Ok(())
     }
 
+    let mut result: Vec<Flight> = vec![];
     for flight in &mut flights {
-        let Ok(row) = client
-            .query_one(&stmt, &[&flight.aircraft_id])
+        let rows = match client
+            .query(&stmt, &[&flight.session_id, &flight.aircraft_id])
             .await
-            .map_err(|e| {
-                postgis_error!("(get_flights) could not query for aircraft, either doesn't exist or has multiple entries: {}", e);
-                FlightError::DBError
-            })
-        else {
-            continue;
+        {
+            Ok(rows) => rows,
+            Err(e) => {
+                postgis_error!("(get_flights) could not execute transaction: {}", e);
+                continue;
+            }
         };
 
-        if let Err(e) = process_row(row, flight) {
-            postgis_error!("(get_flights) could not get position data: {}", e);
-            continue;
-        };
+        for row in rows {
+            let mut f = flight.clone();
+            if let Err(e) = process_row(row, &mut f) {
+                postgis_error!("(get_flights) could not get position data: {}", e);
+                continue;
+            }
+
+            result.push(f);
+        }
     }
 
-    Ok(flights)
+    Ok(result)
 }
 
 #[cfg(test)]
