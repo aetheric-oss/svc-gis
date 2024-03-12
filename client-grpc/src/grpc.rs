@@ -117,6 +117,32 @@ pub struct UpdateZonesRequest {
     #[prost(message, repeated, tag = "1")]
     pub zones: ::prost::alloc::vec::Vec<Zone>,
 }
+/// Update flight paths
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct UpdateFlightPathRequest {
+    /// The unique identifier for the flight
+    #[prost(string, optional, tag = "1")]
+    pub flight_identifier: ::core::option::Option<::prost::alloc::string::String>,
+    /// The unique identifier for the aircraft
+    #[prost(string, optional, tag = "2")]
+    pub aircraft_identifier: ::core::option::Option<::prost::alloc::string::String>,
+    /// If this is a simulated flight
+    #[prost(bool, tag = "3")]
+    pub simulated: bool,
+    /// The type of aircraft
+    #[prost(enumeration = "crate::prelude::AircraftType", tag = "4")]
+    pub aircraft_type: i32,
+    /// The path of the aircraft
+    #[prost(message, repeated, tag = "5")]
+    pub path: ::prost::alloc::vec::Vec<PointZ>,
+    /// The planned start time of the flight
+    #[prost(message, optional, tag = "6")]
+    pub timestamp_start: ::core::option::Option<::lib_common::time::Timestamp>,
+    /// The planned end time of the flight
+    #[prost(message, optional, tag = "7")]
+    pub timestamp_end: ::core::option::Option<::lib_common::time::Timestamp>,
+}
 /// Best Path Request object
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -512,6 +538,28 @@ pub mod rpc_service_client {
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("grpc.RpcService", "updateZones"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn update_flight_path(
+            &mut self,
+            request: impl tonic::IntoRequest<super::UpdateFlightPathRequest>,
+        ) -> std::result::Result<tonic::Response<super::UpdateResponse>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/grpc.RpcService/updateFlightPath",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("grpc.RpcService", "updateFlightPath"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn best_path(

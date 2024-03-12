@@ -198,21 +198,21 @@ async fn add_aircraft(connection: &mut redis::Connection) -> Result<(), ()> {
     Ok(())
 }
 
-async fn add_flight_paths(connection: &mut redis::Connection) -> Result<(), ()> {
+async fn add_flight_paths(client: &GisClient) -> Result<(), ()> {
     println!("\n\u{1F681} Add Flights");
 
     let path = vec![
-        Position {
+        PointZ {
             latitude: 52.3746,
             longitude: 4.9160036,
             altitude_meters: 100.,
         },
-        Position {
+        PointZ {
             latitude: 52.3749819,
             longitude: 4.9157,
             altitude_meters: 200.,
         },
-        Position {
+        PointZ {
             latitude: 52.37523,
             longitude: 4.9153733,
             altitude_meters: 50.,
@@ -221,26 +221,23 @@ async fn add_flight_paths(connection: &mut redis::Connection) -> Result<(), ()> 
 
     let sample: Vec<&str> = vec![AIRCRAFT_1_ID, "Mantis", "Ghost", "Phantom"]; // leave off falcon
 
-    let items: Vec<FlightPath> = sample
+    let items: Vec<UpdateFlightPathRequest> = sample
         .into_iter()
         .enumerate()
-        .map(|(i, aircraft_identifier)| FlightPath {
-            flight_identifier: format!("FLIGHT-{}", i),
-            aircraft_identifier: aircraft_identifier.to_string(),
+        .map(|(i, aircraft_identifier)| UpdateFlightPathRequest {
+            flight_identifier: Some(format!("FLIGHT-{}", i)),
+            aircraft_identifier: Some(aircraft_identifier.to_string()),
             path: path.clone(),
-            timestamp_start: Utc::now(),
-            timestamp_end: Utc::now() + Duration::try_minutes(20).unwrap(),
+            timestamp_start: Some(Utc::now().into()),
+            timestamp_end: Some((Utc::now() + Duration::try_minutes(20).unwrap()).into()),
             simulated: false,
-            aircraft_type: AircraftType::Rotorcraft,
+            aircraft_type: AircraftType::Rotorcraft as i32,
         })
         .collect();
 
-    let mut pipe = redis::pipe();
-    items.iter().for_each(|item| {
-        (&mut pipe).rpush(REDIS_KEY_FLIGHT_PATH, serde_json::to_vec(&item).unwrap());
-    });
-
-    pipe.query::<()>(connection).unwrap();
+    for item in items {
+        client.update_flight_path(item).await.map_err(|e| ())?;
+    }
 
     Ok(())
 }
@@ -345,30 +342,24 @@ async fn best_path_flight_avoidance(
         alkmaar_2_polygon.centroid().unwrap(),
     ]
     .into_iter()
-    .map(|pt| Position {
+    .map(|pt| PointZ {
         latitude: pt.y(),
         longitude: pt.x(),
         altitude_meters: 200.0,
     })
-    .collect::<Vec<Position>>();
+    .collect::<Vec<PointZ>>();
 
-    let flight_path = FlightPath {
-        flight_identifier: "FLIGHT-Y".to_string(),
-        aircraft_identifier: "Razor Crest".to_string(),
+    let request = UpdateFlightPathRequest {
+        flight_identifier: Some("FLIGHT-Y".to_string()),
+        aircraft_identifier: Some("Razor Crest".to_string()),
         path,
-        timestamp_start: time_start.clone(),
-        timestamp_end: time_end.clone(),
+        timestamp_start: Some(time_start.into()),
+        timestamp_end: Some(time_end.into()),
         simulated: false,
-        aircraft_type: AircraftType::Rotorcraft,
+        aircraft_type: AircraftType::Rotorcraft as i32,
     };
 
-    let _ = redis::pipe()
-        .rpush(
-            REDIS_KEY_FLIGHT_PATH,
-            serde_json::to_vec(&flight_path).unwrap(),
-        )
-        .query::<()>(connection)
-        .unwrap();
+    let _ = client.update_flight_path(request).await?.into_inner();
 
     // Might take a moment for the flight to be consumed from the queue by svc-gis
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
@@ -401,30 +392,24 @@ async fn best_path_flight_avoidance(
         alkmaar_2_polygon.centroid().unwrap(),
     ]
     .into_iter()
-    .map(|pt| Position {
+    .map(|pt| PointZ {
         latitude: pt.y(),
         longitude: pt.x(),
-        altitude_meters: DEFAULT_ALTITUDE,
+        altitude_meters: DEFAULT_ALTITUDE as f32,
     })
-    .collect::<Vec<Position>>();
+    .collect::<Vec<PointZ>>();
 
-    let flight_path = FlightPath {
-        flight_identifier: "FLIGHT-X".to_string(),
-        aircraft_identifier: "Fondor".to_string(),
+    let request = UpdateFlightPathRequest {
+        flight_identifier: Some("FLIGHT-X".to_string()),
+        aircraft_identifier: Some("Fondor".to_string()),
         path,
-        timestamp_start: time_start.clone(),
-        timestamp_end: time_end.clone(),
+        timestamp_start: Some(time_start.into()),
+        timestamp_end: Some(time_end.into()),
         simulated: false,
-        aircraft_type: AircraftType::Rotorcraft,
+        aircraft_type: AircraftType::Rotorcraft as i32,
     };
 
-    let _ = redis::pipe()
-        .rpush(
-            REDIS_KEY_FLIGHT_PATH,
-            serde_json::to_vec(&flight_path).unwrap(),
-        )
-        .query::<()>(connection)
-        .unwrap();
+    let _ = client.update_flight_path(request).await?.into_inner();
 
     // Might take a moment for the flight to be consumed from the queue by svc-gis
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
@@ -735,7 +720,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     add_aircraft(&mut connection).await.unwrap();
-    add_flight_paths(&mut connection).await.unwrap();
+    add_flight_paths(&client).await.unwrap();
 
     // might take a moment for the flight paths to
     //  be picked up from the redis queue

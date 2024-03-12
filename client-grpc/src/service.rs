@@ -121,6 +121,42 @@ where
         request: super::UpdateZonesRequest,
     ) -> Result<tonic::Response<super::UpdateResponse>, tonic::Status>;
 
+    /// Returns a [`tonic::Response`] containing a [`UpdateResponse`](super::UpdateResponse)
+    /// Takes an [`UpdateFlightPathRequest`](super::UpdateFlightPathRequest).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`tonic::Status`] with [`Code::Unknown`](tonic::Code::Unknown) if
+    /// the server is not ready.
+    ///
+    /// # Examples
+    /// ```
+    /// use lib_common::grpc::get_endpoint_from_env;
+    /// use svc_gis_client_grpc::prelude::*;
+    /// use chrono::Utc;
+    ///
+    /// async fn example () -> Result<(), Box<dyn std::error::Error>> {
+    ///     let (host, port) = get_endpoint_from_env("SERVER_HOSTNAME", "SERVER_PORT_GRPC");
+    ///     let client = GisClient::new_client(&host, port, "gis");
+    ///     let request = gis::UpdateFlightPathRequest {
+    ///         flight_identifier: Some("flight-x".to_string()),
+    ///         aircraft_identifier: Some("aircraft-x".to_string()),
+    ///         simulated: false,
+    ///         aircraft_type: AircraftType::Rotorcraft as i32,
+    ///         timestamp_start: Some(Utc::now().into()),
+    ///         timestamp_end: Some(Utc::now().into()),
+    ///         path: vec![],
+    ///     };
+    ///     let response = client.update_flight_path(request).await?;
+    ///     println!("RESPONSE={:?}", response.into_inner());
+    ///     Ok(())
+    /// }
+    /// ```
+    async fn update_flight_path(
+        &self,
+        request: super::UpdateFlightPathRequest,
+    ) -> Result<tonic::Response<super::UpdateResponse>, tonic::Status>;
+
     /// Returns a [`tonic::Response`] containing a [`BestPathResponse`](super::BestPathResponse)
     /// Takes an [`BestPathRequest`](super::BestPathRequest).
     ///

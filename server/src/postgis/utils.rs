@@ -2,7 +2,7 @@
 
 use super::DEFAULT_SRID;
 use super::{PostgisError, PsqlError};
-use crate::grpc::server::grpc_server::Coordinates;
+use crate::grpc::server::grpc_server::{Coordinates, PointZ as GrpcPointZ};
 use crate::types::Position;
 use chrono::{DateTime, Duration, Utc};
 use deadpool_postgres::tokio_postgres::{types::ToSql, Row};
@@ -125,6 +125,19 @@ impl TryFrom<Position> for PointZ {
             position.longitude,
             position.latitude,
             position.altitude_meters,
+            Some(DEFAULT_SRID),
+        ))
+    }
+}
+
+impl TryFrom<GrpcPointZ> for PointZ {
+    type Error = ();
+
+    fn try_from(position: GrpcPointZ) -> Result<Self, Self::Error> {
+        Ok(PointZ::new(
+            position.longitude,
+            position.latitude,
+            position.altitude_meters as f64,
             Some(DEFAULT_SRID),
         ))
     }

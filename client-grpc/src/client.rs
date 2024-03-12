@@ -109,6 +109,15 @@ impl crate::service::Client<RpcServiceClient<Channel>> for GisClient {
         self.get_client().await?.update_zones(request).await
     }
 
+    async fn update_flight_path(
+        &self,
+        request: UpdateFlightPathRequest,
+    ) -> Result<tonic::Response<UpdateResponse>, tonic::Status> {
+        grpc_info!("(update_flight_path) {} client.", self.get_name());
+        grpc_debug!("(update_flight_path) request: {:?}", request);
+        self.get_client().await?.update_flight_path(request).await
+    }
+
     async fn best_path(
         &self,
         request: BestPathRequest,
@@ -176,6 +185,15 @@ impl crate::service::Client<RpcServiceClient<Channel>> for GisClient {
     ) -> Result<tonic::Response<UpdateResponse>, tonic::Status> {
         grpc_warn!("(update_zones MOCK) {} client.", self.get_name());
         grpc_debug!("(update_zones MOCK) request: {:?}", request);
+        Ok(tonic::Response::new(UpdateResponse { updated: true }))
+    }
+
+    async fn update_flight_path(
+        &self,
+        request: UpdateFlightPathRequest,
+    ) -> Result<tonic::Response<UpdateResponse>, tonic::Status> {
+        grpc_warn!("(update_flight_path MOCK) {} client.", self.get_name());
+        grpc_debug!("(update_flight_path MOCK) request: {:?}", request);
         Ok(tonic::Response::new(UpdateResponse { updated: true }))
     }
 

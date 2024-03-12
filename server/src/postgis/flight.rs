@@ -1,17 +1,17 @@
 //! This module contains functions for updating aircraft flight paths in the PostGIS database.
 
 use super::{psql_transaction, PostgisError, DEFAULT_SRID, PSQL_SCHEMA};
-use crate::cache::{Consumer, Processor};
 use crate::grpc::server::grpc_server::{
     AircraftState, Flight, GetFlightsRequest, PointZ as GrpcPointZ, TimePosition,
+    UpdateFlightPathRequest,
 };
 use crate::postgis::utils::StringError;
+use crate::types::AircraftType;
 use crate::types::OperationalStatus;
-use crate::types::{AircraftType, FlightPath};
 use chrono::{DateTime, Utc};
 use deadpool_postgres::Object;
+use num_traits::FromPrimitive;
 use postgis::ewkb::{LineStringT, Point, PointZ};
-use tonic::async_trait;
 
 /// Allowed characters in a identifier
 pub const FLIGHT_IDENTIFIER_REGEX: &str = r"^[\-0-9A-Za-z_\.]{1,255}$";
@@ -21,6 +21,9 @@ pub const FLIGHT_IDENTIFIER_REGEX: &str = r"^[\-0-9A-Za-z_\.]{1,255}$";
 pub enum FlightError {
     /// Invalid Aircraft ID
     AircraftId,
+
+    /// Invalid Aircraft Type
+    AircraftType,
 
     /// Invalid Location
     Location,
@@ -36,17 +39,22 @@ pub enum FlightError {
 
     /// DBError error
     DBError,
+
+    /// Segmentize Error
+    Segments,
 }
 
 impl std::fmt::Display for FlightError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             FlightError::AircraftId => write!(f, "Invalid aircraft ID provided."),
+            FlightError::AircraftType => write!(f, "Invalid aircraft type provided."),
             FlightError::Location => write!(f, "Invalid location provided."),
             FlightError::Time => write!(f, "Invalid time provided."),
             FlightError::Label => write!(f, "Invalid label provided."),
             FlightError::Client => write!(f, "Could not get backend client."),
             FlightError::DBError => write!(f, "Unknown backend error."),
+            FlightError::Segments => write!(f, "Could not segmentize path."),
         }
     }
 }
@@ -110,23 +118,17 @@ pub async fn psql_init() -> Result<(), PostgisError> {
     psql_transaction(statements).await
 }
 
-#[async_trait]
-impl Processor<FlightPath> for Consumer {
-    async fn process(&mut self, items: Vec<FlightPath>) -> Result<(), ()> {
-        if items.is_empty() {
-            return Ok(());
-        }
-
-        update_flight_path(items).await.map_err(|_| ())
-    }
-}
-
 /// Validates the provided aircraft identification.
-fn validate_flight_path(item: &FlightPath) -> Result<(), PostgisError> {
-    if let Err(e) = check_flight_identifier(&item.flight_identifier) {
+fn validate_flight_path(item: &UpdateFlightPathRequest) -> Result<(), PostgisError> {
+    let Some(ref identifier) = item.flight_identifier else {
+        postgis_error!("(validate_flight_path) no identifier provided.");
+        return Err(PostgisError::FlightPath(FlightError::Label));
+    };
+
+    if let Err(e) = check_flight_identifier(identifier) {
         postgis_error!(
             "(validate_flight_path) invalid identifier {}: {}",
-            item.flight_identifier,
+            identifier,
             e
         );
 
@@ -137,11 +139,37 @@ fn validate_flight_path(item: &FlightPath) -> Result<(), PostgisError> {
 }
 
 /// Pulls queued flight path messages from Redis Queue (from svc-scheduler)
-pub async fn update_flight_path(flights: Vec<FlightPath>) -> Result<(), PostgisError> {
+pub async fn update_flight_path(flight: UpdateFlightPathRequest) -> Result<(), PostgisError> {
     postgis_debug!("(update_flight_path) entry.");
-    if flights.is_empty() {
-        return Ok(());
-    }
+
+    validate_flight_path(&flight).map_err(|e| {
+        postgis_error!(
+            "(update_flight_path) could not validate id for flight id {:?}: {:?}",
+            flight.flight_identifier,
+            e
+        );
+
+        e
+    })?;
+
+    let Some(timestamp_start) = flight.timestamp_start else {
+        postgis_error!("(update_flight_path) no start time provided.");
+        return Err(PostgisError::FlightPath(FlightError::Time));
+    };
+
+    let Some(timestamp_end) = flight.timestamp_end else {
+        postgis_error!("(update_flight_path) no end time provided.");
+        return Err(PostgisError::FlightPath(FlightError::Time));
+    };
+
+    let timestamp_start: DateTime<Utc> = timestamp_start.into();
+    let timestamp_end: DateTime<Utc> = timestamp_end.into();
+
+    let Some(aircraft_type): Option<AircraftType> = FromPrimitive::from_i32(flight.aircraft_type)
+    else {
+        postgis_error!("(update_flight_path) invalid aircraft type provided.");
+        return Err(PostgisError::FlightPath(FlightError::AircraftType));
+    };
 
     let flights_insertion_stmt: String = format!(
         r#"INSERT INTO {table_name} (
@@ -199,102 +227,86 @@ pub async fn update_flight_path(flights: Vec<FlightPath>) -> Result<(), PostgisE
         PostgisError::FlightPath(FlightError::Client)
     })?;
 
-    for flight in &flights {
-        if let Err(e) = validate_flight_path(flight) {
+    let points = flight
+        .path
+        .clone()
+        .into_iter()
+        .map(PointZ::try_from)
+        .collect::<Result<Vec<PointZ>, _>>()
+        .map_err(|_| {
+            postgis_error!("(update_flight_path) could not convert path to Vec<PointZ>.");
+            PostgisError::FlightPath(FlightError::Location)
+        })?;
+
+    // Subdivide the path into segments by length
+    let geom = LineStringT {
+        points: points.clone(),
+        srid: Some(DEFAULT_SRID),
+    };
+
+    postgis_debug!("(update_flight_path) segmentizing path.");
+
+    let segments = super::utils::segmentize(points, timestamp_start, timestamp_end)
+        .await
+        .map_err(|e| {
+            postgis_error!("(update_flight_path) could not segmentize path: {}", e);
+            PostgisError::FlightPath(FlightError::Segments)
+        })?;
+
+    postgis_debug!("(update_flight_path) found segments: {:?}", segments);
+
+    transaction
+        .execute(
+            &flights_insertion_stmt,
+            &[
+                &flight.flight_identifier,
+                &flight.aircraft_identifier,
+                &aircraft_type,
+                &flight.simulated,
+                &timestamp_start,
+                &timestamp_end,
+                &geom,
+            ],
+        )
+        .await
+        .map_err(|e| {
             postgis_error!(
-                "(update_flight_path) could not validate id for flight id {}: {:?}",
-                flight.flight_identifier,
+                "(update_flight_path) could not execute transaction to insert flight: {}",
                 e
             );
+            PostgisError::FlightPath(FlightError::DBError)
+        })?;
 
-            // TODO(R5): Should we actually toss these out?
-            // Risk not registering a flight path on a clerical error and planning colliding paths
-            continue;
-        }
+    transaction
+        .execute(&segments_deletion_stmt, &[&flight.flight_identifier])
+        .await
+        .map_err(|e| {
+            postgis_error!(
+                "(update_flight_path) could not execute transaction to delete segments: {}",
+                e
+            );
+            PostgisError::FlightPath(FlightError::DBError)
+        })?;
 
-        let points = flight
-            .path
-            .clone()
-            .into_iter()
-            .map(PointZ::try_from)
-            .collect::<Result<Vec<PointZ>, _>>()
-            .map_err(|_| {
-                postgis_error!("(update_flight_path) could not convert path to Vec<PointZ>.");
-                PostgisError::FlightPath(FlightError::Location)
-            })?;
-
-        // Subdivide the path into segments by length
-        let geom = LineStringT {
-            points: points.clone(),
-            srid: Some(DEFAULT_SRID),
-        };
-
-        postgis_debug!("(update_flight_path) segmentizing path.");
-
-        let Ok(segments) =
-            super::utils::segmentize(points, flight.timestamp_start, flight.timestamp_end).await
-        else {
-            postgis_error!("(update_flight_path) could not segmentize path.");
-
-            // continue to process other flights
-            continue;
-        };
-
-        postgis_debug!("(update_flight_path) found segments: {:?}", segments);
-
+    for segment in segments {
         transaction
             .execute(
-                &flights_insertion_stmt,
+                &segment_insertion_stmt,
                 &[
                     &flight.flight_identifier,
-                    &flight.aircraft_identifier,
-                    &flight.aircraft_type,
-                    &flight.simulated,
-                    &flight.timestamp_start,
-                    &flight.timestamp_end,
-                    &geom,
+                    &segment.geom,
+                    &segment.time_start,
+                    &segment.time_end,
                 ],
             )
             .await
             .map_err(|e| {
                 postgis_error!(
-                    "(update_flight_path) could not execute transaction to insert flight: {}",
+                    "(update_flight_path) could not execute transaction to insert segment: {}",
                     e
                 );
                 PostgisError::FlightPath(FlightError::DBError)
             })?;
-
-        transaction
-            .execute(&segments_deletion_stmt, &[&flight.flight_identifier])
-            .await
-            .map_err(|e| {
-                postgis_error!(
-                    "(update_flight_path) could not execute transaction to delete segments: {}",
-                    e
-                );
-                PostgisError::FlightPath(FlightError::DBError)
-            })?;
-
-        for segment in segments {
-            transaction
-                .execute(
-                    &segment_insertion_stmt,
-                    &[
-                        &flight.flight_identifier,
-                        &segment.geom,
-                        &segment.time_start,
-                        &segment.time_end,
-                    ],
-                )
-                .await
-                .map_err(|e| {
-                    postgis_error!(
-                        "(update_flight_path) could not execute transaction to insert segment: {}",
-                        e
-                    );
-                    PostgisError::FlightPath(FlightError::DBError)
-                })?;
-        }
     }
 
     transaction.commit().await.map_err(|e| {
@@ -582,17 +594,17 @@ mod tests {
         crate::get_log_handle().await;
         ut_info!("(ut_client_failure) start");
 
-        let item = FlightPath {
-            flight_identifier: "test".to_string(),
-            aircraft_identifier: "test".to_string(),
-            aircraft_type: AircraftType::Aeroplane,
+        let item = UpdateFlightPathRequest {
+            flight_identifier: Some("test".to_string()),
+            aircraft_identifier: Some("test".to_string()),
+            aircraft_type: AircraftType::Aeroplane as i32,
             simulated: false,
-            timestamp_start: Utc::now(),
-            timestamp_end: Utc::now() + Duration::hours(1),
+            timestamp_start: Some(Utc::now().into()),
+            timestamp_end: Some((Utc::now() + Duration::hours(1)).into()),
             path: vec![],
         };
 
-        let result = update_flight_path(vec![item]).await.unwrap_err();
+        let result = update_flight_path(item).await.unwrap_err();
         assert_eq!(result, PostgisError::FlightPath(FlightError::DBError));
 
         ut_info!("(ut_client_failure) success");

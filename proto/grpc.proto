@@ -7,9 +7,9 @@ service RpcService {
     rpc updateVertiports(updateVertiportsRequest) returns (UpdateResponse);
     rpc updateWaypoints(updateWaypointsRequest) returns (UpdateResponse);
     rpc updateZones(UpdateZonesRequest) returns (UpdateResponse);
+    rpc updateFlightPath(UpdateFlightPathRequest) returns (UpdateResponse);
     rpc bestPath(BestPathRequest) returns (BestPathResponse);
     rpc getFlights(GetFlightsRequest) returns (GetFlightsResponse);
-    // rpc nearestNeighbors(NearestNeighborRequest) returns (NearestNeighborResponse);
 }
 
 // The nodes involved in the best path request
@@ -127,6 +127,30 @@ message Zone {
 message UpdateZonesRequest {
     // Nodes to update
     repeated Zone zones = 1;
+}
+
+// Update flight paths
+message UpdateFlightPathRequest {
+    // The unique identifier for the flight
+    optional string flight_identifier = 1;
+
+    // The unique identifier for the aircraft
+    optional string aircraft_identifier = 2;
+
+    // If this is a simulated flight
+    bool simulated = 3;
+
+    // The type of aircraft
+    AircraftType aircraft_type = 4;
+
+    // The path of the aircraft
+    repeated PointZ path = 5;
+
+    // The planned start time of the flight
+    google.protobuf.Timestamp timestamp_start = 6;
+
+    // The planned end time of the flight
+    google.protobuf.Timestamp timestamp_end = 7;
 }
 
 // Best Path Request object

@@ -1,8 +1,8 @@
 //! Main function starting the server and initializing dependencies.
 
 use crate::types::{
-    AircraftId, AircraftPosition, AircraftVelocity, FlightPath, REDIS_KEY_AIRCRAFT_ID,
-    REDIS_KEY_AIRCRAFT_POSITION, REDIS_KEY_AIRCRAFT_VELOCITY, REDIS_KEY_FLIGHT_PATH,
+    AircraftId, AircraftPosition, AircraftVelocity, REDIS_KEY_AIRCRAFT_ID,
+    REDIS_KEY_AIRCRAFT_POSITION, REDIS_KEY_AIRCRAFT_VELOCITY,
 };
 use cache::Consumer;
 use log::info;
@@ -16,7 +16,6 @@ async fn start_redis_consumers(config: &Config) -> Result<(), ()> {
     let mut id_consumer = Consumer::new(config, REDIS_KEY_AIRCRAFT_ID, 500).await?;
     let mut position_consumer = Consumer::new(config, REDIS_KEY_AIRCRAFT_POSITION, 100).await?;
     let mut velocity_consumer = Consumer::new(config, REDIS_KEY_AIRCRAFT_VELOCITY, 100).await?;
-    let mut flight_consumer = Consumer::new(config, REDIS_KEY_FLIGHT_PATH, 500).await?;
 
     tokio::spawn(
         async move { <Consumer as IsConsumer<AircraftId>>::begin(&mut id_consumer).await },
@@ -29,10 +28,6 @@ async fn start_redis_consumers(config: &Config) -> Result<(), ()> {
     tokio::spawn(async move {
         <Consumer as IsConsumer<AircraftVelocity>>::begin(&mut velocity_consumer).await
     });
-
-    tokio::spawn(
-        async move { <Consumer as IsConsumer<FlightPath>>::begin(&mut flight_consumer).await },
-    );
 
     Ok(())
 }

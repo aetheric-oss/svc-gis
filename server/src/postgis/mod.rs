@@ -23,7 +23,7 @@ pub static DEADPOOL_POSTGIS: OnceCell<deadpool_postgres::Pool> = OnceCell::new()
 pub const PSQL_SCHEMA: &str = "arrow";
 
 /// Default Spatial Reference Identifier
-/// WGS84 with Z axis: https://spatialreference.org/ref/epsg/4326/
+/// WGS84 with Z axis: <https://spatialreference.org/ref/epsg/4326/>
 pub const DEFAULT_SRID: i32 = 4326;
 
 /// Error type for postgis actions

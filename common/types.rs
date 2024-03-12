@@ -10,9 +10,6 @@ pub const REDIS_KEY_AIRCRAFT_POSITION: &str = "gis:aircraft:position";
 /// The key for the Redis queue containing aircraft velocity information
 pub const REDIS_KEY_AIRCRAFT_VELOCITY: &str = "gis:aircraft:velocity";
 
-/// The key for the Redis queue containing flight path information
-pub const REDIS_KEY_FLIGHT_PATH: &str = "gis:flight";
-
 /// Aircraft Type
 #[derive(Serialize, Deserialize, Debug, Copy, Clone)]
 #[derive(strum::EnumString)]
@@ -180,29 +177,4 @@ pub struct AircraftVelocity {
     pub timestamp_asset: Option<DateTime<Utc>>
 
     // TODO(R5): velocity uncertainty
-}
-
-/// A flight path is a series of positions and times that an aircraft will follow
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct FlightPath {
-    /// The unique identifier for the flight
-    pub flight_identifier: String,
-
-    /// The unique identifier for the aircraft
-    pub aircraft_identifier: String,
-
-    /// If this is a simulated flight
-    pub simulated: bool,
-
-    /// The type of aircraft
-    pub aircraft_type: AircraftType,
-
-    /// The path of the aircraft
-    pub path: Vec<Position>,
-
-    /// The planned start time of the flight
-    pub timestamp_start: DateTime<Utc>,
-
-    /// The planned end time of the flight
-    pub timestamp_end: DateTime<Utc>,
 }

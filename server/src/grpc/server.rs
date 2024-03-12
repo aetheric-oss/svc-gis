@@ -85,6 +85,23 @@ impl RpcService for ServerImpl {
     }
 
     #[cfg(not(tarpaulin_include))]
+    async fn update_flight_path(
+        &self,
+        request: Request<grpc_server::UpdateFlightPathRequest>,
+    ) -> Result<Response<grpc_server::UpdateResponse>, Status> {
+        grpc_debug!("(update_flight_path) entry.");
+
+        // Update nodes in PostGIS
+        match flight::update_flight_path(request.into_inner()).await {
+            Ok(_) => Ok(Response::new(grpc_server::UpdateResponse { updated: true })),
+            Err(e) => {
+                grpc_error!("(update_flight_path) error updating flight path: {}", e);
+                Err(Status::internal(e.to_string()))
+            }
+        }
+    }
+
+    #[cfg(not(tarpaulin_include))]
     async fn best_path(
         &self,
         request: Request<grpc_server::BestPathRequest>,
@@ -237,6 +254,16 @@ impl RpcService for ServerImpl {
         _request: Request<grpc_server::UpdateZonesRequest>,
     ) -> Result<Response<grpc_server::UpdateResponse>, Status> {
         grpc_warn!("(update_zones MOCK) entry.");
+
+        Ok(Response::new(grpc_server::UpdateResponse { updated: true }))
+    }
+
+    #[cfg(not(tarpaulin_include))]
+    async fn update_flight_path(
+        &self,
+        request: Request<grpc_server::UpdateFlightPathRequest>,
+    ) -> Result<Response<grpc_server::UpdateResponse>, Status> {
+        grpc_debug!("(update_flight_path MOCK) entry.");
 
         Ok(Response::new(grpc_server::UpdateResponse { updated: true }))
     }
