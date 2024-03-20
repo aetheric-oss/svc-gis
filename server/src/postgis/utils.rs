@@ -261,11 +261,8 @@ pub async fn segmentize(
     points: Vec<PointZ>,
     timestamp_start: DateTime<Utc>,
     timestamp_end: DateTime<Utc>,
+    max_segment_len_meters: f32,
 ) -> Result<Vec<Segment>, PostgisError> {
-    // TODO(R5): Configurable
-    /// The maximum length of a flight segment in meters
-    const MAX_SEGMENT_LENGTH_M: f64 = 40.0;
-
     let geom = LineStringT {
         points,
         srid: Some(DEFAULT_SRID),
@@ -305,7 +302,7 @@ pub async fn segmentize(
     })?;
 
     let mut results = client
-        .query(&stmt, &[&geom, &MAX_SEGMENT_LENGTH_M])
+        .query(&stmt, &[&geom, &(max_segment_len_meters as f64)])
         .await
         .map_err(|e| {
             postgis_error!("(segmentize) could not execute query: {}", e);
@@ -355,11 +352,11 @@ pub async fn segmentize(
             PostgisError::Psql(PsqlError::Execute)
         })?;
 
-    postgis_debug!(
-        "(segmentize) found {} segments. craft velocity {} m/s.",
-        results.len(),
-        velocity_m_s
-    );
+    // postgis_debug!(
+    //     "(segmentize) found {} segments. craft velocity {} m/s.",
+    //     results.len(),
+    //     velocity_m_s
+    // );
 
     Ok(results)
 }

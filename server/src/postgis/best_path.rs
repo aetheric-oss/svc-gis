@@ -14,13 +14,16 @@ use std::collections::{BinaryHeap, VecDeque};
 
 /// Look for waypoints within N meters when routing between two points
 ///  Saves computation time by doing shortest path on a smaller graph
-const WAYPOINT_RANGE_METERS: f32 = 1000.0;
+const WAYPOINT_RANGE_METERS: f32 = 10_000.0;
 
 /// Elevations to search for valid paths
-const FLIGHT_LEVELS: [f32; 9] = [20.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0, 120.0];
+const FLIGHT_LEVELS: [f32; 3] = [40.0, 80.0, 120.0];
 
 /// Max distance a flight can travel
-const MAX_FLIGHT_DISTANCE_METERS: f32 = 50_000.; // 50KM
+const MAX_FLIGHT_DISTANCE_METERS: f32 = 300_000.; // 500KM
+
+/// Max number of nodes in best path (to get around no fly zones)
+const MAX_PATH_NODE_COUNT_LIMIT: usize = 5;
 
 /// Max paths to return
 const MAX_PATH_COUNT_LIMIT: usize = 5;
@@ -53,11 +56,12 @@ struct Path {
     path: Vec<PathNode>,
     distance_traversed_meters: f32,
     distance_to_target_meters: f32,
+    segment_factor: f32,
 }
 
 impl Path {
     fn heuristic(&self) -> f32 {
-        self.distance_traversed_meters + self.distance_to_target_meters
+        (self.distance_traversed_meters + self.distance_to_target_meters) * self.segment_factor
     }
 }
 
@@ -120,6 +124,15 @@ pub enum PathError {
 
     /// Invalid limit
     InvalidLimit,
+
+    /// Internal error
+    Internal,
+
+    /// Zone Intersection
+    ZoneIntersection,
+
+    /// Flight Plan Intersection
+    FlightPlanIntersection,
 }
 
 impl std::fmt::Display for PathError {
@@ -134,6 +147,9 @@ impl std::fmt::Display for PathError {
             PathError::Client => write!(f, "Could not get backend client."),
             PathError::DBError => write!(f, "Unknown backend error."),
             PathError::InvalidLimit => write!(f, "Invalid number of paths to return."),
+            PathError::Internal => write!(f, "Internal error."),
+            PathError::ZoneIntersection => write!(f, "Zone intersection error."),
+            PathError::FlightPlanIntersection => write!(f, "Flight plan intersection error."),
         }
     }
 }
@@ -267,6 +283,7 @@ impl TryFrom<BestPathRequest> for PathRequest {
 async fn intersection_checks(
     client: &deadpool_postgres::Client,
     points: Vec<PointZ>,
+    segment_length: f32,
     time_start: DateTime<Utc>,
     time_end: DateTime<Utc>,
     origin_identifier: &str,
@@ -276,15 +293,14 @@ async fn intersection_checks(
     //  Small drones can come closer to one another than large drones
     //  or rideshare vehicles
     const ALLOWABLE_DISTANCE_M: f64 = 10.0;
-
-    let segments = super::utils::segmentize(points.clone(), time_start, time_end)
+    let segments = super::utils::segmentize(points.clone(), time_start, time_end, segment_length)
         .await
         .map_err(|e| {
             postgis_error!("(intersection_checks) could not segmentize path: {}", e);
             PostgisError::BestPath(PathError::DBError)
         })?;
 
-    postgis_debug!("(intersection_checks) segments: {:?}", segments);
+    // postgis_debug!("(intersection_checks) segments: {:?}", segments);
 
     let geom = LineStringT {
         points,
@@ -293,8 +309,8 @@ async fn intersection_checks(
 
     // Check if any of the zones overlap this path
     let zone_stmt = crate::postgis::zone::get_zone_intersection_stmt(client).await?;
-    let result = client
-        .query(
+    if let Ok(result) = client
+        .query_one(
             &zone_stmt,
             &[
                 &geom,
@@ -305,18 +321,12 @@ async fn intersection_checks(
             ],
         )
         .await
-        .map_err(|e| {
-            postgis_error!(
-                "(intersection_checks) could not query for zone intersection: {}",
-                e
-            );
-            PostgisError::BestPath(PathError::DBError)
-        })?;
-
-    // If there are any zone intersection results, this path is invalid
-    if !result.is_empty() {
-        postgis_debug!("(intersection_checks) flight path intersects with no-fly zones");
-        return Err(PostgisError::BestPath(PathError::NoPath));
+    {
+        postgis_debug!(
+            "(intersection_checks) flight path intersects with no-fly zone: {:?}",
+            result
+        );
+        return Err(PostgisError::BestPath(PathError::ZoneIntersection));
     }
 
     // Check if this conflicts with other flights' segments
@@ -354,7 +364,7 @@ async fn intersection_checks(
                 segment.geom.points,
                 result
             );
-            return Err(PostgisError::BestPath(PathError::NoPath));
+            return Err(PostgisError::BestPath(PathError::FlightPlanIntersection));
         }
     }
 
@@ -411,7 +421,9 @@ async fn mod_a_star(
             &target_node.geom,
         ),
         distance_traversed_meters: 0.,
+        segment_factor: 2.0,
     };
+
     potentials.push(starting_path);
 
     let Some(pool) = crate::postgis::DEADPOOL_POSTGIS.get() else {
@@ -432,7 +444,18 @@ async fn mod_a_star(
     //  So limit query to one result
 
     // Run until we have 'limit' paths or we run out of potentials
+    let time_limit = Duration::try_seconds(10).ok_or_else(|| {
+        postgis_error!("(mod_a_star) could not get time limit for path calculation.");
+        PostgisError::BestPath(PathError::Internal)
+    })?;
+
+    let start_time = Utc::now();
     while completed.len() < limit && !potentials.is_empty() {
+        if Utc::now() - start_time > time_limit {
+            postgis_debug!("(mod_a_star) max calculation time reached");
+            return Err(PostgisError::BestPath(PathError::NoPath));
+        }
+
         let Some(current) = potentials.pop() else {
             postgis_error!("(mod_a_star) no path found");
             return Err(PostgisError::BestPath(PathError::NoPath));
@@ -465,7 +488,14 @@ async fn mod_a_star(
             // If the path has reached the target, shove it into the
             //  potentials list and move on
             if p.identifier != target_node.identifier {
-                potentials.push(tmp);
+                // Limit the max number of nodes to prevent crazy winding paths
+                //  waypoints should only be used to get around a local no-fly zone, to
+                //  so the total path length should be 2 (origin and target) plus a limited
+                //  number of nodes needed to circumvent 1-2 no-fly zones
+                if tmp.path.len() < MAX_PATH_NODE_COUNT_LIMIT {
+                    potentials.push(tmp);
+                }
+
                 continue;
             }
 
@@ -474,10 +504,16 @@ async fn mod_a_star(
 
             // Path 3D linestring for zone intersection check
             let points = tmp.path.iter().map(|p| p.geom).collect::<Vec<PointZ>>();
-
+            let segment_length = tmp.distance_traversed_meters / tmp.segment_factor;
+            postgis_debug!(
+                "(mod_a_star) evaluating path (SF: {}): {:?}",
+                tmp.segment_factor,
+                tmp.path
+            );
             match intersection_checks(
                 &client,
                 points,
+                segment_length,
                 time_start,
                 time_end,
                 &origin_node.identifier,
@@ -486,7 +522,15 @@ async fn mod_a_star(
             .await
             {
                 Ok(_) => (),
-                Err(PostgisError::BestPath(PathError::NoPath)) => {
+                Err(PostgisError::BestPath(PathError::ZoneIntersection)) => {
+                    continue;
+                }
+                Err(PostgisError::BestPath(PathError::FlightPlanIntersection)) => {
+                    if segment_length < super::flight::MAX_FLIGHT_SEGMENT_LENGTH_METERS {
+                        tmp.segment_factor *= 2.0;
+                        potentials.push(tmp);
+                    }
+
                     continue;
                 }
                 Err(e) => {
@@ -496,13 +540,17 @@ async fn mod_a_star(
             }
 
             // Valid routes are pushed
-            completed.push(tmp)
+            completed.push(tmp);
+            if completed.len() >= limit {
+                break;
+            }
         }
     }
 
     let mut completed = completed.into_sorted_vec();
     completed.reverse();
 
+    postgis_debug!("(mod_a_star) completed paths: {:?}", completed);
     Ok(completed)
 }
 
@@ -656,7 +704,7 @@ mod tests {
     #[test]
     fn ut_request_invalid_time_window() {
         let time_start: Timestamp = Utc::now().into();
-        let time_end: Timestamp = (Utc::now() - Duration::seconds(1)).into();
+        let time_end: Timestamp = (Utc::now() - Duration::try_seconds(1).unwrap()).into();
 
         // Start time is after end time
         let request = BestPathRequest {
@@ -687,7 +735,7 @@ mod tests {
         assert_eq!(result, PostgisError::BestPath(PathError::InvalidTimeWindow));
 
         // End time (assumed) is before start time
-        let time_start: Timestamp = (Utc::now() + Duration::days(10)).into();
+        let time_start: Timestamp = (Utc::now() + Duration::try_days(10).unwrap()).into();
 
         let request = BestPathRequest {
             origin_identifier: uuid::Uuid::new_v4().to_string(),
@@ -706,8 +754,8 @@ mod tests {
     #[test]
     fn ut_request_invalid_time_end() {
         // End time (assumed) is before start time
-        let time_start: Timestamp = (Utc::now() - Duration::days(10)).into();
-        let time_end: Timestamp = (Utc::now() - Duration::seconds(1)).into();
+        let time_start: Timestamp = (Utc::now() - Duration::try_days(10).unwrap()).into();
+        let time_end: Timestamp = (Utc::now() - Duration::try_seconds(1).unwrap()).into();
 
         // Won't route for a time in the past
         let request = BestPathRequest {
@@ -728,7 +776,7 @@ mod tests {
     fn ut_request_invalid_limit() {
         // End time (assumed) is before start time
         let time_start: Timestamp = Utc::now().into();
-        let time_end: Timestamp = (Utc::now() + Duration::days(1)).into();
+        let time_end: Timestamp = (Utc::now() + Duration::try_days(1).unwrap()).into();
 
         // Won't route for a time in the past
         let mut request = BestPathRequest {
@@ -762,12 +810,14 @@ mod tests {
             path: vec![],
             distance_traversed_meters: 2.,
             distance_to_target_meters: 0.,
+            segment_factor: 2.0,
         };
 
         let path2 = Path {
             path: vec![],
             distance_traversed_meters: 1.,
             distance_to_target_meters: 0.,
+            segment_factor: 2.0,
         };
 
         paths.push(path1);

@@ -293,15 +293,16 @@ pub async fn get_zone_intersection_stmt(
                 "time_end"
             FROM {table_name}
             WHERE
-                ("time_start" <= $3 OR "time_start" IS NULL)
+                ST_3DIntersects("geom", $1::GEOMETRY(LINESTRINGZ, {DEFAULT_SRID}))
+                AND ("time_start" <= $3 OR "time_start" IS NULL)
                 AND ("time_end" >= $2 OR "time_end" IS NULL)
                 AND "identifier" NOT IN ($4, $5)
-                AND ST_3DIntersects("geom", $1::GEOMETRY(LINESTRINGZ, {DEFAULT_SRID}))
             LIMIT 1;
         "#,
             table_name = get_table_name()
         ))
         .await;
+
     match result {
         Ok(stmt) => Ok(stmt),
         Err(e) => {

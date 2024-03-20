@@ -16,6 +16,9 @@ use postgis::ewkb::{LineStringT, Point, PointZ};
 /// Allowed characters in a identifier
 pub const FLIGHT_IDENTIFIER_REGEX: &str = r"^[\-0-9A-Za-z_\.]{1,255}$";
 
+/// Max length of each flight segment in meters
+pub const MAX_FLIGHT_SEGMENT_LENGTH_METERS: f32 = 40.0;
+
 /// Possible errors with aircraft requests
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum FlightError {
@@ -246,14 +249,19 @@ pub async fn update_flight_path(flight: UpdateFlightPathRequest) -> Result<(), P
 
     postgis_debug!("(update_flight_path) segmentizing path.");
 
-    let segments = super::utils::segmentize(points, timestamp_start, timestamp_end)
-        .await
-        .map_err(|e| {
-            postgis_error!("(update_flight_path) could not segmentize path: {}", e);
-            PostgisError::FlightPath(FlightError::Segments)
-        })?;
+    let segments = super::utils::segmentize(
+        points,
+        timestamp_start,
+        timestamp_end,
+        MAX_FLIGHT_SEGMENT_LENGTH_METERS,
+    )
+    .await
+    .map_err(|e| {
+        postgis_error!("(update_flight_path) could not segmentize path: {}", e);
+        PostgisError::FlightPath(FlightError::Segments)
+    })?;
 
-    postgis_debug!("(update_flight_path) found segments: {:?}", segments);
+    // postgis_debug!("(update_flight_path) found segments: {:?}", segments);
 
     transaction
         .execute(
@@ -600,7 +608,7 @@ mod tests {
             aircraft_type: AircraftType::Aeroplane as i32,
             simulated: false,
             timestamp_start: Some(Utc::now().into()),
-            timestamp_end: Some((Utc::now() + Duration::hours(1)).into()),
+            timestamp_end: Some((Utc::now() + Duration::try_hours(1).unwrap()).into()),
             path: vec![],
         };
 

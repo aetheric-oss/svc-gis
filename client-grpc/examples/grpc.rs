@@ -236,14 +236,14 @@ async fn add_flight_paths(client: &GisClient) -> Result<(), ()> {
         .collect();
 
     for item in items {
-        client.update_flight_path(item).await.map_err(|e| ())?;
+        client.update_flight_path(item).await.map_err(|_| ())?;
     }
 
     Ok(())
 }
 
 async fn best_path_flight_avoidance(
-    connection: &mut redis::Connection,
+    _connection: &mut redis::Connection,
     client: &GisClient,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Add two vertiports specifically for this test
@@ -516,7 +516,7 @@ async fn best_paths(client: &GisClient) -> Result<(), Box<dyn std::error::Error>
     {
         println!("\n\u{1F426} Best Path WITHOUT Temporary No-Fly Zone");
         let time_start: Timestamp = Utc::now().into();
-        let time_end: Timestamp = (Utc::now() + Duration::hours(2)).into();
+        let time_end: Timestamp = (Utc::now() + Duration::try_hours(2).unwrap()).into();
         let request = BestPathRequest {
             origin_identifier: VERTIPORT_1_ID.to_string(),
             target_identifier: VERTIPORT_2_ID.to_string(),
@@ -534,7 +534,7 @@ async fn best_paths(client: &GisClient) -> Result<(), Box<dyn std::error::Error>
     }
 
     let no_fly_start_time = Utc::now();
-    let no_fly_end_time = Utc::now() + Duration::hours(2);
+    let no_fly_end_time = Utc::now() + Duration::try_hours(2).unwrap();
 
     // Update No-Fly Zones
     {
@@ -614,7 +614,7 @@ async fn best_paths(client: &GisClient) -> Result<(), Box<dyn std::error::Error>
     {
         println!("\n\u{26D4}\u{1F681} Best Path DURING Temporary No-Fly Zone");
         let time_start: Timestamp = no_fly_start_time.into();
-        let time_end: Timestamp = (no_fly_start_time + Duration::hours(1)).into();
+        let time_end: Timestamp = (no_fly_start_time + Duration::try_hours(1).unwrap()).into();
         let request = BestPathRequest {
             origin_identifier: VERTIPORT_1_ID.to_string(),
             target_identifier: VERTIPORT_2_ID.to_string(),
@@ -640,7 +640,7 @@ async fn best_paths(client: &GisClient) -> Result<(), Box<dyn std::error::Error>
     {
         println!("\n\u{1F681} Best Path AFTER Temporary No-Fly Zone Expires");
         let time_start: Timestamp = (no_fly_end_time + Duration::try_seconds(1).unwrap()).into();
-        let time_end: Timestamp = (no_fly_end_time + Duration::hours(1)).into();
+        let time_end: Timestamp = (no_fly_end_time + Duration::try_hours(1).unwrap()).into();
         let request = BestPathRequest {
             origin_identifier: VERTIPORT_1_ID.to_string(),
             target_identifier: VERTIPORT_2_ID.to_string(),
@@ -661,7 +661,7 @@ async fn best_paths(client: &GisClient) -> Result<(), Box<dyn std::error::Error>
     {
         println!("\n\u{1F681} Best Path From Aircraft during TFR");
         let time_start: Timestamp = no_fly_start_time.into();
-        let time_end: Timestamp = (no_fly_start_time + Duration::hours(1)).into();
+        let time_end: Timestamp = (no_fly_start_time + Duration::try_hours(1).unwrap()).into();
         let request = BestPathRequest {
             origin_identifier: AIRCRAFT_1_ID.to_string(),
             target_identifier: VERTIPORT_2_ID.to_string(),

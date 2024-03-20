@@ -261,7 +261,7 @@ impl RpcService for ServerImpl {
     #[cfg(not(tarpaulin_include))]
     async fn update_flight_path(
         &self,
-        request: Request<grpc_server::UpdateFlightPathRequest>,
+        _request: Request<grpc_server::UpdateFlightPathRequest>,
     ) -> Result<Response<grpc_server::UpdateResponse>, Status> {
         grpc_debug!("(update_flight_path MOCK) entry.");
 
