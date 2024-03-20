@@ -452,7 +452,7 @@ async fn mod_a_star(
     let start_time = Utc::now();
     while completed.len() < limit && !potentials.is_empty() {
         if Utc::now() - start_time > time_limit {
-            postgis_debug!("(mod_a_star) max calculation time reached");
+            postgis_warn!("(mod_a_star) max calculation time reached");
             return Err(PostgisError::BestPath(PathError::NoPath));
         }
 
