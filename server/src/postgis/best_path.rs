@@ -5,6 +5,8 @@ use crate::grpc::server::grpc_server::{
     BestPathRequest, NodeType, Path as GrpcPath, PathNode as GrpcPathNode, PointZ as GrpcPointZ,
 };
 use crate::postgis::aircraft::get_aircraft_pointz;
+use crate::postgis::flight::FlightError;
+use crate::postgis::utils::Segment;
 use crate::postgis::vertiport::get_vertiport_centroidz;
 use chrono::Duration;
 use lib_common::time::*;
@@ -56,12 +58,11 @@ struct Path {
     path: Vec<PathNode>,
     distance_traversed_meters: f32,
     distance_to_target_meters: f32,
-    segment_factor: f32,
 }
 
 impl Path {
     fn heuristic(&self) -> f32 {
-        (self.distance_traversed_meters + self.distance_to_target_meters) * self.segment_factor
+        self.distance_traversed_meters + self.distance_to_target_meters
     }
 }
 
@@ -283,7 +284,7 @@ impl TryFrom<BestPathRequest> for PathRequest {
 async fn intersection_checks(
     client: &deadpool_postgres::Client,
     points: Vec<PointZ>,
-    segment_length: f32,
+    distance: f32,
     time_start: DateTime<Utc>,
     time_end: DateTime<Utc>,
     origin_identifier: &str,
@@ -293,14 +294,6 @@ async fn intersection_checks(
     //  Small drones can come closer to one another than large drones
     //  or rideshare vehicles
     const ALLOWABLE_DISTANCE_M: f64 = 10.0;
-    let segments = super::utils::segmentize(points.clone(), time_start, time_end, segment_length)
-        .await
-        .map_err(|e| {
-            postgis_error!("(intersection_checks) could not segmentize path: {}", e);
-            PostgisError::BestPath(PathError::DBError)
-        })?;
-
-    // postgis_debug!("(intersection_checks) segments: {:?}", segments);
 
     let geom = LineStringT {
         points,
@@ -331,40 +324,93 @@ async fn intersection_checks(
 
     // Check if this conflicts with other flights' segments
     let flights_stmt = crate::postgis::flight::get_flight_intersection_stmt(client).await?;
-
-    // TODO(R5): Is it faster to do a join statement on the segments table?
-    for segment in segments {
-        let result = client
-            .query(
-                &flights_stmt,
-                &[
-                    &segment.geom,
-                    &ALLOWABLE_DISTANCE_M,
-                    &segment.time_start,
-                    &segment.time_end,
-                ],
-            )
-            .await
-            .map_err(|e| {
-                postgis_error!(
+    let result = client
+        .query(
+            &flights_stmt,
+            &[&geom, &ALLOWABLE_DISTANCE_M, &time_start, &time_end],
+        )
+        .await
+        .map_err(|e| {
+            postgis_error!(
                 "(intersection_checks) could not query for existing flight paths intersection: {}",
                 e
             );
+            PostgisError::BestPath(PathError::DBError)
+        })?;
+
+    if result.is_empty() {
+        postgis_debug!("(intersection_checks) no flight path intersections.");
+        return Ok(());
+    }
+
+    postgis_debug!(
+        "(intersection_checks) whole flight path intersects with another whole flight path, checking segments.",
+    );
+
+    let stmt = client
+        .prepare_cached(
+            r#"
+            SELECT ("distance_to_path" < $3 OR "distance_to_path" IS NULL) as "conflict"
+            FROM ST_3DDistance(
+                ST_Transform($1, 4978),
+                ST_Transform($2, 4978)
+            ) as "distance_to_path"
+        "#,
+        )
+        .await
+        .map_err(|e| {
+            postgis_error!(
+                "(get_flight_intersection_stmt) could not prepare cached statement: {}",
+                e
+            );
+            PostgisError::BestPath(PathError::DBError)
+        })?;
+
+    let a_segment = Segment {
+        geom,
+        time_start,
+        time_end,
+    };
+
+    for row in result {
+        postgis_debug!("(intersection_checks) row: {:?}", row);
+        let b_segment = Segment {
+            geom: row.try_get("geom").map_err(|e| {
+                postgis_debug!("(intersection_checks) {e}");
                 PostgisError::BestPath(PathError::DBError)
-            })?;
+            })?,
+            time_start: row.try_get("time_start").map_err(|e| {
+                postgis_debug!("(intersection_checks) {e}");
+                PostgisError::BestPath(PathError::DBError)
+            })?,
+            time_end: row.try_get("time_end").map_err(|e| {
+                postgis_debug!("(intersection_checks) {e}");
+                PostgisError::BestPath(PathError::DBError)
+            })?,
+        };
 
-        // If any intersections found, reject this
-        if !result.is_empty() {
-            postgis_debug!(
-                "(intersection_checks) flight path intersects with existing flight paths"
-            );
+        let b_distance: f64 = row.try_get("distance").map_err(|e| {
+            postgis_debug!("(intersection_checks) {e}");
+            PostgisError::BestPath(PathError::DBError)
+        })?;
 
-            postgis_debug!(
-                "(intersection_checks) flight path: {:?}, intersects with: {:?}",
-                segment.geom.points,
-                result
-            );
-            return Err(PostgisError::BestPath(PathError::FlightPlanIntersection));
+        match crate::postgis::flight::intersection_check(
+            client,
+            &stmt,
+            ALLOWABLE_DISTANCE_M,
+            distance.max(b_distance as f32) / 2.0,
+            a_segment.clone(),
+            b_segment,
+        )
+        .await
+        {
+            Err(PostgisError::FlightPath(FlightError::Intersection)) => {
+                return Err(PostgisError::BestPath(PathError::FlightPlanIntersection));
+            }
+            Err(PostgisError::FlightPath(_)) => {
+                return Err(PostgisError::BestPath(PathError::DBError));
+            }
+            _ => (),
         }
     }
 
@@ -421,7 +467,6 @@ async fn mod_a_star(
             &target_node.geom,
         ),
         distance_traversed_meters: 0.,
-        segment_factor: 2.0,
     };
 
     potentials.push(starting_path);
@@ -504,16 +549,10 @@ async fn mod_a_star(
 
             // Path 3D linestring for zone intersection check
             let points = tmp.path.iter().map(|p| p.geom).collect::<Vec<PointZ>>();
-            let segment_length = tmp.distance_traversed_meters / tmp.segment_factor;
-            postgis_debug!(
-                "(mod_a_star) evaluating path (SF: {}): {:?}",
-                tmp.segment_factor,
-                tmp.path
-            );
             match intersection_checks(
                 &client,
                 points,
-                segment_length,
+                tmp.distance_traversed_meters,
                 time_start,
                 time_end,
                 &origin_node.identifier,
@@ -526,11 +565,6 @@ async fn mod_a_star(
                     continue;
                 }
                 Err(PostgisError::BestPath(PathError::FlightPlanIntersection)) => {
-                    if segment_length < super::flight::MAX_FLIGHT_SEGMENT_LENGTH_METERS {
-                        tmp.segment_factor *= 2.0;
-                        potentials.push(tmp);
-                    }
-
                     continue;
                 }
                 Err(e) => {
@@ -810,14 +844,12 @@ mod tests {
             path: vec![],
             distance_traversed_meters: 2.,
             distance_to_target_meters: 0.,
-            segment_factor: 2.0,
         };
 
         let path2 = Path {
             path: vec![],
             distance_traversed_meters: 1.,
             distance_to_target_meters: 0.,
-            segment_factor: 2.0,
         };
 
         paths.push(path1);
