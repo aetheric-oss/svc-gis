@@ -361,9 +361,6 @@ async fn best_path_flight_avoidance(
 
     let _ = client.update_flight_path(request).await?.into_inner();
 
-    // Might take a moment for the flight to be consumed from the queue by svc-gis
-    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-
     // Best Path Request
     println!("\n\u{1F426} Best Path With Prior Flight Path @ Different Altitude (No-Intersect)");
     let request = BestPathRequest {
@@ -400,8 +397,8 @@ async fn best_path_flight_avoidance(
     .collect::<Vec<PointZ>>();
 
     let request = UpdateFlightPathRequest {
-        flight_identifier: Some("FLIGHT-X".to_string()),
-        aircraft_identifier: Some("Fondor".to_string()),
+        flight_identifier: Some("AETH12345".to_string()),
+        aircraft_identifier: Some("AETH-CRAFT-X".to_string()),
         path,
         timestamp_start: Some(time_start.into()),
         timestamp_end: Some(time_end.into()),
@@ -410,9 +407,6 @@ async fn best_path_flight_avoidance(
     };
 
     let _ = client.update_flight_path(request).await?.into_inner();
-
-    // Might take a moment for the flight to be consumed from the queue by svc-gis
-    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
     //
     // Try Best Path again during same time as other flight, should be none
@@ -721,11 +715,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     add_aircraft(&mut connection).await.unwrap();
     add_flight_paths(&client).await.unwrap();
-
-    // might take a moment for the flight paths to
-    //  be picked up from the redis queue
     std::thread::sleep(std::time::Duration::from_secs(1));
-
     get_flights(&client).await?;
     add_vertiports(&client).await?;
     add_waypoints(&client).await?;

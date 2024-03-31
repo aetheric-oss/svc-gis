@@ -216,7 +216,7 @@ pub fn point_from_vertex(vertex: &Coordinates) -> Result<Point, PointError> {
 }
 
 /// A segment of a flight path
-#[derive(Debug, ToSql)]
+#[derive(Debug, Clone, ToSql)]
 pub struct Segment {
     /// The geometry of the segment
     pub geom: LineStringZ,
@@ -258,20 +258,15 @@ impl TryFrom<Row> for ExpectedResult {
 
 /// Subdivides a path into time segments by length and time start/end
 pub async fn segmentize(
-    points: Vec<PointZ>,
+    geom: &LineStringT<PointZ>,
     timestamp_start: DateTime<Utc>,
     timestamp_end: DateTime<Utc>,
     max_segment_len_meters: f32,
 ) -> Result<Vec<Segment>, PostgisError> {
-    let geom = LineStringT {
-        points,
-        srid: Some(DEFAULT_SRID),
-    };
-
-    let stmt = "WITH segments AS (
+    let stmt = r#"WITH "segments" AS (
         SELECT
-            geom,
-            ST_3DLength(geom) AS distance_m
+            "geom",
+            ST_3DLength(ST_Transform("geom", 4978)) AS "distance_m"
         FROM ST_DumpSegments(
             (
                 SELECT ST_Segmentize(
@@ -281,11 +276,11 @@ pub async fn segmentize(
             )
         )
     ) SELECT 
-            ROW_NUMBER() OVER () AS idx,
-            segments.geom AS geom,
-            segments.distance_m AS distance_m
-        FROM segments;
-    "
+            ROW_NUMBER() OVER () AS "idx",
+            "segments"."geom" AS "geom",
+            "segments"."distance_m" AS "distance_m"
+        FROM "segments";
+    "#
     .to_string();
 
     let Some(pool) = crate::postgis::DEADPOOL_POSTGIS.get() else {

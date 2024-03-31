@@ -5,6 +5,7 @@ use crate::grpc::server::grpc_server::{
     AircraftState, Flight, GetFlightsRequest, PointZ as GrpcPointZ, TimePosition,
     UpdateFlightPathRequest,
 };
+use crate::postgis::utils::Segment;
 use crate::postgis::utils::StringError;
 use crate::types::AircraftType;
 use crate::types::OperationalStatus;
@@ -45,6 +46,9 @@ pub enum FlightError {
 
     /// Segmentize Error
     Segments,
+
+    /// Intersection of flight segments
+    Intersection,
 }
 
 impl std::fmt::Display for FlightError {
@@ -58,6 +62,7 @@ impl std::fmt::Display for FlightError {
             FlightError::Client => write!(f, "Could not get backend client."),
             FlightError::DBError => write!(f, "Unknown backend error."),
             FlightError::Segments => write!(f, "Could not segmentize path."),
+            FlightError::Intersection => write!(f, "Flight paths intersect."),
         }
     }
 }
@@ -65,11 +70,6 @@ impl std::fmt::Display for FlightError {
 /// Gets the name of the flights table
 fn get_flights_table_name() -> &'static str {
     static FULL_NAME: &str = const_format::formatcp!(r#""{PSQL_SCHEMA}"."flights""#,);
-    FULL_NAME
-}
-/// Gets the name of the flight segments table
-fn get_flight_segments_table_name() -> &'static str {
-    static FULL_NAME: &str = const_format::formatcp!(r#""{PSQL_SCHEMA}"."flight_segments""#,);
     FULL_NAME
 }
 
@@ -99,22 +99,12 @@ pub async fn psql_init() -> Result<(), PostgisError> {
             aircraft_type = AircraftType::Undeclared.to_string()
         ),
         format!(
-            r#"CREATE TABLE IF NOT EXISTS {table_name} (
-                "flight_identifier" VARCHAR(20) NOT NULL,
-                "geom" GEOMETRY(LINESTRINGZ, {DEFAULT_SRID}),
-                "time_start" TIMESTAMPTZ,
-                "time_end" TIMESTAMPTZ,
-                PRIMARY KEY ("flight_identifier", "time_start")
-            );"#,
-            table_name = get_flight_segments_table_name()
-        ),
-        format!(
-            r#"CREATE INDEX IF NOT EXISTS "flights_geom_idx" ON {table_name} USING GIST ("isa");"#,
+            r#"CREATE INDEX IF NOT EXISTS "flights_geom_idx" ON {table_name} USING GIST (ST_Transform("geom", 4978));"#,
             table_name = get_flights_table_name()
         ),
         format!(
-            r#"CREATE INDEX IF NOT EXISTS "flight_segments_geom_idx" ON {table_name} USING GIST (ST_Transform("geom", 4978));"#,
-            table_name = get_flight_segments_table_name()
+            r#"CREATE INDEX IF NOT EXISTS "flights_isa_idx" ON {table_name} USING GIST ("isa");"#,
+            table_name = get_flights_table_name()
         ),
     ];
 
@@ -197,21 +187,6 @@ pub async fn update_flight_path(flight: UpdateFlightPathRequest) -> Result<(), P
         table_name = get_flights_table_name()
     );
 
-    let segments_deletion_stmt = format!(
-        r#"DELETE FROM {table_name} WHERE "flight_identifier" = $1;"#,
-        table_name = get_flight_segments_table_name()
-    );
-
-    let segment_insertion_stmt = format!(
-        r#"INSERT INTO {table_name} (
-            "flight_identifier",
-            "geom",
-            "time_start",
-            "time_end"
-        ) VALUES ( $1, $2, $3, $4 );"#,
-        table_name = get_flight_segments_table_name()
-    );
-
     let Some(pool) = crate::postgis::DEADPOOL_POSTGIS.get() else {
         postgis_error!("(update_flight_path) could not get psql pool.");
         return Err(PostgisError::FlightPath(FlightError::DBError));
@@ -243,23 +218,9 @@ pub async fn update_flight_path(flight: UpdateFlightPathRequest) -> Result<(), P
 
     // Subdivide the path into segments by length
     let geom = LineStringT {
-        points: points.clone(),
+        points,
         srid: Some(DEFAULT_SRID),
     };
-
-    postgis_debug!("(update_flight_path) segmentizing path.");
-
-    let segments = super::utils::segmentize(
-        points,
-        timestamp_start,
-        timestamp_end,
-        MAX_FLIGHT_SEGMENT_LENGTH_METERS,
-    )
-    .await
-    .map_err(|e| {
-        postgis_error!("(update_flight_path) could not segmentize path: {}", e);
-        PostgisError::FlightPath(FlightError::Segments)
-    })?;
 
     // postgis_debug!("(update_flight_path) found segments: {:?}", segments);
 
@@ -285,38 +246,6 @@ pub async fn update_flight_path(flight: UpdateFlightPathRequest) -> Result<(), P
             PostgisError::FlightPath(FlightError::DBError)
         })?;
 
-    transaction
-        .execute(&segments_deletion_stmt, &[&flight.flight_identifier])
-        .await
-        .map_err(|e| {
-            postgis_error!(
-                "(update_flight_path) could not execute transaction to delete segments: {}",
-                e
-            );
-            PostgisError::FlightPath(FlightError::DBError)
-        })?;
-
-    for segment in segments {
-        transaction
-            .execute(
-                &segment_insertion_stmt,
-                &[
-                    &flight.flight_identifier,
-                    &segment.geom,
-                    &segment.time_start,
-                    &segment.time_end,
-                ],
-            )
-            .await
-            .map_err(|e| {
-                postgis_error!(
-                    "(update_flight_path) could not execute transaction to insert segment: {}",
-                    e
-                );
-                PostgisError::FlightPath(FlightError::DBError)
-            })?;
-    }
-
     transaction.commit().await.map_err(|e| {
         postgis_error!("(update_flight_path) could not commit transaction: {}", e);
         PostgisError::FlightPath(FlightError::DBError)
@@ -330,49 +259,131 @@ pub async fn update_flight_path(flight: UpdateFlightPathRequest) -> Result<(), P
 pub async fn get_flight_intersection_stmt(
     client: &Object,
 ) -> Result<tokio_postgres::Statement, PostgisError> {
-    let result = client
+    client
         .prepare_cached(&format!(
-            r#"WITH "segments" AS (
-                SELECT
-                    "flight_identifier",
-                    "geom",
-                    "time_start",
-                    "time_end"
-                FROM {segments_table_name}
-                WHERE
-                    ("time_start" <= $4 OR "time_start" IS NULL) -- easy checks first
-                    AND ("time_end" >= $3 OR "time_end" IS NULL)
-                    AND ST_3DDWithin(
-                        ST_Transform("geom", 4978),
-                        ST_Transform($1, 4978),
-                        $2 -- meters
-                    )
-            ) SELECT
+            r#"
+            SELECT
                 "flight_identifier",
                 "aircraft_identifier",
                 "geom",
                 "time_start",
-                "time_end"
-            FROM {flights_table_name}
-            WHERE "flight_identifier" IN (SELECT "flight_identifier" FROM "segments")
+                "time_end",
+                ST_3DLength(ST_Transform("geom", 4978)) as "distance",
+                "distance_to_path"
+            FROM {flights_table_name},
+                ST_3DDistance(
+                    ST_Transform("geom", 4978),
+                    ST_Transform($1, 4978)
+                ) as "distance_to_path"
+            WHERE
+                ("distance_to_path" < $2 OR "distance_to_path" IS NULL)
+                AND ("time_start" <= $4 OR "time_start" IS NULL) -- easy checks first
+                AND ("time_end" >= $3 OR "time_end" IS NULL)
                 AND "simulated" = FALSE
-            LIMIT 1;
         "#,
-            segments_table_name = get_flight_segments_table_name(),
             flights_table_name = get_flights_table_name(),
         ))
-        .await;
-
-    match result {
-        Ok(stmt) => Ok(stmt),
-        Err(e) => {
+        .await
+        .map_err(|e| {
             postgis_error!(
                 "(get_flight_intersection_stmt) could not prepare cached statement: {}",
                 e
             );
-            Err(PostgisError::FlightPath(FlightError::DBError))
+            PostgisError::FlightPath(FlightError::DBError)
+        })
+}
+
+/// Splits intersecting flight paths into smaller segments to check for intersections
+///  on a higher resolution
+pub async fn intersection_check(
+    client: &deadpool_postgres::Client,
+    stmt: &tokio_postgres::Statement,
+    allowable_distance: f64,
+    segment_length: f32,
+    a_segment: Segment,
+    b_segment: Segment,
+) -> Result<(), PostgisError> {
+    postgis_debug!("(intersection_check) entry.");
+    let mut pairs: Vec<(Segment, Segment, f32)> = vec![(a_segment, b_segment, segment_length)];
+
+    while let Some((a_segment, b_segment, segment_length)) = pairs.pop() {
+        if (segment_length as f64) < allowable_distance {
+            postgis_debug!("(intersection_check) intersection < {allowable_distance} m found.");
+            return Err(PostgisError::FlightPath(FlightError::Intersection));
+        }
+
+        postgis_debug!(
+            "(intersection_check) subdividing segments with length: {}",
+            segment_length
+        );
+
+        let a_segments = super::utils::segmentize(
+            &a_segment.geom,
+            a_segment.time_start,
+            a_segment.time_end,
+            segment_length,
+        )
+        .await
+        .map_err(|e| {
+            postgis_error!("(intersection_check) could not segmentize path: {}", e);
+            PostgisError::FlightPath(FlightError::DBError)
+        })?;
+
+        let b_segments = super::utils::segmentize(
+            &b_segment.geom,
+            b_segment.time_start,
+            b_segment.time_end,
+            segment_length,
+        )
+        .await
+        .map_err(|e| {
+            postgis_error!("(intersection_check) could not segmentize path: {}", e);
+            PostgisError::FlightPath(FlightError::DBError)
+        })?;
+
+        for a in &a_segments {
+            for b in &b_segments {
+                // look for time intersections
+                if a.time_start > b.time_end || a.time_end < b.time_start {
+                    continue;
+                }
+
+                let conflict: bool = client
+                    .query_one(
+                        stmt,
+                        &[
+                            &a.geom,
+                            &b.geom,
+                            &allowable_distance
+                        ],
+                    )
+                    .await
+                    .map_err(|e| {
+                        postgis_error!(
+                        "(intersection_check) could not query for existing flight paths intersection: {}",
+                        e
+                    );
+                        PostgisError::FlightPath(FlightError::DBError)
+                    })?
+                    .try_get("conflict")
+                    .map_err(|e| {
+                        postgis_error!(
+                            "(intersection_check) could not get 'conflict' field: {}",
+                            e
+                        );
+
+                        PostgisError::FlightPath(FlightError::DBError)
+                    })?;
+
+                if conflict {
+                    postgis_debug!("(intersection_check) found intersection, subdividing.");
+                    pairs.push((a.clone(), b.clone(), segment_length / 2.0));
+                }
+            }
         }
     }
+
+    Ok(())
 }
 
 /// Get flights and their aircraft that intersect with the provided geometry
