@@ -195,6 +195,42 @@ where
         request: super::BestPathRequest,
     ) -> Result<tonic::Response<super::BestPathResponse>, tonic::Status>;
 
+    /// Returns a [`tonic::Response`] containing a [`CheckIntersectionResponse`](super::CheckIntersectionResponse)
+    /// Takes an [`CheckIntersectionRequest`](super::CheckIntersectionRequest).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`tonic::Status`] with [`Code::Unknown`](tonic::Code::Unknown) if
+    /// the server is not ready.
+    ///
+    /// # Examples
+    /// ```
+    /// use lib_common::grpc::get_endpoint_from_env;
+    /// use lib_common::time::{Utc, Timestamp};
+    /// use svc_gis_client_grpc::prelude::*;
+    ///
+    /// async fn example () -> Result<(), Box<dyn std::error::Error>> {
+    ///     let (host, port) = get_endpoint_from_env("SERVER_HOSTNAME", "SERVER_PORT_GRPC");
+    ///     let client = GisClient::new_client(&host, port, "gis");
+    ///     let time_start: Timestamp = Utc::now().into();
+    ///     let time_end: Timestamp = Utc::now().into();
+    ///     let request = gis::CheckIntersectionRequest {
+    ///         origin_identifier: "Kamino".to_string(),
+    ///         target_identifier: "Coruscant".to_string(),
+    ///         path: vec![],
+    ///         time_start: Some(time_start),
+    ///         time_end: Some(time_end)
+    ///     };
+    ///     let response = client.check_intersection(request).await?;
+    ///     println!("RESPONSE={:?}", response.into_inner());
+    ///     Ok(())
+    /// }
+    /// ```
+    async fn check_intersection(
+        &self,
+        request: super::CheckIntersectionRequest,
+    ) -> Result<tonic::Response<super::CheckIntersectionResponse>, tonic::Status>;
+
     /// Returns a [`tonic::Response`] containing a [`GetFlightsResponse`](super::GetFlightsResponse)
     /// Takes an [`GetFlightsRequest`](super::GetFlightsRequest).
     ///
