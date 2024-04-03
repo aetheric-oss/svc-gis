@@ -22,13 +22,18 @@ const WAYPOINT_RANGE_METERS: f32 = 10_000.0;
 const FLIGHT_LEVELS: [f32; 3] = [40.0, 80.0, 120.0];
 
 /// Max distance a flight can travel
-const MAX_FLIGHT_DISTANCE_METERS: f32 = 300_000.; // 500KM
+const MAX_FLIGHT_DISTANCE_METERS: f32 = 300_000.;
 
-/// Max number of nodes in best path (to get around no fly zones)
+/// Max number of nodes in best path (to circumvent no fly zones)
 const MAX_PATH_NODE_COUNT_LIMIT: usize = 5;
 
 /// Max paths to return
 const MAX_PATH_COUNT_LIMIT: usize = 5;
+
+/// Best Path Time Limit
+///  ~1 seconds per aircraft availability check
+///  Prevent runaway calculation with impossible to reach target
+const BEST_PATH_TIME_LIMIT_MS: i64 = 1000;
 
 impl From<PointZ> for GrpcPointZ {
     fn from(field: PointZ) -> Self {
@@ -281,7 +286,7 @@ impl TryFrom<BestPathRequest> for PathRequest {
 }
 
 /// Checks if the path intersects with any no-fly zones or existing flights
-async fn intersection_checks(
+pub async fn intersection_checks(
     client: &deadpool_postgres::Client,
     points: Vec<PointZ>,
     distance: f32,
@@ -489,7 +494,7 @@ async fn mod_a_star(
     //  So limit query to one result
 
     // Run until we have 'limit' paths or we run out of potentials
-    let time_limit = Duration::try_seconds(10).ok_or_else(|| {
+    let time_limit = Duration::try_milliseconds(BEST_PATH_TIME_LIMIT_MS).ok_or_else(|| {
         postgis_error!("(mod_a_star) could not get time limit for path calculation.");
         PostgisError::BestPath(PathError::Internal)
     })?;
