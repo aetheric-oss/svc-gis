@@ -13,7 +13,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .type_attribute("ReadyRequest", "#[derive(Eq, Copy)]")
         .type_attribute("ReadyResponse", "#[derive(Eq, Copy)]")
         .type_attribute("UpdateResponse", "#[derive(Eq, Copy)]")
-        .type_attribute("PointZ", "#[derive(Copy)]")
+        .type_attribute("CheckIntersectionResponse", "#[derive(Eq, Copy)]")
+        .type_attribute(
+            "PointZ",
+            "#[derive(Copy, ::serde::Serialize, ::serde::Deserialize)]",
+        )
         .type_attribute("PathSegment", "#[derive(Copy)]")
         .type_attribute("Coordinates", "#[derive(Copy)]");
 
