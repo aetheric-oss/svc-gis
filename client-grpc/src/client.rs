@@ -127,6 +127,15 @@ impl crate::service::Client<RpcServiceClient<Channel>> for GisClient {
         self.get_client().await?.best_path(request).await
     }
 
+    async fn check_intersection(
+        &self,
+        request: CheckIntersectionRequest,
+    ) -> Result<tonic::Response<CheckIntersectionResponse>, tonic::Status> {
+        grpc_info!("(check_intersection) {} client.", self.get_name());
+        grpc_debug!("(check_intersection) request: {:?}", request);
+        self.get_client().await?.check_intersection(request).await
+    }
+
     async fn get_flights(
         &self,
         request: GetFlightsRequest,
@@ -217,6 +226,17 @@ impl crate::service::Client<RpcServiceClient<Channel>> for GisClient {
                 }],
                 distance_meters: 0.0,
             }],
+        }))
+    }
+
+    async fn check_intersection(
+        &self,
+        request: CheckIntersectionRequest,
+    ) -> Result<tonic::Response<CheckIntersectionResponse>, tonic::Status> {
+        grpc_warn!("(check_intersection MOCK) {} client.", self.get_name());
+        grpc_debug!("(check_intersection MOCK) request: {:?}", request);
+        Ok(tonic::Response::new(CheckIntersectionResponse {
+            intersects: false,
         }))
     }
 
