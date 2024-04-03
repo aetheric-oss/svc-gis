@@ -6,10 +6,13 @@ pub mod grpc_server {
     tonic::include_proto!("grpc");
 }
 
-use crate::postgis::*;
+use crate::postgis::utils::distance_meters;
+use crate::postgis::{best_path::PathError, *};
 use crate::shutdown_signal;
+use chrono::{DateTime, Utc};
 pub use grpc_server::rpc_service_server::{RpcService, RpcServiceServer};
 use grpc_server::{ReadyRequest, ReadyResponse};
+use postgis::ewkb::PointZ;
 use std::fmt::Debug;
 use std::net::SocketAddr;
 use tonic::transport::Server;
@@ -118,6 +121,81 @@ impl RpcService for ServerImpl {
                 Err(Status::internal(e.to_string()))
             }
         }
+    }
+
+    #[cfg(not(tarpaulin_include))]
+    async fn check_intersection(
+        &self,
+        request: Request<grpc_server::CheckIntersectionRequest>,
+    ) -> Result<Response<grpc_server::CheckIntersectionResponse>, Status> {
+        grpc_debug!("(check_intersection) entry.");
+        let request = request.into_inner();
+
+        let time_start: DateTime<Utc> = request
+            .time_start
+            .ok_or_else(|| {
+                Status::invalid_argument("time_start is required for check_intersection")
+            })?
+            .into();
+
+        let time_end: DateTime<Utc> = request
+            .time_end
+            .ok_or_else(|| Status::invalid_argument("time_end is required for check_intersection"))?
+            .into();
+
+        let pool = DEADPOOL_POSTGIS.get().ok_or_else(|| {
+            grpc_error!("(check_intersection) could not get psql pool.");
+            Status::internal("could not get psql pool")
+        })?;
+
+        let client = pool.get().await.map_err(|e| {
+            grpc_error!(
+                "(check_intersection) could not get client from psql connection pool: {}",
+                e
+            );
+            Status::internal(e.to_string())
+        })?;
+
+        let points: Vec<PointZ> = request
+            .path
+            .into_iter()
+            .map(|p| {
+                PointZ::new(
+                    p.latitude,
+                    p.longitude,
+                    p.altitude_meters as f64,
+                    Some(DEFAULT_SRID),
+                )
+            })
+            .collect();
+
+        let distance = points
+            .windows(2)
+            .fold(0.0, |acc, pair| acc + distance_meters(&pair[0], &pair[1]));
+
+        let intersects = match best_path::intersection_checks(
+            &client,
+            points,
+            distance,
+            time_start,
+            time_end,
+            &request.origin_identifier,
+            &request.target_identifier,
+        )
+        .await
+        {
+            Ok(()) => false,
+            Err(PostgisError::BestPath(PathError::ZoneIntersection)) => true,
+            Err(PostgisError::BestPath(PathError::FlightPlanIntersection)) => true,
+            Err(_) => {
+                grpc_error!("(check_intersection) error checking intersection.");
+                return Err(Status::internal("error checking intersection"));
+            }
+        };
+
+        Ok(Response::new(grpc_server::CheckIntersectionResponse {
+            intersects,
+        }))
     }
 
     #[cfg(not(tarpaulin_include))]
@@ -285,6 +363,81 @@ impl RpcService for ServerImpl {
                 Err(Status::internal(e.to_string()))
             }
         }
+    }
+
+    #[cfg(not(tarpaulin_include))]
+    async fn check_intersection(
+        &self,
+        request: Request<grpc_server::CheckIntersectionRequest>,
+    ) -> Result<Response<grpc_server::CheckIntersectionResponse>, Status> {
+        grpc_warn!("(check_intersection MOCK) entry.");
+        let request = request.into_inner();
+
+        let time_start: DateTime<Utc> = request
+            .time_start
+            .ok_or_else(|| {
+                Status::invalid_argument("time_start is required for check_intersection")
+            })?
+            .into();
+
+        let time_end: DateTime<Utc> = request
+            .time_end
+            .ok_or_else(|| Status::invalid_argument("time_end is required for check_intersection"))?
+            .into();
+
+        let pool = DEADPOOL_POSTGIS.get().ok_or_else(|| {
+            grpc_error!("(check_intersection MOCK) could not get psql pool.");
+            Status::internal("could not get psql pool")
+        })?;
+
+        let client = pool.get().await.map_err(|e| {
+            grpc_error!(
+                "(check_intersection MOCK) could not get client from psql connection pool: {}",
+                e
+            );
+            Status::internal(e.to_string())
+        })?;
+
+        let points: Vec<PointZ> = request
+            .path
+            .into_iter()
+            .map(|p| {
+                PointZ::new(
+                    p.latitude,
+                    p.longitude,
+                    p.altitude_meters as f64,
+                    Some(DEFAULT_SRID),
+                )
+            })
+            .collect();
+
+        let distance = points
+            .windows(2)
+            .fold(0.0, |acc, pair| acc + distance_meters(&pair[0], &pair[1]));
+
+        let intersects = match best_path::intersection_checks(
+            &client,
+            points,
+            distance,
+            time_start,
+            time_end,
+            &request.origin_identifier,
+            &request.target_identifier,
+        )
+        .await
+        {
+            Ok(()) => false,
+            Err(PostgisError::BestPath(PathError::ZoneIntersection)) => true,
+            Err(PostgisError::BestPath(PathError::FlightPlanIntersection)) => true,
+            Err(_) => {
+                grpc_error!("(check_intersection MOCK) error checking intersection.");
+                return Err(Status::internal("error checking intersection"));
+            }
+        };
+
+        Ok(Response::new(grpc_server::CheckIntersectionResponse {
+            intersects,
+        }))
     }
 
     #[cfg(not(tarpaulin_include))]
