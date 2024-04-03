@@ -169,8 +169,37 @@ pub struct BestPathRequest {
     #[prost(int32, tag = "7")]
     pub limit: i32,
 }
+/// Check Intersection Request object
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CheckIntersectionRequest {
+    /// Start Node Identifier
+    #[prost(string, tag = "1")]
+    pub origin_identifier: ::prost::alloc::string::String,
+    /// End Node (Vertiport UUID)
+    #[prost(string, tag = "2")]
+    pub target_identifier: ::prost::alloc::string::String,
+    /// The path to check
+    #[prost(message, repeated, tag = "3")]
+    pub path: ::prost::alloc::vec::Vec<PointZ>,
+    /// Time of departure
+    #[prost(message, optional, tag = "4")]
+    pub time_start: ::core::option::Option<::lib_common::time::Timestamp>,
+    /// Time of arrival
+    #[prost(message, optional, tag = "5")]
+    pub time_end: ::core::option::Option<::lib_common::time::Timestamp>,
+}
+/// Check Intersection Response object
+#[derive(Eq, Copy)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CheckIntersectionResponse {
+    /// True if the path intersects a zone or previous plan
+    #[prost(bool, tag = "1")]
+    pub intersects: bool,
+}
 /// / Geospatial Point with Altitude
-#[derive(Copy)]
+#[derive(Copy, ::serde::Serialize, ::serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PointZ {
@@ -582,6 +611,31 @@ pub mod rpc_service_client {
             let path = http::uri::PathAndQuery::from_static("/grpc.RpcService/bestPath");
             let mut req = request.into_request();
             req.extensions_mut().insert(GrpcMethod::new("grpc.RpcService", "bestPath"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn check_intersection(
+            &mut self,
+            request: impl tonic::IntoRequest<super::CheckIntersectionRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CheckIntersectionResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/grpc.RpcService/checkIntersection",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("grpc.RpcService", "checkIntersection"));
             self.inner.unary(req, path, codec).await
         }
         pub async fn get_flights(

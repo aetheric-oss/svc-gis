@@ -9,6 +9,7 @@ service RpcService {
     rpc updateZones(UpdateZonesRequest) returns (UpdateResponse);
     rpc updateFlightPath(UpdateFlightPathRequest) returns (UpdateResponse);
     rpc bestPath(BestPathRequest) returns (BestPathResponse);
+    rpc checkIntersection(CheckIntersectionRequest) returns (CheckIntersectionResponse);
     rpc getFlights(GetFlightsRequest) returns (GetFlightsResponse);
 }
 
@@ -175,6 +176,30 @@ message BestPathRequest {
 
     // Number of paths to return
     int32 limit = 7;
+}
+
+// Check Intersection Request object
+message CheckIntersectionRequest {
+    // Start Node Identifier
+    string origin_identifier = 1;
+
+    // End Node (Vertiport UUID)
+    string target_identifier = 2;
+
+    // The path to check
+    repeated PointZ path = 3;
+
+    // Time of departure
+    google.protobuf.Timestamp time_start = 4;
+
+    // Time of arrival
+    google.protobuf.Timestamp time_end = 5;
+}
+
+// Check Intersection Response object
+message CheckIntersectionResponse {
+    // True if the path intersects a zone or previous plan
+    bool intersects = 1;
 }
 
 /// Geospatial Point with Altitude
