@@ -93,7 +93,7 @@ impl RedisPool {
         T: for<'a> Deserialize<'a> + Clone + Debug,
     {
         let prefix = format!("(process_bulk [{}]) ", std::any::type_name::<T>());
-        cache_debug!("({prefix}) processing bulk values: {:?}", values);
+        // cache_debug!("({prefix}) processing bulk values: {:?}", values);
 
         // Remove nil values
         let values = values
@@ -140,7 +140,7 @@ impl RedisPool {
         C: redis::aio::ConnectionLike,
     {
         let prefix = format!("(pop [{}]) ", std::any::type_name::<T>());
-        cache_debug!("({prefix}) popping values...");
+        // cache_debug!("({prefix}) popping values...");
 
         // TODO(R5): As static when that is supported
         let Some(pop_count) = NonZeroUsize::new(20) else {
