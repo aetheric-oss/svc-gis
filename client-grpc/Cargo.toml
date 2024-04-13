@@ -1,7 +1,7 @@
 [package]
 description = "Arrow GIS server gRPC client"
 name        = "svc-gis-client-grpc"
-version     = "0.1.1-develop.10"
+version     = "0.1.1-develop.11"
 
 categories.workspace   = true
 edition.workspace      = true
