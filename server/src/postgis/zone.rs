@@ -3,11 +3,12 @@
 
 use super::{PostgisError, DEFAULT_SRID, PSQL_SCHEMA};
 use crate::grpc::server::grpc_server;
-use chrono::{DateTime, Utc};
 use deadpool_postgres::Object;
 use grpc_server::Zone as RequestZone;
 use grpc_server::ZoneType;
+use lib_common::time::{DateTime, Utc};
 use num_traits::FromPrimitive;
+use std::fmt::{self, Display, Formatter};
 
 /// Allowed characters in a identifier
 const IDENTIFIER_REGEX: &str = r"^[\-0-9A-Za-z_\.]{1,255}$";
@@ -65,8 +66,8 @@ pub enum ZoneError {
     ZoneType,
 }
 
-impl std::fmt::Display for ZoneError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+impl Display for ZoneError {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
             ZoneError::Time => write!(f, "Invalid timestamp provided."),
             ZoneError::TimeOrder => write!(f, "Start time is later than end time."),
@@ -80,51 +81,58 @@ impl std::fmt::Display for ZoneError {
     }
 }
 
+/// Gets a client connection to the PostGIS database
+#[cfg(not(tarpaulin_include))]
+// no_coverage: (R5) need postgis backend to test
+async fn get_client() -> Result<Object, PostgisError> {
+    crate::postgis::DEADPOOL_POSTGIS
+        .get()
+        .ok_or_else(|| {
+            postgis_error!("could not get psql pool.");
+            PostgisError::Zone(ZoneError::Client)
+        })?
+        .get()
+        .await
+        .map_err(|e| {
+            postgis_error!("could not get client from psql connection pool: {}", e);
+            PostgisError::Zone(ZoneError::Client)
+        })
+}
+
 impl TryFrom<RequestZone> for Zone {
     type Error = ZoneError;
 
     fn try_from(zone: RequestZone) -> Result<Self, Self::Error> {
-        if let Err(e) = super::utils::check_string(&zone.identifier, IDENTIFIER_REGEX) {
-            postgis_error!(
-                "(try_from RequestZone) Invalid zone identifier: {}; {}",
-                zone.identifier,
-                e
-            );
-            return Err(ZoneError::Identifier);
-        }
-
-        let time_start = zone.time_start.map(Into::<DateTime<Utc>>::into);
-        let time_end = zone.time_end.map(Into::<DateTime<Utc>>::into);
+        super::utils::check_string(&zone.identifier, IDENTIFIER_REGEX).map_err(|e| {
+            postgis_error!("Invalid identifier: {}; {}", zone.identifier, e);
+            ZoneError::Identifier
+        })?;
 
         // The start time must be earlier than the end time if both are provided
+
+        let time_start = zone.time_start.map(|ts| ts.into());
+        let time_end = zone.time_end.map(|te| te.into());
+
         if let Some(ts) = time_start {
             if let Some(te) = time_end {
                 if te < ts {
-                    postgis_error!("(try_from RequestZone) end time is earlier than start time.");
+                    postgis_error!("end time is earlier than start time.");
                     return Err(ZoneError::TimeOrder);
                 }
             }
         }
 
-        let geom =
-            match super::utils::polygon_from_vertices_z(&zone.vertices, zone.altitude_meters_min) {
-                Ok(geom) => geom,
-                Err(e) => {
-                    postgis_error!(
-                        "(try_from RequestZone) Error converting zone polygon: {}",
-                        e.to_string()
-                    );
-                    return Err(ZoneError::Location);
-                }
-            };
+        let geom = super::utils::polygon_from_vertices_z(&zone.vertices, zone.altitude_meters_min)
+            .map_err(|e| {
+                postgis_error!("Error converting zone polygon: {}", e.to_string());
+                ZoneError::Location
+            })?;
 
-        let Some(zone_type) = FromPrimitive::from_i32(zone.zone_type) else {
-            postgis_error!(
-                "(try_from RequestZone) Invalid zone type: {}",
-                zone.zone_type
-            );
-            return Err(ZoneError::ZoneType);
-        };
+        let zone_type = FromPrimitive::from_i32(zone.zone_type).ok_or_else(|| {
+            postgis_error!("Invalid zone type: {}", zone.zone_type);
+
+            ZoneError::ZoneType
+        })?;
 
         Ok(Zone {
             identifier: zone.identifier,
@@ -146,6 +154,8 @@ pub(super) fn get_table_name() -> &'static str {
 }
 
 /// Initialize the vertiports table in the PostGIS database
+#[cfg(not(tarpaulin_include))]
+// no_coverage: (R5) need postgis backend to test
 pub async fn psql_init() -> Result<(), PostgisError> {
     // Create Aircraft Table
 
@@ -176,34 +186,25 @@ pub async fn psql_init() -> Result<(), PostgisError> {
 }
 
 /// Updates zones in the PostGIS database.
-pub async fn update_zones(zones: Vec<RequestZone>) -> Result<(), ZoneError> {
-    postgis_debug!("(update_zones) entry.");
+#[cfg(not(tarpaulin_include))]
+// no_coverage: (R5) need postgis backend to test
+pub async fn update_zones(zones: Vec<RequestZone>) -> Result<(), PostgisError> {
+    postgis_debug!("entry.");
     if zones.is_empty() {
-        postgis_error!("(update_zones) no zones provided.");
-        return Err(ZoneError::NoZones);
+        postgis_error!("no zones provided.");
+        return Err(PostgisError::Zone(ZoneError::NoZones));
     }
 
     let zones: Vec<Zone> = zones
         .into_iter()
         .map(Zone::try_from)
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(PostgisError::Zone)?;
 
-    let Some(pool) = crate::postgis::DEADPOOL_POSTGIS.get() else {
-        postgis_error!("(update_zones) could not get psql pool.");
-        return Err(ZoneError::Client);
-    };
-
-    let mut client = pool.get().await.map_err(|e| {
-        postgis_error!(
-            "(update_zones) could not get client from psql connection pool: {}",
-            e
-        );
-        ZoneError::Client
-    })?;
-
+    let mut client = get_client().await?;
     let transaction = client.transaction().await.map_err(|e| {
-        postgis_error!("(update_zones) could not create transaction: {}", e);
-        ZoneError::DBError
+        postgis_error!("could not create transaction: {}", e);
+        PostgisError::Zone(ZoneError::DBError)
     })?;
 
     let stmt = transaction
@@ -239,8 +240,8 @@ pub async fn update_zones(zones: Vec<RequestZone>) -> Result<(), ZoneError> {
         ))
         .await
         .map_err(|e| {
-            postgis_error!("(update_zones) could not prepare cached statement: {}", e);
-            ZoneError::DBError
+            postgis_error!("could not prepare cached statement: {}", e);
+            PostgisError::Zone(ZoneError::DBError)
         })?;
 
     for zone in &zones {
@@ -259,24 +260,23 @@ pub async fn update_zones(zones: Vec<RequestZone>) -> Result<(), ZoneError> {
             )
             .await
             .map_err(|e| {
-                postgis_error!("(update_zones) could not execute transaction: {}", e);
-                ZoneError::DBError
+                postgis_error!("could not execute transaction: {}", e);
+                PostgisError::Zone(ZoneError::DBError)
             })?;
     }
 
-    match transaction.commit().await {
-        Ok(_) => {
-            postgis_debug!("(update_zones) success.");
-            Ok(())
-        }
-        Err(e) => {
-            postgis_error!("(update_zones) could not commit transaction: {}", e);
-            Err(ZoneError::DBError)
-        }
-    }
+    transaction.commit().await.map_err(|e| {
+        postgis_error!("could not commit transaction: {}", e);
+        PostgisError::Zone(ZoneError::DBError)
+    })?;
+
+    postgis_debug!("success.");
+    Ok(())
 }
 
 /// Prepares a statement that checks zone intersections with the provided geometry
+#[cfg(not(tarpaulin_include))]
+// no_coverage: (R5) need postgis backend to test
 pub async fn get_zone_intersection_stmt(
     client: &Object,
 ) -> Result<tokio_postgres::Statement, PostgisError> {
@@ -303,16 +303,10 @@ pub async fn get_zone_intersection_stmt(
         ))
         .await;
 
-    match result {
-        Ok(stmt) => Ok(stmt),
-        Err(e) => {
-            postgis_error!(
-                "(get_zone_intersection_stmt) could not prepare cached statement: {}",
-                e
-            );
-            Err(PostgisError::Zone(ZoneError::DBError))
-        }
-    }
+    result.map_err(|e| {
+        postgis_error!("could not prepare cached statement: {}", e);
+        PostgisError::Zone(ZoneError::DBError)
+    })
 }
 
 #[cfg(test)]
@@ -320,6 +314,7 @@ mod tests {
     use super::*;
     use crate::grpc::server::grpc_server::Coordinates;
     use crate::postgis::utils;
+    use lib_common::time::Duration;
 
     fn square(latitude: f64, longitude: f64) -> Vec<(f64, f64)> {
         vec![
@@ -395,7 +390,7 @@ mod tests {
             .collect();
 
         let result = update_zones(zone).await.unwrap_err();
-        assert_eq!(result, ZoneError::Client);
+        assert_eq!(result, PostgisError::Zone(ZoneError::Client));
     }
 
     #[tokio::test]
@@ -420,15 +415,47 @@ mod tests {
             }];
 
             let result = update_zones(zones).await.unwrap_err();
-            assert_eq!(result, ZoneError::Identifier);
+            assert_eq!(result, PostgisError::Zone(ZoneError::Identifier));
         }
+    }
+
+    #[tokio::test]
+    async fn ut_zone_request_to_gis_invalid_time_order() {
+        let zones: Vec<RequestZone> = vec![RequestZone {
+            identifier: "identifier".to_string(),
+            time_start: Some(Utc::now().into()),
+            time_end: Some((Utc::now() - Duration::days(1)).into()),
+            ..Default::default()
+        }];
+
+        let result = update_zones(zones).await.unwrap_err();
+        assert_eq!(result, PostgisError::Zone(ZoneError::TimeOrder));
+    }
+
+    #[tokio::test]
+    async fn ut_zone_request_to_gis_invalid_zone_type() {
+        let zones: Vec<RequestZone> = vec![RequestZone {
+            identifier: "identifier".to_string(),
+            zone_type: 10000,
+            vertices: square(52.3745905, 4.9160036)
+                .iter()
+                .map(|(latitude, longitude)| Coordinates {
+                    latitude: *latitude,
+                    longitude: *longitude,
+                })
+                .collect(),
+            ..Default::default()
+        }];
+
+        let result = update_zones(zones).await.unwrap_err();
+        assert_eq!(result, PostgisError::Zone(ZoneError::ZoneType));
     }
 
     #[tokio::test]
     async fn ut_zone_request_to_gis_invalid_no_nodes() {
         let zones: Vec<RequestZone> = vec![];
         let result = update_zones(zones).await.unwrap_err();
-        assert_eq!(result, ZoneError::NoZones);
+        assert_eq!(result, PostgisError::Zone(ZoneError::NoZones));
     }
 
     #[tokio::test]
@@ -454,7 +481,7 @@ mod tests {
             }];
 
             let result = update_zones(zones).await.unwrap_err();
-            assert_eq!(result, ZoneError::Location);
+            assert_eq!(result, PostgisError::Zone(ZoneError::Location));
         }
 
         let polygons = vec![
@@ -485,7 +512,42 @@ mod tests {
             }];
 
             let result = update_zones(zones).await.unwrap_err();
-            assert_eq!(result, ZoneError::Location);
+            assert_eq!(result, PostgisError::Zone(ZoneError::Location));
         }
+    }
+
+    #[test]
+    fn test_zone_error_display() {
+        assert_eq!(
+            format!("{}", ZoneError::Time),
+            "Invalid timestamp provided."
+        );
+        assert_eq!(
+            format!("{}", ZoneError::TimeOrder),
+            "Start time is later than end time."
+        );
+        assert_eq!(format!("{}", ZoneError::NoZones), "No zones were provided.");
+        assert_eq!(
+            format!("{}", ZoneError::Location),
+            "Invalid location provided."
+        );
+        assert_eq!(
+            format!("{}", ZoneError::Client),
+            "Could not get backend client."
+        );
+        assert_eq!(format!("{}", ZoneError::DBError), "Unknown backend error.");
+        assert_eq!(
+            format!("{}", ZoneError::Identifier),
+            "Invalid identifier provided."
+        );
+        assert_eq!(
+            format!("{}", ZoneError::ZoneType),
+            "Invalid zone type provided."
+        );
+    }
+
+    #[test]
+    fn test_get_table_name() {
+        assert_eq!(get_table_name(), format!("\"{PSQL_SCHEMA}\".\"zones\""));
     }
 }

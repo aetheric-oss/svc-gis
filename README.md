@@ -1,9 +1,9 @@
-![Arrow Banner](https://github.com/Arrow-air/tf-github/raw/main/src/templates/doc-banner-services.png)
+![Aetheric Banner](https://github.com/aetheric-oss/.github/raw/main/assets/readme-banner.png)
 
 # svc-gis Service
 
-![GitHub stable release (latest by date)](https://img.shields.io/github/v/release/Arrow-air/svc-gis?sort=semver&color=green) ![GitHub release (latest by date including pre-releases)](https://img.shields.io/github/v/release/Arrow-air/svc-gis?include_prereleases) [![Coverage Status](https://coveralls.io/repos/github/Arrow-air/svc-gis/badge.svg?branch=develop)](https://coveralls.io/github/Arrow-air/svc-gis)
-![Sanity Checks](https://github.com/arrow-air/svc-gis/actions/workflows/sanity_checks.yml/badge.svg?branch=develop) ![Python PEP8](https://github.com/arrow-air/svc-gis/actions/workflows/python_ci.yml/badge.svg?branch=develop) ![Rust Checks](https://github.com/arrow-air/svc-gis/actions/workflows/rust_ci.yml/badge.svg?branch=develop)
+![GitHub stable release (latest by date)](https://img.shields.io/github/v/release/aetheric-oss/svc-gis?sort=semver&color=green) ![GitHub release (latest by date including pre-releases)](https://img.shields.io/github/v/release/aetheric-oss/svc-gis?include_prereleases) [![Coverage Status](https://coveralls.io/repos/github/aetheric-oss/svc-gis/badge.svg?branch=develop)](https://coveralls.io/github/aetheric-oss/svc-gis)
+![Sanity Checks](https://github.com/aetheric-oss/svc-gis/actions/workflows/sanity_checks.yml/badge.svg?branch=develop) ![Python PEP8](https://github.com/aetheric-oss/svc-gis/actions/workflows/python_ci.yml/badge.svg?branch=develop) ![Rust Checks](https://github.com/aetheric-oss/svc-gis/actions/workflows/rust_ci.yml/badge.svg?branch=develop)
 ![Arrow DAO Discord](https://img.shields.io/discord/853833144037277726?style=plastic)
 
 ## :telescope: Overview
@@ -97,17 +97,14 @@ The following documents are relevant to this service:
 - [Concept of Operations](./docs/conops.md)
 - [Software Design Document](./docs/sdd.md)
 - [Interface Control Document (ICD)](./docs/icd.md)
-- [Requirements](https://nocodb.arrowair.com/dashboard/#/nc/view/5a893886-20f3-41f6-af95-6a235ca52647)
+- [Requirements](https://nocodb.aetheric.nl/dashboard/#/nc/view/5a893886-20f3-41f6-af95-6a235ca52647)
 
-## :busts_in_silhouette: Arrow DAO
-Learn more about us:
-- [Arrow DAO Website](https://www.arrowair.com/)
-- [Arrow Docs](https://www.arrowair.com/docs/intro)
-- [Discord](https://discord.com/invite/arrow)
+## :busts_in_silhouette: About Us
+Learn more about us: [Aetheric website](https://www.aetheric.nl)
 
 ## LICENSE Notice
 
-Please note that svc-gis is under BUSL license until the Change Date, currently the earlier of two years from the release date. Exceptions to the license may be specified by Arrow Governance via Additional Use Grants, which can, for example, allow svc-gis to be deployed for certain production uses. Please reach out to Arrow DAO to request a DAO vote for exceptions to the license, or to move up the Change Date.
+Please note that svc-gis is under BUSL license until the Change Date, currently the earlier of two years from the release date. Exceptions to the license may be specified by Aetheric Governance via Additional Use Grants, which can, for example, allow svc-gis to be deployed for certain production uses. Please reach out to Aetheric to request a vote for exceptions to the license, or to move up the Change Date.
 
 ## :exclamation: Treatment of `Cargo.lock`
 If you are building a non-end product like a library, include `Cargo.lock` in `.gitignore`.

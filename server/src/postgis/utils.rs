@@ -4,12 +4,13 @@ use super::DEFAULT_SRID;
 use super::{PostgisError, PsqlError};
 use crate::grpc::server::grpc_server::{Coordinates, PointZ as GrpcPointZ};
 use crate::types::Position;
-use chrono::{DateTime, Duration, Utc};
 use deadpool_postgres::tokio_postgres::{types::ToSql, Row};
 use geo::algorithm::haversine_distance::HaversineDistance;
 use geo::point;
+use lib_common::time::{DateTime, Duration, Utc};
 use postgis::ewkb::{LineStringT, LineStringZ, Point, PointZ, PolygonZ};
 use regex;
+use std::fmt::{self, Display, Formatter};
 
 /// A polygon must have at least three vertices (a triangle)
 /// A closed polygon has the first and last vertex equal
@@ -29,8 +30,8 @@ pub enum PolygonError {
     OutOfBounds,
 }
 
-impl std::fmt::Display for PolygonError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+impl Display for PolygonError {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
             PolygonError::VertexCount => write!(f, "Invalid number of vertices provided."),
             PolygonError::OpenPolygon => write!(
@@ -49,8 +50,8 @@ pub enum PointError {
     OutOfBounds,
 }
 
-impl std::fmt::Display for PointError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+impl Display for PointError {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
             PointError::OutOfBounds => write!(f, "One or more vertices are out of bounds."),
         }
@@ -70,8 +71,8 @@ pub enum StringError {
     Mismatch,
 }
 
-impl std::fmt::Display for StringError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+impl Display for StringError {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
             StringError::Regex => write!(f, "Regex is invalid."),
             StringError::Mismatch => write!(f, "String does not match regex."),
@@ -82,9 +83,7 @@ impl std::fmt::Display for StringError {
 
 /// Check if a provided string argument is valid
 pub fn check_string(string: &str, regex: &str) -> Result<(), StringError> {
-    let Ok(re) = regex::Regex::new(regex) else {
-        return Err(StringError::Regex);
-    };
+    let re = regex::Regex::new(regex).map_err(|_| StringError::Regex)?;
 
     if string.to_lowercase().contains("null") {
         return Err(StringError::ContainsForbidden);
@@ -117,29 +116,36 @@ pub fn validate_pointz(point: &PointZ) -> Result<(), PolygonError> {
     Ok(())
 }
 
-impl TryFrom<Position> for PointZ {
-    type Error = ();
-
-    fn try_from(position: Position) -> Result<Self, Self::Error> {
-        Ok(PointZ::new(
+impl From<Position> for PointZ {
+    fn from(position: Position) -> Self {
+        PointZ::new(
             position.longitude,
             position.latitude,
             position.altitude_meters,
             Some(DEFAULT_SRID),
-        ))
+        )
     }
 }
 
-impl TryFrom<GrpcPointZ> for PointZ {
-    type Error = ();
-
-    fn try_from(position: GrpcPointZ) -> Result<Self, Self::Error> {
-        Ok(PointZ::new(
+impl From<GrpcPointZ> for PointZ {
+    fn from(position: GrpcPointZ) -> Self {
+        PointZ::new(
             position.longitude,
             position.latitude,
             position.altitude_meters as f64,
             Some(DEFAULT_SRID),
-        ))
+        )
+    }
+}
+
+impl From<Coordinates> for PointZ {
+    fn from(position: Coordinates) -> Self {
+        PointZ::new(
+            position.longitude,
+            position.latitude,
+            0.0,
+            Some(DEFAULT_SRID),
+        )
     }
 }
 
@@ -183,10 +189,8 @@ pub fn polygon_from_vertices_z(
             points: vertices
                 .iter()
                 .map(|vertex| PointZ {
-                    x: vertex.longitude,
-                    y: vertex.latitude,
                     z: altitude_meters as f64,
-                    srid: Some(DEFAULT_SRID),
+                    ..(*vertex).into()
                 })
                 .collect(),
             srid: Some(DEFAULT_SRID),
@@ -204,7 +208,7 @@ pub fn point_from_vertex(vertex: &Coordinates) -> Result<Point, PointError> {
         || vertex.longitude < -180.0
         || vertex.longitude > 180.0
     {
-        postgis_warn!("(point_from_vertex) vertex out of bounds: {:?}", vertex);
+        postgis_warn!("vertex out of bounds: {:?}", vertex);
         return Err(PointError::OutOfBounds);
     }
 
@@ -243,10 +247,12 @@ struct ExpectedResult {
 impl TryFrom<Row> for ExpectedResult {
     type Error = PostgisError;
 
+    #[cfg(not(tarpaulin_include))]
+    // no_coverage: (R5) only way to get a Row is to query it from a psql instance
     fn try_from(row: Row) -> Result<Self, Self::Error> {
-        let idx: i64 = row.get(0);
-        let geom: LineStringZ = row.get(1);
-        let distance_m: f64 = row.get(2);
+        let idx: i64 = row.get("idx");
+        let geom: LineStringZ = row.get("geom");
+        let distance_m: f64 = row.get("distance_m");
 
         Ok(ExpectedResult {
             idx,
@@ -257,6 +263,8 @@ impl TryFrom<Row> for ExpectedResult {
 }
 
 /// Subdivides a path into time segments by length and time start/end
+#[cfg(not(tarpaulin_include))]
+// no_coverage: (Rnever) need running postgresql instance, not unit testable
 pub async fn segmentize(
     geom: &LineStringT<PointZ>,
     timestamp_start: DateTime<Utc>,
@@ -283,24 +291,24 @@ pub async fn segmentize(
     "#
     .to_string();
 
-    let Some(pool) = crate::postgis::DEADPOOL_POSTGIS.get() else {
-        postgis_error!("(segmentize) could not get psql pool.");
-        return Err(PostgisError::Psql(PsqlError::Client));
-    };
-
-    let client = pool.get().await.map_err(|e| {
-        postgis_error!(
-            "(segmentize) could not get client from psql connection pool: {}",
-            e
-        );
-        PostgisError::Psql(PsqlError::Client)
-    })?;
+    let client = crate::postgis::DEADPOOL_POSTGIS
+        .get()
+        .ok_or_else(|| {
+            postgis_error!("could not get psql pool.");
+            PostgisError::Psql(PsqlError::Client)
+        })?
+        .get()
+        .await
+        .map_err(|e| {
+            postgis_error!("could not get client from psql connection pool: {}", e);
+            PostgisError::Psql(PsqlError::Client)
+        })?;
 
     let mut results = client
         .query(&stmt, &[&geom, &(max_segment_len_meters as f64)])
         .await
         .map_err(|e| {
-            postgis_error!("(segmentize) could not execute query: {}", e);
+            postgis_error!("could not execute query: {}", e);
 
             PostgisError::Psql(PsqlError::Execute)
         })?
@@ -322,14 +330,15 @@ pub async fn segmentize(
         .map(|r| {
             let segment_duration_ms = (r.distance_m / velocity_m_s) * 1000.;
 
-            let Some(time_delta) = Duration::try_milliseconds(segment_duration_ms as i64) else {
-                postgis_error!(
-                    "(segmentize) could not create time delta from segment duration: {}",
-                    segment_duration_ms
-                );
+            let time_delta =
+                Duration::try_milliseconds(segment_duration_ms as i64).ok_or_else(|| {
+                    postgis_error!(
+                        "could not create time delta from segment duration: {}",
+                        segment_duration_ms
+                    );
 
-                return Err(PostgisError::Psql(PsqlError::Execute));
-            };
+                    PostgisError::Psql(PsqlError::Execute)
+                })?;
 
             let segment = Segment {
                 geom: r.geom,
@@ -343,12 +352,12 @@ pub async fn segmentize(
         })
         .collect::<Result<Vec<Segment>, PostgisError>>()
         .map_err(|e| {
-            postgis_error!("(segmentize) could not create segment: {}", e);
+            postgis_error!("could not create segment: {}", e);
             PostgisError::Psql(PsqlError::Execute)
         })?;
 
     // postgis_debug!(
-    //     "(segmentize) found {} segments. craft velocity {} m/s.",
+    //     "found {} segments. craft velocity {} m/s.",
     //     results.len(),
     //     velocity_m_s
     // );
@@ -519,5 +528,142 @@ mod tests {
             check_string(string, regex).unwrap_err(),
             StringError::ContainsForbidden,
         );
+    }
+
+    #[test]
+    fn test_polygon_error_display() {
+        let error = PolygonError::VertexCount;
+        assert_eq!(error.to_string(), "Invalid number of vertices provided.");
+
+        let error = PolygonError::OpenPolygon;
+        assert_eq!(
+            error.to_string(),
+            "The first and last vertices do not match (open polygon)."
+        );
+
+        let error = PolygonError::OutOfBounds;
+        assert_eq!(error.to_string(), "One or more vertices are out of bounds.");
+    }
+
+    #[test]
+    fn test_point_error_display() {
+        let error = PointError::OutOfBounds;
+        assert_eq!(error.to_string(), "One or more vertices are out of bounds.");
+    }
+
+    #[test]
+    fn test_string_error_display() {
+        let error = StringError::Regex;
+        assert_eq!(error.to_string(), "Regex is invalid.");
+
+        let error = StringError::Mismatch;
+        assert_eq!(error.to_string(), "String does not match regex.");
+
+        let error = StringError::ContainsForbidden;
+        assert_eq!(error.to_string(), "String contains 'null'.");
+    }
+
+    #[test]
+    fn test_from_position_pointz() {
+        let position = Position {
+            latitude: rand::random(),
+            longitude: rand::random(),
+            altitude_meters: rand::random(),
+        };
+
+        let point = PointZ::from(position.clone());
+        assert_eq!(point.x, position.longitude);
+        assert_eq!(point.y, position.latitude);
+        assert_eq!(point.z, position.altitude_meters);
+        assert_eq!(point.srid, Some(DEFAULT_SRID));
+    }
+
+    #[test]
+    fn test_from_grpc_pointz() {
+        let position = GrpcPointZ {
+            latitude: rand::random(),
+            longitude: rand::random(),
+            altitude_meters: rand::random::<f32>(),
+        };
+
+        let point = PointZ::from(position.clone());
+        assert_eq!(point.x, position.longitude);
+        assert_eq!(point.y, position.latitude);
+        assert_eq!(point.z, position.altitude_meters as f64);
+        assert_eq!(point.srid, Some(DEFAULT_SRID));
+    }
+
+    // A rough conversion of the distance in meters for a degree of latitude
+    fn degrees_to_latitude(degrees: f64) -> f64 {
+        degrees * 111_111.0
+    }
+
+    // A rough conversion of distance in meters per degree of longitude
+    //  The latitude affects this significantly
+    fn degrees_to_longitude(degrees: f64, latitude: f64) -> f64 {
+        degrees * 111_111.0 * latitude.to_radians().cos()
+    }
+
+    #[test]
+    fn test_distance_meters() {
+        // height is only difference
+        let p1 = PointZ {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            srid: Some(DEFAULT_SRID),
+        };
+
+        let p2 = PointZ {
+            x: 0.0,
+            y: 0.0,
+            z: 10.0,
+            srid: Some(DEFAULT_SRID),
+        };
+
+        assert_eq!(distance_meters(&p1, &p2), (p2.z - p1.z) as f32);
+
+        let base = PointZ {
+            x: 5.167,
+            y: 52.64,
+            z: 0.0,
+            srid: Some(DEFAULT_SRID),
+        };
+
+        let target = PointZ {
+            x: base.x,
+            y: base.y + 0.01,
+            z: base.z,
+            srid: Some(DEFAULT_SRID),
+        };
+
+        let expected_distance_m = degrees_to_latitude((target.y - base.y).abs());
+        let distance_m = distance_meters(&base, &target) as f64;
+
+        // difference less than 5m
+        let delta = (expected_distance_m - distance_m).abs();
+        assert!(delta < 5.0);
+
+        //
+        // Longitude Difference
+        //
+        let target = PointZ {
+            x: base.x + 0.01,
+            y: base.y,
+            z: base.z,
+            srid: Some(DEFAULT_SRID),
+        };
+
+        let expected_distance_m = degrees_to_longitude((target.x - base.x).abs(), base.y);
+        let distance_m = distance_meters(&base, &target) as f64;
+        let delta = (expected_distance_m - distance_m).abs();
+
+        ut_info!(
+            "expected_distance_m: {}, distance_m: {}, delta: {}",
+            expected_distance_m,
+            distance_m,
+            delta
+        );
+        assert!(delta < 5.0);
     }
 }

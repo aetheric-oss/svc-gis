@@ -1,10 +1,9 @@
 //! gRPC client implementation
 //! Helps to use https://www.keene.edu/campus/maps/tool/ to create polygons on a map
 
-use chrono::Duration;
 use geo::{polygon, Centroid};
 use lib_common::grpc::get_endpoint_from_env;
-use lib_common::time::{DateTime, Utc};
+use lib_common::time::{DateTime, Duration, Utc};
 use svc_gis_client_grpc::prelude::{gis::*, *};
 
 const VERTIPORT_1_ID: &str = "Kamino";

@@ -24,6 +24,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client_config = server_config.clone();
 
     client_config
+        .client_mod_attribute("grpc", "#[cfg(not(tarpaulin_include))]")
         .extern_path(".grpc.AircraftType", "crate::prelude::AircraftType")
         .extern_path(
             ".grpc.OperationalStatus",

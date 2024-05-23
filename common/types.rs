@@ -11,7 +11,7 @@ pub const REDIS_KEY_AIRCRAFT_POSITION: &str = "gis:aircraft:position";
 pub const REDIS_KEY_AIRCRAFT_VELOCITY: &str = "gis:aircraft:velocity";
 
 /// Aircraft Type
-#[derive(Serialize, Deserialize, Debug, Copy, Clone)]
+#[derive(Serialize, Deserialize, Debug, Copy, Clone, PartialEq)]
 #[derive(strum::EnumString)]
 #[derive(strum::Display)]
 #[derive(strum::EnumIter)]

@@ -4,6 +4,9 @@ include!("grpc.rs");
 
 use super::*;
 
+#[cfg(feature = "stub_client")]
+use lib_common::time::Utc;
+
 #[cfg(any(not(feature = "stub_client"), feature = "stub_backends"))]
 use lib_common::grpc::ClientConnect;
 use lib_common::grpc::{Client, GrpcClient};
@@ -77,8 +80,8 @@ impl crate::service::Client<RpcServiceClient<Channel>> for GisClient {
         &self,
         request: Self::ReadyRequest,
     ) -> Result<tonic::Response<Self::ReadyResponse>, tonic::Status> {
-        grpc_info!("(is_ready) {} client.", self.get_name());
-        grpc_debug!("(is_ready) request: {:?}", request);
+        grpc_info!("{} client.", self.get_name());
+        grpc_debug!("request: {:?}", request);
         self.get_client().await?.is_ready(request).await
     }
 
@@ -86,8 +89,8 @@ impl crate::service::Client<RpcServiceClient<Channel>> for GisClient {
         &self,
         request: UpdateWaypointsRequest,
     ) -> Result<tonic::Response<UpdateResponse>, tonic::Status> {
-        grpc_info!("(update_waypoints) {} client.", self.get_name());
-        grpc_debug!("(update_waypoints) request: {:?}", request);
+        grpc_info!("{} client.", self.get_name());
+        grpc_debug!("request: {:?}", request);
         self.get_client().await?.update_waypoints(request).await
     }
 
@@ -95,8 +98,8 @@ impl crate::service::Client<RpcServiceClient<Channel>> for GisClient {
         &self,
         request: UpdateVertiportsRequest,
     ) -> Result<tonic::Response<UpdateResponse>, tonic::Status> {
-        grpc_info!("(update_vertiports) {} client.", self.get_name());
-        grpc_debug!("(update_vertiports) request: {:?}", request);
+        grpc_info!("{} client.", self.get_name());
+        grpc_debug!("request: {:?}", request);
         self.get_client().await?.update_vertiports(request).await
     }
 
@@ -104,8 +107,8 @@ impl crate::service::Client<RpcServiceClient<Channel>> for GisClient {
         &self,
         request: UpdateZonesRequest,
     ) -> Result<tonic::Response<UpdateResponse>, tonic::Status> {
-        grpc_info!("(update_zones) {} client.", self.get_name());
-        grpc_debug!("(update_zones) request: {:?}", request);
+        grpc_info!("{} client.", self.get_name());
+        grpc_debug!("request: {:?}", request);
         self.get_client().await?.update_zones(request).await
     }
 
@@ -113,8 +116,8 @@ impl crate::service::Client<RpcServiceClient<Channel>> for GisClient {
         &self,
         request: UpdateFlightPathRequest,
     ) -> Result<tonic::Response<UpdateResponse>, tonic::Status> {
-        grpc_info!("(update_flight_path) {} client.", self.get_name());
-        grpc_debug!("(update_flight_path) request: {:?}", request);
+        grpc_info!("{} client.", self.get_name());
+        grpc_debug!("request: {:?}", request);
         self.get_client().await?.update_flight_path(request).await
     }
 
@@ -122,8 +125,8 @@ impl crate::service::Client<RpcServiceClient<Channel>> for GisClient {
         &self,
         request: BestPathRequest,
     ) -> Result<tonic::Response<BestPathResponse>, tonic::Status> {
-        grpc_info!("(best_path) {} client.", self.get_name());
-        grpc_debug!("(best_path) request: {:?}", request);
+        grpc_info!("{} client.", self.get_name());
+        grpc_debug!("request: {:?}", request);
         self.get_client().await?.best_path(request).await
     }
 
@@ -131,8 +134,8 @@ impl crate::service::Client<RpcServiceClient<Channel>> for GisClient {
         &self,
         request: CheckIntersectionRequest,
     ) -> Result<tonic::Response<CheckIntersectionResponse>, tonic::Status> {
-        grpc_info!("(check_intersection) {} client.", self.get_name());
-        grpc_debug!("(check_intersection) request: {:?}", request);
+        grpc_info!("{} client.", self.get_name());
+        grpc_debug!("request: {:?}", request);
         self.get_client().await?.check_intersection(request).await
     }
 
@@ -140,8 +143,8 @@ impl crate::service::Client<RpcServiceClient<Channel>> for GisClient {
         &self,
         request: GetFlightsRequest,
     ) -> Result<tonic::Response<GetFlightsResponse>, tonic::Status> {
-        grpc_info!("(get_flights) {} client.", self.get_name());
-        grpc_debug!("(get_flights) request: {:?}", request);
+        grpc_info!("{} client.", self.get_name());
+        grpc_debug!("request: {:?}", request);
         self.get_client().await?.get_flights(request).await
     }
 
@@ -149,8 +152,8 @@ impl crate::service::Client<RpcServiceClient<Channel>> for GisClient {
     //     &self,
     //     request: NearestNeighborRequest,
     // ) -> Result<tonic::Response<NearestNeighborResponse>, tonic::Status> {
-    //     grpc_info!("(nearest_neighbors) {} client.", self.get_name());
-    //     grpc_debug!("(nearest_neighbors) request: {:?}", request);
+    //     grpc_info!("{} client.", self.get_name());
+    //     grpc_debug!("request: {:?}", request);
     //     self.get_client().await?.nearest_neighbors(request).await
     // }
 }
@@ -165,8 +168,8 @@ impl crate::service::Client<RpcServiceClient<Channel>> for GisClient {
         &self,
         request: Self::ReadyRequest,
     ) -> Result<tonic::Response<Self::ReadyResponse>, tonic::Status> {
-        grpc_warn!("(is_ready MOCK) {} client.", self.get_name());
-        grpc_debug!("(is_ready MOCK) request: {:?}", request);
+        grpc_warn!("(MOCK) {} client.", self.get_name());
+        grpc_debug!("(MOCK) request: {:?}", request);
         Ok(tonic::Response::new(ReadyResponse { ready: true }))
     }
 
@@ -174,8 +177,8 @@ impl crate::service::Client<RpcServiceClient<Channel>> for GisClient {
         &self,
         request: UpdateWaypointsRequest,
     ) -> Result<tonic::Response<UpdateResponse>, tonic::Status> {
-        grpc_warn!("(update_waypoints MOCK) {} client.", self.get_name());
-        grpc_debug!("(update_waypoints MOCK) request: {:?}", request);
+        grpc_warn!("(MOCK) {} client.", self.get_name());
+        grpc_debug!("(MOCK) request: {:?}", request);
         Ok(tonic::Response::new(UpdateResponse { updated: true }))
     }
 
@@ -183,8 +186,8 @@ impl crate::service::Client<RpcServiceClient<Channel>> for GisClient {
         &self,
         request: UpdateVertiportsRequest,
     ) -> Result<tonic::Response<UpdateResponse>, tonic::Status> {
-        grpc_warn!("(update_vertiports MOCK) {} client.", self.get_name());
-        grpc_debug!("(update_vertiports MOCK) request: {:?}", request);
+        grpc_warn!("(MOCK) {} client.", self.get_name());
+        grpc_debug!("(MOCK) request: {:?}", request);
         Ok(tonic::Response::new(UpdateResponse { updated: true }))
     }
 
@@ -192,8 +195,8 @@ impl crate::service::Client<RpcServiceClient<Channel>> for GisClient {
         &self,
         request: UpdateZonesRequest,
     ) -> Result<tonic::Response<UpdateResponse>, tonic::Status> {
-        grpc_warn!("(update_zones MOCK) {} client.", self.get_name());
-        grpc_debug!("(update_zones MOCK) request: {:?}", request);
+        grpc_warn!("(MOCK) {} client.", self.get_name());
+        grpc_debug!("(MOCK) request: {:?}", request);
         Ok(tonic::Response::new(UpdateResponse { updated: true }))
     }
 
@@ -201,8 +204,8 @@ impl crate::service::Client<RpcServiceClient<Channel>> for GisClient {
         &self,
         request: UpdateFlightPathRequest,
     ) -> Result<tonic::Response<UpdateResponse>, tonic::Status> {
-        grpc_warn!("(update_flight_path MOCK) {} client.", self.get_name());
-        grpc_debug!("(update_flight_path MOCK) request: {:?}", request);
+        grpc_warn!("(MOCK) {} client.", self.get_name());
+        grpc_debug!("(MOCK) request: {:?}", request);
         Ok(tonic::Response::new(UpdateResponse { updated: true }))
     }
 
@@ -210,8 +213,8 @@ impl crate::service::Client<RpcServiceClient<Channel>> for GisClient {
         &self,
         request: BestPathRequest,
     ) -> Result<tonic::Response<BestPathResponse>, tonic::Status> {
-        grpc_warn!("(best_path MOCK) {} client.", self.get_name());
-        grpc_debug!("(best_path MOCK) request: {:?}", request);
+        grpc_warn!("(MOCK) {} client.", self.get_name());
+        grpc_debug!("(MOCK) request: {:?}", request);
         Ok(tonic::Response::new(BestPathResponse {
             paths: vec![Path {
                 path: vec![PathNode {
@@ -233,8 +236,8 @@ impl crate::service::Client<RpcServiceClient<Channel>> for GisClient {
         &self,
         request: CheckIntersectionRequest,
     ) -> Result<tonic::Response<CheckIntersectionResponse>, tonic::Status> {
-        grpc_warn!("(check_intersection MOCK) {} client.", self.get_name());
-        grpc_debug!("(check_intersection MOCK) request: {:?}", request);
+        grpc_warn!("(MOCK) {} client.", self.get_name());
+        grpc_debug!("(MOCK) request: {:?}", request);
         Ok(tonic::Response::new(CheckIntersectionResponse {
             intersects: false,
         }))
@@ -244,8 +247,8 @@ impl crate::service::Client<RpcServiceClient<Channel>> for GisClient {
         &self,
         request: GetFlightsRequest,
     ) -> Result<tonic::Response<GetFlightsResponse>, tonic::Status> {
-        grpc_info!("(get_flights) {} client.", self.get_name());
-        grpc_debug!("(get_flights) request: {:?}", request);
+        grpc_info!("{} client.", self.get_name());
+        grpc_debug!("request: {:?}", request);
         Ok(tonic::Response::new(GetFlightsResponse {
             flights: vec![Flight {
                 session_id: Some("mock flight".to_string()),
@@ -256,12 +259,12 @@ impl crate::service::Client<RpcServiceClient<Channel>> for GisClient {
                         longitude: 5.11111373021763,
                         altitude_meters: 50.0,
                     }),
-                    timestamp: Some(chrono::Utc::now().into()),
+                    timestamp: Some(Utc::now().into()),
                 }],
                 simulated: true,
                 aircraft_type: crate::prelude::AircraftType::Undeclared.into(),
                 state: Some(crate::AircraftState {
-                    timestamp: Some(chrono::Utc::now().into()),
+                    timestamp: Some(Utc::now().into()),
                     status: crate::prelude::OperationalStatus::Undeclared.into(),
                     position: Some(PointZ {
                         latitude: 52.64248776887166,
@@ -281,8 +284,8 @@ impl crate::service::Client<RpcServiceClient<Channel>> for GisClient {
     //     &self,
     //     request: NearestNeighborRequest,
     // ) -> Result<tonic::Response<NearestNeighborResponse>, tonic::Status> {
-    //     grpc_info!("(nearest_neighbors MOCK) {} client.", self.get_name());
-    //     grpc_debug!("(nearest_neighbors MOCK) request: {:?}", request);
+    //     grpc_info!("(MOCK) {} client.", self.get_name());
+    //     grpc_debug!("(MOCK) request: {:?}", request);
     //     Ok(tonic::Response::new(NearestNeighborResponse {
     //         distances: vec![DistanceTo {
     //             label: "mock vertiport".to_string(),
