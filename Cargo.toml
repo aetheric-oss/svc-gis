@@ -4,8 +4,8 @@ resolver = "2"
 
 [workspace.package]
 edition      = "2021"
-homepage     = "https://www.arrowair.com/docs/documentation/services/intro"
-keywords     = ["vtol", "server", "gis"]                                    # max 5
+homepage     = "https://www.aetheric.nl"
+keywords     = ["vtol", "server", "gis"]                 # max 5
 license-file = "LICENSE"
 repository   = "https://github.com/aetheric-oss/svc-gis"
 

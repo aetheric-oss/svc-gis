@@ -1,9 +1,10 @@
 //! Updates waypoints in the PostGIS database.
 
-use crate::grpc::server::grpc_server;
-use grpc_server::Waypoint as RequestWaypoint;
-
 use super::{PostgisError, PSQL_SCHEMA};
+use crate::grpc::server::grpc_server;
+use deadpool_postgres::Object;
+use grpc_server::Waypoint as RequestWaypoint;
+use std::fmt::{self, Display, Formatter};
 
 /// Allowed characters in a waypoint identifier
 const IDENTIFIER_REGEX: &str = r"^[\-0-9A-Za-z_\.]{1,255}$";
@@ -27,8 +28,8 @@ pub enum WaypointError {
     DBError,
 }
 
-impl std::fmt::Display for WaypointError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+impl Display for WaypointError {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
             WaypointError::NoWaypoints => write!(f, "No waypoints were provided."),
             WaypointError::Identifier => write!(f, "Invalid identifier provided."),
@@ -43,6 +44,25 @@ impl std::fmt::Display for WaypointError {
 fn get_table_name() -> &'static str {
     static FULL_NAME: &str = const_format::formatcp!(r#""{PSQL_SCHEMA}"."waypoints""#,);
     FULL_NAME
+}
+
+/// Get a client from the PostGIS connection pool
+#[cfg(not(tarpaulin_include))]
+// no_coverage: (R5) need running psql backend, integration test
+async fn get_client() -> Result<Object, PostgisError> {
+    crate::postgis::DEADPOOL_POSTGIS
+        .get()
+        .ok_or_else(|| {
+            postgis_error!("could not get psql pool.");
+
+            PostgisError::Waypoint(WaypointError::Client)
+        })?
+        .get()
+        .await
+        .map_err(|e| {
+            postgis_error!("could not get client from psql connection pool: {}", e);
+            PostgisError::Waypoint(WaypointError::Client)
+        })
 }
 
 /// Waypoint type
@@ -61,28 +81,23 @@ impl TryFrom<RequestWaypoint> for Waypoint {
     fn try_from(waypoint: RequestWaypoint) -> Result<Self, Self::Error> {
         if let Err(e) = super::utils::check_string(&waypoint.identifier, IDENTIFIER_REGEX) {
             postgis_error!(
-                "(try_from RequestWaypoint) Invalid waypoint identifier: {}; {}",
+                "Invalid waypoint identifier: {}; {}",
                 waypoint.identifier,
                 e
             );
             return Err(WaypointError::Identifier);
         }
 
-        let Some(location) = waypoint.location else {
-            postgis_error!("(try_from RequestWaypoint) Waypoint has no location.");
-            return Err(WaypointError::Location);
-        };
+        let location = waypoint.location.ok_or_else(|| {
+            postgis_error!("Waypoint has no location.");
+            WaypointError::Location
+        })?;
 
-        let geom = match super::utils::point_from_vertex(&location) {
-            Ok(geom) => geom,
-            Err(e) => {
-                postgis_error!(
-                    "(try_from RequestWaypoint) Error creating point from vertex: {}",
-                    e
-                );
-                return Err(WaypointError::Location);
-            }
-        };
+        let geom = super::utils::point_from_vertex(&location).map_err(|e| {
+            postgis_error!("Error creating point from vertex: {}", e);
+
+            WaypointError::Location
+        })?;
 
         Ok(Waypoint {
             identifier: waypoint.identifier,
@@ -92,6 +107,8 @@ impl TryFrom<RequestWaypoint> for Waypoint {
 }
 
 /// Initialize the vertiports table in the PostGIS database
+#[cfg(not(tarpaulin_include))]
+// no_coverage: (R5) need running psql backend, integration test
 pub async fn psql_init() -> Result<(), PostgisError> {
     // Create Aircraft Table
     let statements = vec![
@@ -112,34 +129,24 @@ pub async fn psql_init() -> Result<(), PostgisError> {
 }
 
 /// Update waypoints in the PostGIS database
-pub async fn update_waypoints(waypoints: Vec<RequestWaypoint>) -> Result<(), WaypointError> {
-    postgis_debug!("(update_waypoints) entry.");
+#[cfg(not(tarpaulin_include))]
+// no_coverage: (R5) need running psql backend, integration test
+pub async fn update_waypoints(waypoints: Vec<RequestWaypoint>) -> Result<(), PostgisError> {
+    postgis_debug!("entry.");
     if waypoints.is_empty() {
-        return Err(WaypointError::NoWaypoints);
+        return Err(PostgisError::Waypoint(WaypointError::NoWaypoints));
     }
 
     let waypoints: Vec<Waypoint> = waypoints
         .into_iter()
         .map(Waypoint::try_from)
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(PostgisError::Waypoint)?;
 
-    let Some(pool) = crate::postgis::DEADPOOL_POSTGIS.get() else {
-        postgis_error!("(update_waypoints) could not get psql pool.");
-
-        return Err(WaypointError::Client);
-    };
-
-    let mut client = pool.get().await.map_err(|e| {
-        postgis_error!(
-            "(update_waypoints) could not get client from psql connection pool: {}",
-            e
-        );
-        WaypointError::Client
-    })?;
-
+    let mut client = get_client().await?;
     let transaction = client.transaction().await.map_err(|e| {
-        postgis_error!("(update_waypoints) could not create transaction: {}", e);
-        WaypointError::DBError
+        postgis_error!("could not create transaction: {}", e);
+        PostgisError::Waypoint(WaypointError::DBError)
     })?;
 
     let stmt = transaction
@@ -157,11 +164,8 @@ pub async fn update_waypoints(waypoints: Vec<RequestWaypoint>) -> Result<(), Way
         ))
         .await
         .map_err(|e| {
-            postgis_error!(
-                "(update_waypoints) could not prepare cached statement: {}",
-                e
-            );
-            WaypointError::DBError
+            postgis_error!("could not prepare cached statement: {}", e);
+            PostgisError::Waypoint(WaypointError::DBError)
         })?;
 
     for waypoint in &waypoints {
@@ -169,43 +173,30 @@ pub async fn update_waypoints(waypoints: Vec<RequestWaypoint>) -> Result<(), Way
             .execute(&stmt, &[&waypoint.identifier, &waypoint.geom])
             .await
             .map_err(|e| {
-                postgis_error!("(update_waypoints) could not execute transaction: {}", e);
-                WaypointError::DBError
+                postgis_error!("could not execute transaction: {}", e);
+                PostgisError::Waypoint(WaypointError::DBError)
             })?;
     }
 
-    match transaction.commit().await {
-        Ok(_) => {
-            postgis_debug!("(update_waypoints) success.");
-            Ok(())
-        }
-        Err(e) => {
-            postgis_error!("(update_waypoints) could not commit transaction: {}", e);
-            Err(WaypointError::DBError)
-        }
-    }
+    transaction.commit().await.map_err(|e| {
+        postgis_error!("could not commit transaction: {}", e);
+        PostgisError::Waypoint(WaypointError::DBError)
+    })?;
+
+    postgis_debug!("success.");
+    Ok(())
 }
 
 /// Get a subset of waypoints within N meters of another geometry
 ///  Make sure the geometry is in the same SRID as the waypoints
 ///  (4326)
+#[cfg(not(tarpaulin_include))]
+// no_coverage: (R5) need running psql backend, integration test
 pub async fn get_waypoints_near_geometry(
     geom: &postgis::ewkb::GeometryZ,
     range_meters: f32,
 ) -> Result<Vec<Waypoint>, PostgisError> {
-    let Some(pool) = crate::postgis::DEADPOOL_POSTGIS.get() else {
-        postgis_error!("(get_waypoints_near_geometry) could not get psql pool.");
-
-        return Err(PostgisError::Waypoint(WaypointError::Client));
-    };
-
-    let client = pool.get().await.map_err(|e| {
-        postgis_error!(
-            "(get_waypoints_near_geometry) could not get client from psql connection pool: {}",
-            e
-        );
-        PostgisError::Waypoint(WaypointError::Client)
-    })?;
+    let client = get_client().await?;
 
     // Get a subset of waypoints within N meters of the line between the origin and target
     //  This saves computation time by doing shortest path on a smaller graph
@@ -223,31 +214,30 @@ pub async fn get_waypoints_near_geometry(
         table_name = get_table_name()
     );
 
-    Ok(client
+    let result = client
         .query(&stmt, &[&geom, &range_meters])
         .await
         .map_err(|e| {
-            postgis_error!(
-                "(get_waypoints_near_geometry) could not query waypoints: {}",
-                e
-            );
+            postgis_error!("could not query waypoints: {}", e);
             PostgisError::Waypoint(WaypointError::DBError)
         })?
         .into_iter()
         .filter_map(|row| {
             let Ok(identifier) = row.try_get("identifier") else {
-                postgis_error!("(get_waypoints_near_geometry) could not get identifier from row.");
+                postgis_error!("could not get identifier from row.");
                 return None;
             };
 
             let Ok(geom) = row.try_get("geog") else {
-                postgis_error!("(get_waypoints_near_geometry) could not get geom from row.");
+                postgis_error!("could not get geom from row.");
                 return None;
             };
 
             Some(Waypoint { identifier, geom })
         })
-        .collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -255,6 +245,11 @@ mod tests {
     use super::*;
     use crate::grpc::server::grpc_server::Coordinates;
     use crate::postgis::utils;
+
+    #[test]
+    fn test_get_table_name() {
+        assert_eq!(get_table_name(), r#""arrow"."waypoints""#);
+    }
 
     #[test]
     fn ut_request_valid() {
@@ -312,7 +307,7 @@ mod tests {
             .collect();
 
         let result = update_waypoints(waypoints).await.unwrap_err();
-        assert_eq!(result, WaypointError::Client);
+        assert_eq!(result, PostgisError::Waypoint(WaypointError::Client));
     }
 
     #[tokio::test]
@@ -334,7 +329,7 @@ mod tests {
             }];
 
             let result = update_waypoints(waypoints).await.unwrap_err();
-            assert_eq!(result, WaypointError::Identifier);
+            assert_eq!(result, PostgisError::Waypoint(WaypointError::Identifier));
         }
     }
 
@@ -342,7 +337,7 @@ mod tests {
     async fn ut_waypoints_request_to_gis_invalid_no_nodes() {
         let waypoints: Vec<RequestWaypoint> = vec![];
         let result = update_waypoints(waypoints).await.unwrap_err();
-        assert_eq!(result, WaypointError::NoWaypoints);
+        assert_eq!(result, PostgisError::Waypoint(WaypointError::NoWaypoints));
     }
 
     #[tokio::test]
@@ -359,7 +354,25 @@ mod tests {
             }];
 
             let result = update_waypoints(waypoints).await.unwrap_err();
-            assert_eq!(result, WaypointError::Location);
+            assert_eq!(result, PostgisError::Waypoint(WaypointError::Location));
         }
+    }
+
+    #[test]
+    fn test_waypoint_error_display() {
+        let error = WaypointError::NoWaypoints;
+        assert_eq!(error.to_string(), "No waypoints were provided.");
+
+        let error = WaypointError::Identifier;
+        assert_eq!(error.to_string(), "Invalid identifier provided.");
+
+        let error = WaypointError::Location;
+        assert_eq!(error.to_string(), "Invalid location provided.");
+
+        let error = WaypointError::Client;
+        assert_eq!(error.to_string(), "Could not get backend client.");
+
+        let error = WaypointError::DBError;
+        assert_eq!(error.to_string(), "Database error.");
     }
 }

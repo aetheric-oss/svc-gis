@@ -1,7 +1,8 @@
 //! This module contains functions for routing between nodes.
 use crate::grpc::server::grpc_server::{DistanceTo, NearestNeighborRequest, NodeType};
 
-use uuid::Uuid;
+use std::fmt::{self, Display, Formatter};
+use lib_common::uuid::{Uuid, to_uuid};
 use super::PSQL_SCHEMA;
 
 /// Possible errors with path requests
@@ -32,8 +33,8 @@ pub enum NNError {
     DBError,
 }
 
-impl std::fmt::Display for NNError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+impl Display for NNError {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
             NNError::NoPath => write!(f, "No path was found."),
             NNError::InvalidStartNode => write!(f, "Invalid start node."),
@@ -50,13 +51,13 @@ impl std::fmt::Display for NNError {
 impl NearestNeighborRequest {
     fn validate(&self) -> Result<(), NNError> {
         if self.limit < 1 {
-            postgis_error!("(validate) invalid limit: {}", self.limit);
+            postgis_error!("invalid limit: {}", self.limit);
             return Err(NNError::InvalidLimit);
         }
 
         if self.max_range_meters < 0.0 {
             postgis_error!(
-                "(validate) invalid max range meters: {}",
+                "invalid max range meters: {}",
                 self.max_range_meters
             );
             return Err(NNError::InvalidRange);
@@ -74,7 +75,7 @@ async fn nearest_neighbor_vertiport_source(
 ) -> Result<Vec<tokio_postgres::Row>, NNError> {
     let Ok(start_node_id) = Uuid::parse_str(&request.start_node_id) else {
         postgis_error!(
-            "(nearest_neighbor_vertiport_source) could not parse start node id into UUID: {}",
+            "could not parse start node id into UUID: {}",
             request.start_node_id
         );
         return Err(NNError::InvalidStartNode);
@@ -92,7 +93,7 @@ async fn nearest_neighbor_vertiport_source(
         .await
         .map_err(|e| {
             postgis_error!(
-                "(nearest_neighbor_vertiport_source) could not request routes: {}",
+                "could not request routes: {}",
                 e
             );
             NNError::DBError
@@ -117,7 +118,7 @@ async fn nearest_neighbor_aircraft_source(
         .await
         .map_err(|e| {
             postgis_error!(
-                "(nearest_neighbor_aircraft_source) could not request routes: {}",
+                "could not request routes: {}",
                 e
             );
             NNError::DBError
@@ -126,6 +127,7 @@ async fn nearest_neighbor_aircraft_source(
 
 /// Nearest neighbor query for nodes
 #[cfg(not(tarpaulin_include))]
+// no_coverage: (Rnever) need to run on a gis database, not unit testable
 pub async fn nearest_neighbors(
     request: NearestNeighborRequest,
 ) -> Result<Vec<DistanceTo>, NNError> {
@@ -133,7 +135,7 @@ pub async fn nearest_neighbors(
 
     let start_type = match num::FromPrimitive::from_i32(request.start_type) {
         Some(NodeType::Vertiport) => {
-            uuid::Uuid::parse_str(&request.start_node_id).map_err(|_| NNError::InvalidStartNode)?;
+            to_uuid(&request.start_node_id).map_err(|_| NNError::InvalidStartNode)?;
             NodeType::Vertiport
         }
         Some(NodeType::Aircraft) => {
@@ -143,7 +145,7 @@ pub async fn nearest_neighbors(
         }
         _ => {
             postgis_error!(
-                "(nearest_neighbors) invalid start node type: {:?}",
+                "invalid start node type: {:?}",
                 request.start_type
             );
             return Err(NNError::Unsupported);
@@ -154,7 +156,7 @@ pub async fn nearest_neighbors(
         Some(NodeType::Vertiport) => NodeType::Vertiport,
         _ => {
             postgis_error!(
-                "(nearest_neighbors) invalid end node type: {:?}",
+                "invalid end node type: {:?}",
                 request.end_type
             );
             return Err(NNError::Unsupported);
@@ -163,7 +165,7 @@ pub async fn nearest_neighbors(
 
     let Some(pool) = crate::postgis::DEADPOOL_POSTGIS.get() else {
             postgis_error!(
-                "(nearest_neighbors) could not get psql pool.",
+                "could not get psql pool.",
                 e
             );
             
@@ -172,7 +174,7 @@ pub async fn nearest_neighbors(
 
     let client = pool.get().await.map_err(|e| {
         postgis_error!(
-            "(nearest_neighbors) could not get client from psql connection pool: {}",
+            "could not get client from psql connection pool: {}",
             e
         );
         NNError::Client
@@ -183,10 +185,10 @@ pub async fn nearest_neighbors(
         (NodeType::Vertiport, NodeType::Vertiport) => {
             let query = format!(
                 r#"SELECT * FROM "{PSQL_SCHEMA}".nearest_vertiports_to_vertiport($1, $2, $3);"#);
-            postgis_debug!("(nearest_neighbors) query [{}]", query);
+            postgis_debug!("query [{}]", query);
 
             let stmt = client.prepare_cached(query).await.map_err(|e| {
-                postgis_error!("(nearest_neighbors) could not prepare statement: {}", e);
+                postgis_error!("could not prepare statement: {}", e);
                 NNError::DBError
             })?;
 
@@ -194,10 +196,10 @@ pub async fn nearest_neighbors(
         }
         (NodeType::Aircraft, NodeType::Vertiport) => {
             let query = format!(r#"SELECT * FROM "{PSQL_SCHEMA}".nearest_vertiports_to_aircraft($1, $2, $3);"#);
-            postgis_debug!("(nearest_neighbors) query [{}]", query);
+            postgis_debug!("query [{}]", query);
 
             let stmt = client.prepare_cached(query).await.map_err(|e| {
-                postgis_error!("(nearest_neighbors) could not prepare statement: {}", e);
+                postgis_error!("could not prepare statement: {}", e);
                 NNError::DBError
             })?;
 
@@ -205,7 +207,7 @@ pub async fn nearest_neighbors(
         }
         _ => {
             postgis_error!(
-                "(nearest_neighbors) unsupported path types: {:?}",
+                "unsupported path types: {:?}",
                 (start_type, end_type)
             );
             return Err(NNError::Unsupported);
@@ -216,7 +218,7 @@ pub async fn nearest_neighbors(
     for r in &rows {
         let Ok(identifier) = r.try_get("identifier") else {
             postgis_error!(
-                "(nearest_neighbors) could not parse identifier into UUID: {}",
+                "could not parse identifier into UUID: {}",
                 r.get::<usize, String>(0)
             );
             return Err(NNError::DBError);
@@ -224,7 +226,7 @@ pub async fn nearest_neighbors(
 
         let Ok(distance_meters) = r.try_get("distance_meters") else {
             postgis_error!(
-                "(nearest_neighbors) could not parse distance into f64: {}",
+                "could not parse distance into f64: {}",
                 r.get::<usize, String>(1)
             );
             return Err(NNError::DBError);
@@ -248,7 +250,7 @@ mod tests {
     #[tokio::test]
     async fn ut_client_failure() {
         let request = NearestNeighborRequest {
-            start_node_id: uuid::Uuid::new_v4().to_string(),
+            start_node_id: Uuid::new_v4().to_string(),
             start_type: grpc_server::NodeType::Vertiport as i32,
             end_type: grpc_server::NodeType::Vertiport as i32,
             limit: 10,
@@ -312,7 +314,7 @@ mod tests {
     #[tokio::test]
     async fn ut_request_invalid_end_node() {
         let request = NearestNeighborRequest {
-            start_node_id: uuid::Uuid::new_v4().to_string(),
+            start_node_id: Uuid::new_v4().to_string(),
             start_type: grpc_server::NodeType::Vertiport as i32,
             end_type: grpc_server::NodeType::Waypoint as i32,
             limit: 10,
@@ -328,7 +330,7 @@ mod tests {
     #[tokio::test]
     async fn ut_request_invalid_limit() {
         let request = NearestNeighborRequest {
-            start_node_id: uuid::Uuid::new_v4().to_string(),
+            start_node_id: Uuid::new_v4().to_string(),
             start_type: grpc_server::NodeType::Vertiport as i32,
             end_type: grpc_server::NodeType::Vertiport as i32,
             limit: 0,
@@ -344,7 +346,7 @@ mod tests {
     #[tokio::test]
     async fn ut_request_invalid_range() {
         let request = NearestNeighborRequest {
-            start_node_id: uuid::Uuid::new_v4().to_string(),
+            start_node_id: Uuid::new_v4().to_string(),
             start_type: grpc_server::NodeType::Vertiport as i32,
             end_type: grpc_server::NodeType::Vertiport as i32,
             limit: 10,
@@ -360,7 +362,7 @@ mod tests {
     #[tokio::test]
     async fn ut_request_invalid_path_type() {
         let request = NearestNeighborRequest {
-            start_node_id: uuid::Uuid::new_v4().to_string(),
+            start_node_id: Uuid::new_v4().to_string(),
             start_type: grpc_server::NodeType::Aircraft as i32,
             end_type: grpc_server::NodeType::Aircraft as i32,
             limit: 10,
@@ -371,5 +373,32 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(result, NNError::Unsupported);
+    }
+
+    #[test]
+    fn test_nn_error_display() {
+        let error = NNError::NoPath;
+        assert_eq!(error.to_string(), "No path was found.");
+
+        let error = NNError::InvalidStartNode;
+        assert_eq!(error.to_string(), "Invalid start node.");
+
+        let error = NNError::InvalidEndNode;
+        assert_eq!(error.to_string(), "Invalid end node.");
+
+        let error = NNError::InvalidLimit;
+        assert_eq!(error.to_string(), "Invalid limit.");
+
+        let error = NNError::InvalidRange;
+        assert_eq!(error.to_string(), "Invalid range.");
+
+        let error = NNError::Unsupported;
+        assert_eq!(error.to_string(), "Unsupported path type.");
+
+        let error = NNError::Client;
+        assert_eq!(error.to_string(), "Could not get backend client.");
+
+        let error = NNError::DBError;
+        assert_eq!(error.to_string(), "Unknown backend error.");
     }
 }

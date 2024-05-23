@@ -27,11 +27,9 @@ impl Consumer {
         key_folder: &str,
         sleep_ms: u64,
     ) -> Result<Self, ()> {
-        let Ok(pool) = RedisPool::new(config, key_folder).await else {
-            cache_error!("(Consumer::new) could not get Redis pool for folder '{key_folder}'.");
-
-            return Err(());
-        };
+        let pool = RedisPool::new(config, key_folder).await.map_err(|_| {
+            cache_error!("could not get Redis pool for folder '{key_folder}'.");
+        })?;
 
         Ok(Self { pool, sleep_ms })
     }
@@ -57,10 +55,12 @@ where
     fn sleep_ms(&self) -> u64;
 
     /// Starts a loop to consume data from the Redis queue
+    #[cfg(not(tarpaulin_include))]
+    // no_coverage: (Rnever) need running redis instance, not unit testable
     async fn begin(&mut self) -> Result<(), ()> {
         let mut redis_pool: RedisPool = self.pool();
         let mut connection = redis_pool.pool.get().await.map_err(|e| {
-            cache_error!("(AircraftConsumer::begin) could not get connection from Redis pool: {e}");
+            cache_error!("could not get connection from Redis pool: {e}");
         })?;
 
         loop {

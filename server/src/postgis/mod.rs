@@ -15,6 +15,7 @@ pub mod waypoint;
 pub mod zone;
 
 pub use once_cell::sync::OnceCell;
+use std::fmt::{self, Display, Formatter};
 
 /// Global pool for PostgreSQL connections
 pub static DEADPOOL_POSTGIS: OnceCell<deadpool_postgres::Pool> = OnceCell::new();
@@ -51,14 +52,10 @@ pub enum PostgisError {
     FlightPath(flight::FlightError),
 }
 
-impl std::error::Error for PostgisError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        None
-    }
-}
+impl std::error::Error for PostgisError {}
 
-impl std::fmt::Display for PostgisError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for PostgisError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             PostgisError::Psql(e) => write!(f, "PostgreSQL Error: {}", e),
             PostgisError::Vertiport(e) => write!(f, "Vertiport Error: {}", e),
@@ -90,8 +87,8 @@ pub enum PsqlError {
     Commit,
 }
 
-impl std::fmt::Display for PsqlError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for PsqlError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             PsqlError::Client => write!(f, "Client Error"),
             PsqlError::Connection => write!(f, "Connection Error"),
@@ -102,39 +99,34 @@ impl std::fmt::Display for PsqlError {
     }
 }
 
-impl std::error::Error for PsqlError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        None
-    }
-}
+impl std::error::Error for PsqlError {}
 
 /// Executes a transaction with multiple statements on the provided pool
 ///  with rollback if any of the statements fail to execute.
+#[cfg(not(tarpaulin_include))]
+// no_coverage: (Rnever) need running postgresql instance
 pub async fn psql_transaction(statements: Vec<String>) -> Result<(), PostgisError> {
-    let Some(pool) = DEADPOOL_POSTGIS.get() else {
-        postgis_error!("(psql_transaction) could not get psql pool.");
-        return Err(PostgisError::Psql(PsqlError::Connection));
-    };
+    let pool = DEADPOOL_POSTGIS.get().ok_or_else(|| {
+        postgis_error!("could not get psql pool.");
+        PostgisError::Psql(PsqlError::Connection)
+    })?;
 
     let mut client = pool.get().await.map_err(|e| {
-        postgis_error!(
-            "(psql_transaction) could not get client from psql connection pool: {}",
-            e
-        );
+        postgis_error!("could not get client from psql connection pool: {}", e);
         PostgisError::Psql(PsqlError::Client)
     })?;
 
     let transaction = client.transaction().await.map_err(|e| {
-        postgis_error!("(psql_transaction) could not create transaction: {}", e);
+        postgis_error!("could not create transaction: {}", e);
         PostgisError::Psql(PsqlError::Client)
     })?;
 
     for stmt in statements.into_iter() {
         if let Err(e) = transaction.execute(&stmt, &[]).await {
-            postgis_error!("(psql_transaction) Failed to execute statement '{stmt}': {e}");
+            postgis_error!("Failed to execute statement '{stmt}': {e}");
 
             transaction.rollback().await.map_err(|e| {
-                postgis_error!("(psql_transaction) Failed to rollback transaction: {}", e);
+                postgis_error!("Failed to rollback transaction: {}", e);
                 PostgisError::Psql(PsqlError::Rollback)
             })?;
 
@@ -143,7 +135,7 @@ pub async fn psql_transaction(statements: Vec<String>) -> Result<(), PostgisErro
     }
 
     transaction.commit().await.map_err(|e| {
-        postgis_error!("(psql_transaction) Failed to commit transaction: {}", e);
+        postgis_error!("Failed to commit transaction: {}", e);
         PostgisError::Psql(PsqlError::Commit)
     })?;
 
@@ -153,7 +145,7 @@ pub async fn psql_transaction(statements: Vec<String>) -> Result<(), PostgisErro
 /// Generates a PostgreSQL enum declaration from a Rust enum
 pub fn psql_enum_declaration<T>(enum_name: &str) -> String
 where
-    T: IntoEnumIterator + std::fmt::Display,
+    T: IntoEnumIterator + Display,
 {
     let fields = T::iter()
         .map(|field| format!("'{}'", field))
@@ -168,12 +160,15 @@ where
         END IF;
     END $$;"
     );
-    postgis_info!("(psql_enum_declaration) {}.", declaration);
+
+    postgis_info!("{}.", declaration);
 
     declaration
 }
 
 /// Initializes the PostgreSQL database with the required tables and enums
+#[cfg(not(tarpaulin_include))]
+// no_coverage: (Rnever) need running postgresql instance, not unit testable
 pub async fn psql_init() -> Result<(), Box<dyn std::error::Error>> {
     zone::psql_init().await?;
     vertiport::psql_init().await?;
@@ -182,4 +177,102 @@ pub async fn psql_init() -> Result<(), Box<dyn std::error::Error>> {
     flight::psql_init().await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_postgis_error_display() {
+        let error = PostgisError::Psql(PsqlError::Client);
+        assert_eq!(error.to_string(), "PostgreSQL Error: Client Error");
+
+        let error = PostgisError::Vertiport(vertiport::VertiportError::Identifier);
+        assert_eq!(
+            error.to_string(),
+            format!("Vertiport Error: {}", vertiport::VertiportError::Identifier)
+        );
+
+        let error = PostgisError::Aircraft(aircraft::AircraftError::Identifier);
+        assert_eq!(
+            error.to_string(),
+            format!("Aircraft Error: {}", aircraft::AircraftError::Identifier)
+        );
+
+        let error = PostgisError::Waypoint(waypoint::WaypointError::Identifier);
+        assert_eq!(
+            error.to_string(),
+            format!("Waypoint Error: {}", waypoint::WaypointError::Identifier)
+        );
+
+        let error = PostgisError::Zone(zone::ZoneError::Identifier);
+        assert_eq!(
+            error.to_string(),
+            format!("Zone Error: {}", zone::ZoneError::Identifier)
+        );
+
+        let error = PostgisError::BestPath(best_path::PathError::Internal);
+        assert_eq!(
+            error.to_string(),
+            format!("BestPath Error: {}", best_path::PathError::Internal)
+        );
+
+        let error = PostgisError::FlightPath(flight::FlightError::Time);
+        assert_eq!(
+            error.to_string(),
+            format!("FlightPath Error: {}", flight::FlightError::Time)
+        );
+    }
+
+    #[test]
+    fn test_psql_error_display() {
+        let error = PsqlError::Client;
+        assert_eq!(error.to_string(), "Client Error");
+
+        let error = PsqlError::Connection;
+        assert_eq!(error.to_string(), "Connection Error");
+
+        let error = PsqlError::Execute;
+        assert_eq!(error.to_string(), "Error on execution");
+
+        let error = PsqlError::Rollback;
+        assert_eq!(error.to_string(), "Error on rollback");
+
+        let error = PsqlError::Commit;
+        assert_eq!(error.to_string(), "Error on commit");
+    }
+
+    #[test]
+    fn test_psql_enum_declaration() {
+        #[derive(strum::EnumIter, Debug)]
+        enum TestEnum {
+            A,
+            B,
+            C,
+        }
+
+        impl Display for TestEnum {
+            fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+                write!(f, "{:?}", self)
+            }
+        }
+
+        let re = regex::Regex::new(r"\s{2,}").unwrap();
+        let enum_name = "test_enum";
+        let declaration = psql_enum_declaration::<TestEnum>(enum_name);
+        let expected = format!(
+            "DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = '{enum_name}') THEN
+                CREATE TYPE {enum_name} as ENUM ('A', 'B', 'C');
+            END IF;
+        END $$;"
+        );
+
+        // different indenting
+        let expected = re.replace_all(&expected, " ");
+        let declaration = re.replace_all(&declaration, " ");
+        assert_eq!(declaration, expected);
+    }
 }
