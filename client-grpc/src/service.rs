@@ -133,7 +133,7 @@ where
     /// ```
     /// use lib_common::grpc::get_endpoint_from_env;
     /// use svc_gis_client_grpc::prelude::*;
-    /// use chrono::Utc;
+    /// use lib_common::time::Utc;
     ///
     /// async fn example () -> Result<(), Box<dyn std::error::Error>> {
     ///     let (host, port) = get_endpoint_from_env("SERVER_HOSTNAME", "SERVER_PORT_GRPC");

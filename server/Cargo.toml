@@ -1,5 +1,5 @@
 [package]
-description = "Arrow svc-gis gRPC server"
+description = "Aetheric svc-gis gRPC server"
 name        = "svc-gis"
 version     = "0.1.1-develop.12"
 
@@ -28,7 +28,6 @@ stub_client = ["stub_backends"]
 anyhow              = "1.0"
 axum                = "0.6"
 cargo-husky         = "1"
-chrono              = { version = "0.4", features = ["serde"] }
 clap                = { version = "4.4", features = ["derive"] }
 config              = "0.13"
 const_format        = "0.2"
@@ -59,7 +58,6 @@ tokio               = { version = "1.33", features = ["full"] }
 tokio-util          = "0.7"
 tonic               = "0.10"
 tonic-health        = "0.10"
-uuid                = { version = "1.4", features = ["serde", "v4"] }
 
 [dependencies.lib-common]
 git = "https://github.com/aetheric-oss/lib-common"
