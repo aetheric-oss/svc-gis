@@ -41,7 +41,7 @@ impl Display for WaypointError {
 }
 
 /// Gets the name of this module's table
-fn get_table_name() -> &'static str {
+pub fn get_table_name() -> &'static str {
     static FULL_NAME: &str = const_format::formatcp!(r#""{PSQL_SCHEMA}"."waypoints""#,);
     FULL_NAME
 }
@@ -115,9 +115,14 @@ pub async fn psql_init() -> Result<(), PostgisError> {
         format!(
             r#"CREATE TABLE IF NOT EXISTS {table_name} (
             "identifier" VARCHAR(255) UNIQUE NOT NULL,
-            "geog" GEOGRAPHY NOT NULL
+            "geog" GEOGRAPHY NOT NULL,
+            "zone_id" INTEGER,
+            CONSTRAINT "fk_zone"
+                FOREIGN KEY ("zone_id")
+                REFERENCES {zones_table_name} ("id")
         );"#,
-            table_name = get_table_name()
+            table_name = get_table_name(),
+            zones_table_name = super::zone::get_table_name()
         ),
         format!(
             r#"CREATE INDEX IF NOT EXISTS "waypoints_geog_idx" ON {table_name} USING GIST ("geog");"#,

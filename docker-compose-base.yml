@@ -47,11 +47,6 @@ services:
         target: /.env
 
   example:
-    links:
-      - web-server
-    depends_on:
-      web-server:
-        condition: service_healthy
     container_name: ${DOCKER_NAME}-example
     image: ${RUST_IMAGE_NAME}:${RUST_IMAGE_TAG}
     volumes:
@@ -71,11 +66,6 @@ services:
   it-coverage: &it-coverage
     <<: *coverage
     container_name: ${DOCKER_NAME}-it-coverage
-    links:
-      - web-server
-    depends_on:
-      web-server:
-        condition: service_healthy
     command: cargo tarpaulin --manifest-path "${CARGO_MANIFEST_PATH}" --workspace -l --test integration_test --features ${PACKAGE_IT_FEATURES} -v -t 600 --out Lcov --output-dir coverage/
 
   ut-coverage: &ut-coverage

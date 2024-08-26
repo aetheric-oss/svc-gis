@@ -159,7 +159,11 @@ pub(super) fn get_table_name() -> &'static str {
 pub async fn psql_init() -> Result<(), PostgisError> {
     // Create Aircraft Table
 
+    let distance_meters = 20.0;
+    let distance_degrees = distance_meters / 111_111.0; // rough estimate
     let zonetype_str = "zonetype";
+    let table_name = get_table_name();
+    let schema_str = format!(r#""{PSQL_SCHEMA}""#);
     let statements = vec![
         super::psql_enum_declaration::<ZoneType>(zonetype_str),
         format!(
@@ -173,12 +177,72 @@ pub async fn psql_init() -> Result<(), PostgisError> {
             "time_start" TIMESTAMPTZ,
             "time_end" TIMESTAMPTZ,
             "last_updated" TIMESTAMPTZ
-        );"#,
-            table_name = get_table_name()
+        );"#
         ),
         format!(
-            r#"CREATE INDEX IF NOT EXISTS "zone_geom_idx" ON {table_name} USING GIST ("geom");"#,
-            table_name = get_table_name()
+            r#"CREATE INDEX IF NOT EXISTS "zone_geom_idx" ON {table_name} USING GIST ("geom");"#
+        ),
+        format!(
+            r#"CREATE OR REPLACE FUNCTION {schema_str}.create_zone_waypoints()
+            RETURNS trigger
+            AS $create_zone_waypoints$
+            DECLARE
+                pt RECORD;
+                count INTEGER := 0;
+            BEGIN
+                DELETE FROM {waypoints_table} WHERE "zone_id" = NEW."id";
+
+                FOR pt in 
+                    SELECT (ST_DumpPoints(ST_Expand(ST_Envelope(ST_Force2D(NEW."geom")), {distance_degrees})))."geom"
+                LOOP
+                    INSERT INTO {waypoints_table} (
+                        "identifier",
+                        "geog",
+                        "zone_id"
+                    ) SELECT
+                        NEW."id" || '_waypoint_' || count,
+                        pt."geom"::GEOGRAPHY,
+                        NEW."id"
+                    WHERE NOT EXISTS (
+                        SELECT "geog" FROM {waypoints_table} "wp"
+                        WHERE
+                            "wp"."zone_id" <> NEW."id"
+                            AND ("wp"."geog" <-> pt."geom"::GEOGRAPHY) < {distance_meters}
+                        LIMIT 1
+                    )
+                    ON CONFLICT ("identifier") DO UPDATE
+                    SET
+                        "geog" = EXCLUDED."geog";
+
+                    count := count + 1;
+                END LOOP;
+
+                RETURN NEW;
+            END;
+            $create_zone_waypoints$
+            LANGUAGE plpgsql;"#,
+            waypoints_table = super::waypoint::get_table_name()
+        ),
+        format!(
+            r#"CREATE OR REPLACE FUNCTION {schema_str}.delete_zone_waypoints()
+                RETURNS trigger
+                AS $delete_zone_waypoints$
+                BEGIN
+                    DELETE FROM {waypoints_table}
+                        WHERE "zone_id" = OLD."id";
+                    RETURN OLD;
+                END;
+                $delete_zone_waypoints$
+                LANGUAGE plpgsql;"#,
+            waypoints_table = super::waypoint::get_table_name()
+        ),
+        format!(
+            r#"CREATE OR REPLACE TRIGGER create_zone_waypoints AFTER INSERT OR UPDATE ON {table_name}
+                FOR EACH ROW EXECUTE FUNCTION {schema_str}.create_zone_waypoints();"#,
+        ),
+        format!(
+            r#"CREATE OR REPLACE TRIGGER delete_zone_waypoints BEFORE DELETE ON {table_name}
+            FOR EACH ROW EXECUTE FUNCTION {schema_str}.delete_zone_waypoints();"#,
         ),
     ];
 
@@ -207,7 +271,7 @@ pub async fn update_zones(zones: Vec<RequestZone>) -> Result<(), PostgisError> {
         PostgisError::Zone(ZoneError::DBError)
     })?;
 
-    let stmt = transaction
+    let zone_create_stmt = transaction
         .prepare_cached(&format!(
             r#"INSERT INTO {table_name} (
             "identifier",
@@ -247,7 +311,7 @@ pub async fn update_zones(zones: Vec<RequestZone>) -> Result<(), PostgisError> {
     for zone in &zones {
         transaction
             .execute(
-                &stmt,
+                &zone_create_stmt,
                 &[
                     &zone.identifier,
                     &zone.zone_type,

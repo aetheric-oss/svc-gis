@@ -236,6 +236,12 @@ message Path {
 
     // Total distance of this path
     float distance_meters = 2;
+
+    // // Total distance from start to first waypoint
+    // float takeoff_distance = 3;
+
+    // // Total distance from last waypoint to end
+    // float landing_distance = 4;
 }
 
 // Best Path Response object
