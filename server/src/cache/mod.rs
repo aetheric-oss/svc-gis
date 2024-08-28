@@ -10,6 +10,8 @@ use serde::Deserialize;
 use std::fmt::Debug;
 use tonic::async_trait;
 
+use tokio::time::{interval, Duration};
+
 /// A consumer of Redis Queue data.
 #[derive(Debug)]
 pub struct Consumer {
@@ -27,11 +29,12 @@ impl Consumer {
         key_folder: &str,
         sleep_ms: u64,
     ) -> Result<Self, ()> {
-        let pool = RedisPool::new(config, key_folder).await.map_err(|_| {
-            cache_error!("could not get Redis pool for folder '{key_folder}'.");
-        })?;
-
-        Ok(Self { pool, sleep_ms })
+        RedisPool::new(config, key_folder)
+            .await
+            .map_err(|_| {
+                cache_error!("could not get Redis pool for folder '{key_folder}'.");
+            })
+            .map(|pool| Self { pool, sleep_ms })
     }
 }
 
@@ -63,20 +66,15 @@ where
             cache_error!("could not get connection from Redis pool: {e}");
         })?;
 
-        loop {
-            match redis_pool.pop(&mut connection).await {
-                Ok(results) => {
-                    let _ = self.process(results).await;
-                }
-                Err(e) => {
-                    cache_error!(
-                        "(AircraftConsumer::begin) could not get aircraft from Redis: {}",
-                        e
-                    );
-                }
-            }
+        let mut interval = interval(Duration::from_millis(self.sleep_ms()));
 
-            tokio::time::sleep(std::time::Duration::from_millis(self.sleep_ms())).await;
+        loop {
+            let result = redis_pool.pop(&mut connection).await.map_err(|e| {
+                cache_error!("(AircraftConsumer::begin) could not get aircraft from Redis: {e}");
+            })?;
+
+            let _ = self.process(result).await;
+            interval.tick().await;
         }
     }
 }

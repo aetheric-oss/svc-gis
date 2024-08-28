@@ -4,7 +4,6 @@ use strum::IntoEnumIterator;
 
 #[macro_use]
 pub mod macros;
-// pub mod nearest;
 pub mod aircraft;
 pub mod best_path;
 pub mod flight;
@@ -122,16 +121,18 @@ pub async fn psql_transaction(statements: Vec<String>) -> Result<(), PostgisErro
     })?;
 
     for stmt in statements.into_iter() {
-        if let Err(e) = transaction.execute(&stmt, &[]).await {
-            postgis_error!("Failed to execute statement '{stmt}': {e}");
+        let Err(e) = transaction.execute(&stmt, &[]).await else {
+            continue;
+        };
 
-            transaction.rollback().await.map_err(|e| {
-                postgis_error!("Failed to rollback transaction: {}", e);
-                PostgisError::Psql(PsqlError::Rollback)
-            })?;
+        postgis_error!("Failed to execute statement '{stmt}': {e}");
 
-            return Err(PostgisError::Psql(PsqlError::Execute));
-        }
+        transaction.rollback().await.map_err(|e| {
+            postgis_error!("Failed to rollback transaction: {}", e);
+            PostgisError::Psql(PsqlError::Rollback)
+        })?;
+
+        return Err(PostgisError::Psql(PsqlError::Execute));
     }
 
     transaction.commit().await.map_err(|e| {

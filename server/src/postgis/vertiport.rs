@@ -121,7 +121,7 @@ impl TryFrom<RequestVertiport> for Vertiport {
             VertiportError::Timestamp
         })?;
 
-        // TODO(R4): Check altitude
+        // TODO(R5): Check altitude
 
         Ok(Vertiport {
             identifier: vertiport.identifier,

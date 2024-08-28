@@ -3,7 +3,6 @@
 use super::{psql_transaction, PostgisError, DEFAULT_SRID, PSQL_SCHEMA};
 
 use crate::cache::{Consumer, Processor};
-use crate::postgis::utils::StringError;
 use lib_common::time::{DateTime, Utc};
 use postgis::ewkb::PointZ;
 use std::fmt::{self, Display, Formatter};
@@ -58,8 +57,11 @@ pub(super) fn get_table_name() -> &'static str {
 }
 
 /// Verifies that a identifier is valid
-pub fn check_identifier(identifier: &str) -> Result<(), StringError> {
-    super::utils::check_string(identifier, IDENTIFIER_REGEX)
+pub fn check_identifier(identifier: &str) -> Result<(), PostgisError> {
+    super::utils::check_string(identifier, IDENTIFIER_REGEX).map_err(|e| {
+        postgis_error!("invalid identifier: {e}");
+        PostgisError::Aircraft(AircraftError::Identifier)
+    })
 }
 
 /// Initializes the PostGIS database for aircraft.
@@ -141,28 +143,23 @@ fn validate_identification(
     caa_identifier: &Option<String>,
     session_id: &Option<String>,
 ) -> Result<(), PostgisError> {
-    if let Some(identifier) = caa_identifier {
-        check_identifier(identifier).ok().ok_or_else(|| {
-            postgis_error!("invalid identifier: {:?}", identifier);
-
-            PostgisError::Aircraft(AircraftError::Identifier)
-        })?;
-    }
-
-    if let Some(session_id) = session_id {
-        super::flight::check_flight_identifier(session_id).map_err(|e| {
-            postgis_error!("invalid session_id {:?}: {e}", session_id);
-
-            PostgisError::Aircraft(AircraftError::Identifier)
-        })?;
-    }
-
     if caa_identifier.is_none() && session_id.is_none() {
         postgis_error!(
             "aircraft ID must have at least one of: [CAA-assigned aircraft ID, session ID]"
         );
 
         return Err(PostgisError::Aircraft(AircraftError::Identifier));
+    }
+
+    if let Some(identifier) = caa_identifier {
+        check_identifier(identifier)?;
+    }
+
+    if let Some(identifier) = session_id {
+        super::flight::check_flight_identifier(identifier).map_err(|e| {
+            postgis_error!("invalid session_id {:?}: {e}", identifier);
+            PostgisError::Aircraft(AircraftError::Identifier)
+        })?;
     }
 
     Ok(())
@@ -294,11 +291,7 @@ fn validate_position_message(
         return Err(PostgisError::Aircraft(AircraftError::Time));
     }
 
-    check_identifier(&item.identifier).map_err(|e| {
-        postgis_error!("could not validate identifier: {e}");
-
-        PostgisError::Aircraft(AircraftError::Identifier)
-    })?;
+    check_identifier(&item.identifier)?;
 
     Ok(())
 }
@@ -381,11 +374,7 @@ fn validate_velocity_message(
     item: &AircraftVelocity,
     now: &DateTime<Utc>,
 ) -> Result<(), PostgisError> {
-    check_identifier(&item.identifier).map_err(|e| {
-        postgis_error!("could not validate identifier: {}", e);
-
-        PostgisError::Aircraft(AircraftError::Identifier)
-    })?;
+    check_identifier(&item.identifier)?;
 
     if item.timestamp_network > *now {
         postgis_error!(

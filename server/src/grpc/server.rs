@@ -216,8 +216,6 @@ impl RpcService for ServerImpl {
 ///     tokio::spawn(grpc_server(config, None)).await
 /// }
 /// ```
-#[cfg(not(tarpaulin_include))]
-// no_coverage: (Rnever) continuously running server, integration test
 pub async fn grpc_server(
     config: crate::config::Config,
     shutdown_rx: Option<tokio::sync::oneshot::Receiver<()>>,
@@ -419,5 +417,27 @@ mod tests {
         assert!(result.is_ok());
         let result: ReadyResponse = result.unwrap().into_inner();
         assert_eq!(result.ready, true);
+    }
+
+    #[tokio::test]
+    async fn test_grpc_server_start_and_shutdown() {
+        use tokio::time::{sleep, Duration};
+        lib_common::logger::get_log_handle().await;
+        ut_info!("start");
+
+        let config = crate::config::Config::default();
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+
+        // Start the grpc server
+        tokio::spawn(grpc_server(config, Some(shutdown_rx)));
+
+        // Give the server time to get through the startup sequence (and thus code)
+        sleep(Duration::from_secs(1)).await;
+
+        // Shut down server
+        assert!(shutdown_tx.send(()).is_ok());
+
+        ut_info!("success");
     }
 }

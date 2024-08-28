@@ -148,8 +148,8 @@ checksum = "69f7f8c3906b62b754cd5326047894316021dcfe5a194c8ea52bdd94934a3457"
 
 [[package]]
 name = "arrow-macros-core"
-version = "0.2.1-develop.4"
-source = "git+https://github.com/aetheric-oss/lib-common?tag=latest-develop#c325691ec5ba51fa340f873a8ccd5a5bed19b7e2"
+version = "2.0.0"
+source = "git+https://github.com/aetheric-oss/lib-common?tag=v2.0.0#4457c15d899697762dbaa46c142a78559df8144b"
 dependencies = [
  "proc-macro-error",
  "proc-macro2",
@@ -159,8 +159,8 @@ dependencies = [
 
 [[package]]
 name = "arrow-macros-derive"
-version = "0.2.1-develop.4"
-source = "git+https://github.com/aetheric-oss/lib-common?tag=latest-develop#c325691ec5ba51fa340f873a8ccd5a5bed19b7e2"
+version = "2.0.0"
+source = "git+https://github.com/aetheric-oss/lib-common?tag=v2.0.0#4457c15d899697762dbaa46c142a78559df8144b"
 dependencies = [
  "arrow-macros-core",
  "proc-macro-error",
@@ -1176,8 +1176,8 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "lib-common"
-version = "0.2.1-develop.4"
-source = "git+https://github.com/aetheric-oss/lib-common?tag=latest-develop#c325691ec5ba51fa340f873a8ccd5a5bed19b7e2"
+version = "2.0.0"
+source = "git+https://github.com/aetheric-oss/lib-common?tag=v2.0.0#4457c15d899697762dbaa46c142a78559df8144b"
 dependencies = [
  "arrow-macros-derive",
  "cargo-husky",

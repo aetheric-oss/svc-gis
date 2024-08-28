@@ -72,11 +72,26 @@ See [the ICD](./icd.md) for this microservice.
 
 ```mermaid
 sequenceDiagram
-    participant client as svc-scheduler
+    participant client as svc-gis-client-grpc
     participant gis as svc-gis
     participant postgis as PostGIS
 
-    note over client: test
+    client->>+gis: updateVertiports
+    note over gis: process
+    alt invalid request
+    gis->>+client: error
+    end
+    
+    alt for_each vertiport
+    gis->>+postgis: INSERT .. ON CONFLICT ..
+    
+    note over postgis: create or update vertiport<br>geometry, egress, ingress
+    postgis->>+gis: success or error
+    end
+
+    note over gis: any failures will roll<br>back the entire transaction
+    
+    gis->>client: UpdateResponse
 ```
 
 ### updateWaypoints
@@ -84,11 +99,10 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant client as svc-compliance
+    participant client as svc-gis-client-grpc
     participant gis as svc-gis
     participant postgis as PostGIS
 
-    note over client: receive adsb data
     client->>+gis: updateWaypoints
     note over gis: process
     alt invalid request
@@ -96,7 +110,7 @@ sequenceDiagram
     end
     
     alt for_each waypoint
-    gis->>+postgis: update_waypoint
+    gis->>+postgis: INSERT .. ON CONFLICT ..
     
     note over postgis: create or update waypoint<br>geometry
     postgis->>+gis: success or error
@@ -111,11 +125,10 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant client as svc-compliance
+    participant client as svc-gis-client-grpc
     participant gis as svc-gis
     participant postgis as PostGIS
 
-    note over client: receive adsb data
     client->>+gis: updateZones
     note over gis: process
     alt invalid request
@@ -123,7 +136,7 @@ sequenceDiagram
     end
     
     alt for_each no-fly zone
-    gis->>+postgis: update_zones
+    gis->>+postgis: INSERT .. ON CONFLICT ..
     note over postgis: create or update no fly zone<br>time window and geometry
     
     postgis->>+gis: success or error
@@ -149,7 +162,7 @@ sequenceDiagram
     gis->>+client: error
     end
 
-    gis->>+postgis: update_aircraft_position
+    gis->>+postgis: INSERT .. ON CONFLICT ..
     
     alt Aircraft does not exist
     note over postgis: add aircraft as node
@@ -167,14 +180,14 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant scheduler as svc-scheduler
+    participant client as svc-gis-client-grpc
     participant gis as svc-gis
     participant postgis as PostGIS
 
-    scheduler->>+gis: bestPath(...)
+    client->>+gis: bestPath(...)
     note over gis: process
     alt invalid request
-    gis->>+scheduler: error
+    gis->>+client: error
     end
     alt vertiport to vertiport
     gis->>+postgis: best_path_p2p
@@ -188,35 +201,53 @@ sequenceDiagram
 
     postgis->>+gis: Array<(start coordinates, end coordinates, meter distance)>
 
-    gis->>+scheduler: BestPathResponse
+    gis->>+client: BestPathResponse
 ```
 
-### nearestNeighbors
 
-:warning: This nearest neighbor search is not used in R3 and will be reworked in R4.
+### checkIntersection
+
+This compares a path against two sources of geometry: zones and existing flight paths.
+
+Currently any overlap between a path and a zone will be considered an intersection.
+
+A different method is taken with comparing flight paths with one another. First flight paths are compared in their entireties for intersection to narrow down the field of possible aircraft collisions.
+
+These full path intersections aren't disqualifying, as the flights may occur at non-overlapping times or may overlap in time in such a way that the two aircraft will be unlikely to come near one another.
+
+As an example, two identical flights between vertiports A and B may have identical flight paths. However, if they leave 3 days apart, it is improbable that a collision will occur. Likewise, for any paths that intersect at a point in space, the time at which the intersection occurs must be taken into account before declaring an intersection.
+
+We consider an "intersection" to be any two paths that come within N meters of one another. This turns flight paths into 3D cylindrical volumes for the purposes of determining intersection.
 
 ```mermaid
 sequenceDiagram
-    participant scheduler as svc-scheduler
+    participant client as svc-gis-client-grpc
     participant gis as svc-gis
     participant postgis as PostGIS
 
-    scheduler->>+gis: nearestNeighbors(...)
-    note over gis: process
-    alt invalid request
-    gis->>+scheduler: error
+    client->>+gis: checkIntersection(path)
+    gis->>postgis: ST_3DIntersects() path and all zones (limit 1)
+    postgis->>gis: Intersections
+    alt if intersection
+        gis->>+client: CheckIntersectionResponse
     end
-    alt vertiport to vertiport
-    gis->>+postgis: nearest_vertiports_to_vertiport
+    
+    gis->>postgis: ST_3DDistance() between path and existing flight paths
+
+    loop
+        postgis->>gis: intersections
+        note over gis: if no overlap in time between paths<br>discard intersection
+        alt ST_3DDistance(path_a, path_b) < THRESHOLD
+            note over gis: these paths intersect somewhere along their duration
+            note over gis: split both paths in half,<br>compare the first halves and the second halves
+            gis->>postgis: ST_3DDistance(path_a_1, path_b_1) < THRESHOLD
+            gis->>postgis: ST_3DDistance(path_a_2, path_b_2) < THRESHOLD
+        end
+
+        note over gis: keep splitting where the paths intersect
+        note over gis: if we keep splitting until the paths are<br>less than N meters in length<br>and still find an intersection<br>the flight paths cross and the aircraft will potentially collide
+        note over gis: if no more intersections are found<br>before that minimum distance is reached<br>these flights intersect but at different<br>points in time, aircraft are<br>unlikely to collide
     end
 
-    alt aircraft to vertiport
-    gis->>+postgis: nearest_vertiports_to_aircraft
-    end
-
-    note over postgis: SELECT (...) as a <br>ORDER BY a.distance_meters
-
-    postgis->>+gis: Array<(Vertiport UUIDs)>
-
-    gis->>+scheduler: NearestNeighborResponse
+    gis->>+client: CheckIntersectionResponse
 ```

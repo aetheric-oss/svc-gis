@@ -69,15 +69,17 @@ impl RedisPool {
             details
         );
 
-        let pool = cfg.create_pool(Some(Runtime::Tokio1)).map_err(|e| {
-            cache_error!("(RedisPool new) could not create pool: {}", e);
-        })?;
-
-        cache_info!("(RedisPool new) pool created.");
-        Ok(RedisPool {
-            pool,
-            key_folder: String::from(key_folder),
-        })
+        cfg.create_pool(Some(Runtime::Tokio1))
+            .map_err(|e| {
+                cache_error!("(RedisPool new) could not create pool: {}", e);
+            })
+            .map(|pool| {
+                cache_info!("(RedisPool new) pool created.");
+                Self {
+                    pool,
+                    key_folder: String::from(key_folder),
+                }
+            })
     }
 
     fn key_folder(&self) -> String {
@@ -88,9 +90,6 @@ impl RedisPool {
     where
         T: for<'a> Deserialize<'a> + Clone + Debug,
     {
-        let prefix: &str = std::any::type_name::<T>();
-        // cache_debug!("({prefix}) processing bulk values: {:?}", values);
-
         // Remove nil values
         let values = values
             .into_iter()
@@ -98,7 +97,7 @@ impl RedisPool {
                 redis::Value::Nil => None,
                 redis::Value::Bulk(values) => Some(values),
                 _ => {
-                    cache_error!("({prefix}) not valid data: {:?}", value);
+                    cache_error!("not valid data: {:?}", value);
                     None
                 }
             })
@@ -109,21 +108,20 @@ impl RedisPool {
             .into_iter()
             .filter_map(|value| {
                 let redis::Value::Data(data) = value else {
-                    cache_error!("({prefix}) not valid data: {:?}", value);
+                    cache_error!("not valid data: {:?}", value);
                     return None;
                 };
 
-                match serde_json::from_slice::<T>(&data) {
-                    Ok(value) => Some(value.to_owned()),
-                    Err(e) => {
-                        cache_error!("({prefix}) could not deserialize value: {:?}", e);
-                        None
-                    }
-                }
+                serde_json::from_slice::<T>(&data)
+                    .map_err(|e| {
+                        cache_error!("could not deserialize value: {:?}", e);
+                    })
+                    .map(|value| value.to_owned())
+                    .ok()
             })
             .collect::<Vec<T>>();
 
-        cache_debug!("({prefix}) retrieved values: {:?}", values);
+        cache_debug!("retrieved values: {:?}", values);
         Ok(values)
     }
 
@@ -137,12 +135,9 @@ impl RedisPool {
         T: for<'a> Deserialize<'a> + Clone + Debug,
         C: redis::aio::ConnectionLike,
     {
-        let prefix: &str = std::any::type_name::<T>();
-        // cache_debug!("({prefix}) popping values...");
-
         // TODO(R5): As static when that is supported
         let pop_count = NonZeroUsize::new(20).ok_or_else(|| {
-            cache_error!("({prefix}) Operation failed, could not create NonZeroUsize.");
+            cache_error!("Operation failed, could not create NonZeroUsize.");
             CacheError::OperationFailed
         })?;
 
@@ -153,24 +148,21 @@ impl RedisPool {
             .query_async(connection)
             .await
             .map_err(|e| {
-                cache_error!("({prefix}) Operation failed, redis error: {}", e);
+                cache_error!("Operation failed, redis error: {}", e);
                 CacheError::OperationFailed
             })?;
 
-        match result {
-            redis::Value::Bulk(values) => {
-                if values.is_empty() {
-                    cache_debug!("({prefix}) No values found.");
-                    return Ok(vec![]);
-                }
+        let redis::Value::Bulk(values) = result else {
+            cache_error!("Operation failed, unexpected redis response: {:?}", result);
+            return Err(CacheError::OperationFailed);
+        };
 
-                RedisPool::process_bulk::<T>(values)
-            }
-            value => {
-                cache_error!("Operation failed, unexpected redis response: {:?}", value);
-                Err(CacheError::OperationFailed)
-            }
+        if values.is_empty() {
+            cache_debug!("No values found.");
+            return Ok(vec![]);
         }
+
+        RedisPool::process_bulk::<T>(values)
     }
 }
 

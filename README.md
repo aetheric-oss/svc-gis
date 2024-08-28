@@ -93,7 +93,6 @@ There are additional make targets available. You can find all possible targets b
 
 ## :scroll: Documentation
 The following documents are relevant to this service:
-- :construction: Requirements & User Stories
 - [Concept of Operations](./docs/conops.md)
 - [Software Design Document](./docs/sdd.md)
 - [Interface Control Document (ICD)](./docs/icd.md)

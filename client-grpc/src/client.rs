@@ -147,15 +147,6 @@ impl crate::service::Client<RpcServiceClient<Channel>> for GisClient {
         grpc_debug!("request: {:?}", request);
         self.get_client().await?.get_flights(request).await
     }
-
-    // async fn nearest_neighbors(
-    //     &self,
-    //     request: NearestNeighborRequest,
-    // ) -> Result<tonic::Response<NearestNeighborResponse>, tonic::Status> {
-    //     grpc_info!("{} client.", self.get_name());
-    //     grpc_debug!("request: {:?}", request);
-    //     self.get_client().await?.nearest_neighbors(request).await
-    // }
 }
 
 #[cfg(feature = "stub_client")]
@@ -279,21 +270,6 @@ impl crate::service::Client<RpcServiceClient<Channel>> for GisClient {
             // isas: vec![],
         }))
     }
-
-    // async fn nearest_neighbors(
-    //     &self,
-    //     request: NearestNeighborRequest,
-    // ) -> Result<tonic::Response<NearestNeighborResponse>, tonic::Status> {
-    //     grpc_info!("(MOCK) {} client.", self.get_name());
-    //     grpc_debug!("(MOCK) request: {:?}", request);
-    //     Ok(tonic::Response::new(NearestNeighborResponse {
-    //         distances: vec![DistanceTo {
-    //             label: "mock vertiport".to_string(),
-    //             target_type: request.origin_type,
-    //             distance_meters: 500.0,
-    //         }],
-    //     }))
-    // }
 }
 
 #[cfg(test)]

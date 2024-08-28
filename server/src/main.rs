@@ -9,10 +9,11 @@ use lib_common::logger::load_logger_config_from_file;
 use log::info;
 use svc_gis::cache::IsConsumer;
 use svc_gis::*;
+use tokio::task::JoinHandle;
 
 #[cfg(not(tarpaulin_include))]
 // no_coverage: (Rnever) needs running backend, integration tests, these spin up threads
-async fn start_redis_consumers(config: &Config) -> Result<(), ()> {
+async fn start_redis_consumers(config: &Config) -> Result<Vec<JoinHandle<Result<(), ()>>>, ()> {
     //
     // Aircraft
     //
@@ -20,19 +21,19 @@ async fn start_redis_consumers(config: &Config) -> Result<(), ()> {
     let mut position_consumer = Consumer::new(config, REDIS_KEY_AIRCRAFT_POSITION, 100).await?;
     let mut velocity_consumer = Consumer::new(config, REDIS_KEY_AIRCRAFT_VELOCITY, 100).await?;
 
-    tokio::spawn(
-        async move { <Consumer as IsConsumer<AircraftId>>::begin(&mut id_consumer).await },
-    );
+    let handles = vec![
+        tokio::spawn(
+            async move { <Consumer as IsConsumer<AircraftId>>::begin(&mut id_consumer).await },
+        ),
+        tokio::spawn(async move {
+            <Consumer as IsConsumer<AircraftPosition>>::begin(&mut position_consumer).await
+        }),
+        tokio::spawn(async move {
+            <Consumer as IsConsumer<AircraftVelocity>>::begin(&mut velocity_consumer).await
+        }),
+    ];
 
-    tokio::spawn(async move {
-        <Consumer as IsConsumer<AircraftPosition>>::begin(&mut position_consumer).await
-    });
-
-    tokio::spawn(async move {
-        <Consumer as IsConsumer<AircraftVelocity>>::begin(&mut velocity_consumer).await
-    });
-
-    Ok(())
+    Ok(handles)
 }
 
 /// Main entry point: starts gRPC Server on specified address and port
@@ -68,7 +69,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     postgis::psql_init().await?;
 
     // Start the Redis consumers
-    start_redis_consumers(&config).await.map_err(|_| {
+    let handles = start_redis_consumers(&config).await.map_err(|_| {
         let error = "Could not start Redis consumers.";
         log::error!("(main) {error}");
         error
@@ -81,6 +82,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Make sure all log message are written/ displayed before shutdown
     log::logger().flush();
+
+    // Abort all Redis consumers
+    handles.iter().for_each(|handle| handle.abort());
 
     Ok(())
 }

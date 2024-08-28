@@ -244,7 +244,7 @@ impl TryFrom<BestPathRequest> for PathRequest {
         };
 
         #[cfg(not(tarpaulin_include))]
-        // no_coverage: (R5) this will never fail
+        // no_coverage: (Rnever) this will never fail
         let delta = Duration::try_days(1).ok_or_else(|| {
             postgis_error!("could not get time delta for 1 day.");
             PostgisError::BestPath(PathError::InvalidTimeWindow)
@@ -487,7 +487,7 @@ async fn mod_a_star(
     while completed.len() < limit && !potentials.is_empty() {
         if Utc::now() - start_time > time_limit {
             postgis_warn!("max calculation time reached");
-            return Err(PostgisError::BestPath(PathError::NoPath));
+            break;
         }
 
         let current = potentials.pop().ok_or_else(|| {

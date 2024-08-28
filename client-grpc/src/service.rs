@@ -267,37 +267,4 @@ where
         &self,
         request: super::GetFlightsRequest,
     ) -> Result<tonic::Response<super::GetFlightsResponse>, tonic::Status>;
-
-    // /// Returns a [`tonic::Response`] containing a [`NearestNeighborResponse`](super::NearestNeighborResponse)
-    // /// Takes an [`NearestNeighborRequest`](super::NearestNeighborRequest).
-    // ///
-    // /// # Errors
-    // ///
-    // /// Returns [`tonic::Status`] with [`Code::Unknown`](tonic::Code::Unknown) if
-    // /// the server is not ready.
-    // ///
-    // /// # Examples
-    // /// ```
-    // /// use lib_common::grpc::get_endpoint_from_env;
-    // /// use svc_gis_client_grpc::prelude::*;
-    // ///
-    // /// async fn example () -> Result<(), Box<dyn std::error::Error>> {
-    // ///     let (host, port) = get_endpoint_from_env("SERVER_HOSTNAME", "SERVER_PORT_GRPC");
-    // ///     let client = GisClient::new_client(&host, port, "gis");
-    // ///     let request = gis::NearestNeighborRequest {
-    // ///         start_node_id: "00000000-0000-0000-0000-000000000000".to_string(),
-    // ///         start_type: gis::NodeType::Vertiport as i32,
-    // ///         end_type: gis::NodeType::Vertiport as i32,
-    // ///         limit: 10,
-    // ///         max_range_meters: 3000.0,
-    // ///     };
-    // ///     let response = client.nearest_neighbors(request).await?;
-    // ///     println!("RESPONSE={:?}", response.into_inner());
-    // ///     Ok(())
-    // /// }
-    // /// ```
-    // async fn nearest_neighbors(
-    //     &self,
-    //     request: super::NearestNeighborRequest,
-    // ) -> Result<tonic::Response<super::NearestNeighborResponse>, tonic::Status>;
 }
