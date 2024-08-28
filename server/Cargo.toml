@@ -1,7 +1,7 @@
 [package]
 description = "Aetheric svc-gis gRPC server"
 name        = "svc-gis"
-version     = "0.1.1-develop.12"
+version     = "0.1.1-develop.13"
 
 categories.workspace   = true
 edition.workspace      = true
