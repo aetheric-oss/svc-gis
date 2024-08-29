@@ -92,6 +92,8 @@ async fn test_add_vertiport() -> Result<(), Box<dyn std::error::Error>> {
         Vertiport {
             identifier: VERTIPORT_1_ID.to_string(),
             altitude_meters: 50.0,
+            ingresses: vec![],
+            egresses: vec![],
             label: Some("Bespin".to_string()),
             vertices: vec![
                 (52.3746368, 4.9163718),
@@ -111,6 +113,8 @@ async fn test_add_vertiport() -> Result<(), Box<dyn std::error::Error>> {
         Vertiport {
             identifier: VERTIPORT_2_ID.to_string(),
             altitude_meters: 50.0,
+            ingresses: vec![],
+            egresses: vec![],
             label: Some("Coruscant".to_string()),
             vertices: vec![
                 (52.3751407, 4.916294),
@@ -131,6 +135,8 @@ async fn test_add_vertiport() -> Result<(), Box<dyn std::error::Error>> {
         Vertiport {
             identifier: VERTIPORT_3_ID.to_string(),
             altitude_meters: 50.0,
+            ingresses: vec![],
+            egresses: vec![],
             label: Some("Kamino".to_string()),
             vertices: vec![
                 (52.3753536, 4.9157569),

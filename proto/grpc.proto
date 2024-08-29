@@ -51,6 +51,12 @@ message Coordinates {
     double longitude = 2;
 }
 
+// A path into or out of a vertiport
+message Guide {
+    // Path into or out of a vertiport
+    repeated PointZ path = 1;
+}
+
 // Vertiport Type
 message Vertiport {
     // Unique Arrow ID
@@ -62,11 +68,17 @@ message Vertiport {
     // Altitude of this vertiport
     float altitude_meters = 3;
 
+    // Ingress waypoints for this vertiport
+    repeated Guide ingresses = 4;
+
+    // Egress waypoints for this vertiport
+    repeated Guide egresses = 5;
+
     // Vertiport label
-    optional string label = 4;
+    optional string label = 6;
 
     // Network Timestamp
-    google.protobuf.Timestamp timestamp_network = 5;
+    google.protobuf.Timestamp timestamp_network = 7;
 }
 
 // Waypoint Type

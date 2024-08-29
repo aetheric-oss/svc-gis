@@ -31,6 +31,10 @@ const MAX_PATH_NODE_COUNT_LIMIT: usize = 5;
 /// Max paths to return
 const MAX_PATH_COUNT_LIMIT: usize = 5;
 
+/// Default height above vertipad for last waypoint
+/// Only used if ingress and egress points are not defined
+const VERTIPORT_APPROACH_ALTITUDE_METERS: f64 = 20.0;
+
 /// Best Path Time Limit
 ///  ~1 seconds per aircraft availability check
 ///  Prevent runaway calculation with impossible to reach target
@@ -427,6 +431,114 @@ async fn mod_a_star(
     let mut potentials: BinaryHeap<Path> = BinaryHeap::new();
     let mut completed: BinaryHeap<Path> = BinaryHeap::new();
 
+    let pool = crate::postgis::DEADPOOL_POSTGIS.get().ok_or_else(|| {
+        postgis_error!("could not get psql pool.");
+        PostgisError::BestPath(PathError::Client)
+    })?;
+
+    let client = pool.get().await.map_err(|e| {
+        postgis_error!("could not get client from psql connection pool: {}", e);
+        PostgisError::BestPath(PathError::Client)
+    })?;
+
+    // egress path
+    let start_points = match FromPrimitive::from_i32(origin_node.node_type) {
+        Some(NodeType::Vertiport) => {
+            let stmt = format!(
+                r#"SELECT "egress_0" as path FROM {vertiport_table_name} WHERE "identifier" = $1"#,
+                vertiport_table_name = super::vertiport::get_table_name()
+            );
+
+            client
+                .query_one(&stmt, &[&origin_node.identifier])
+                .await
+                .map_err(|e| {
+                    postgis_error!("could not get egress path: {}", e);
+                    PostgisError::BestPath(PathError::DBError)
+                })?
+                .try_get::<&str, postgis::ewkb::MultiPointZ>("path")
+                .map_err(|e| {
+                    postgis_error!("could not get egress path: {}", e);
+                    PostgisError::BestPath(PathError::DBError)
+                })?
+                .points
+                .into_iter()
+                .enumerate()
+                .map(|(i, p)| PathNode {
+                    node_type: NodeType::Waypoint as i32,
+                    identifier: format!("egress_{}", i),
+                    geom: p,
+                })
+                .collect::<Vec<_>>()
+        }
+        _ => {
+            let mut node = origin_node.clone();
+            node.geom.z += VERTIPORT_APPROACH_ALTITUDE_METERS;
+            vec![node]
+        }
+    };
+
+    postgis_debug!("start points: {:?}", start_points);
+
+    // ingress path
+    let end_points = match FromPrimitive::from_i32(target_node.node_type) {
+        Some(NodeType::Vertiport) => {
+            let stmt = format!(
+                r#"SELECT "ingress_0" as path FROM {vertiport_table_name} WHERE "identifier" = $1"#,
+                vertiport_table_name = super::vertiport::get_table_name()
+            );
+
+            client
+                .query_one(&stmt, &[&target_node.identifier])
+                .await
+                .map_err(|e| {
+                    postgis_error!("could not get ingress path: {}", e);
+                    PostgisError::BestPath(PathError::DBError)
+                })?
+                .try_get::<&str, postgis::ewkb::MultiPointZ>("path")
+                .map_err(|e| {
+                    postgis_error!("could not get ingress path: {}", e);
+                    PostgisError::BestPath(PathError::DBError)
+                })?
+                .points
+                .into_iter()
+                .enumerate()
+                .map(|(i, p)| PathNode {
+                    node_type: NodeType::Waypoint as i32,
+                    identifier: format!("ingress_{}", i),
+                    geom: p,
+                })
+                .collect::<Vec<_>>()
+        }
+        _ => {
+            let mut node = target_node.clone();
+            node.geom.z += VERTIPORT_APPROACH_ALTITUDE_METERS;
+            vec![node]
+        }
+    };
+
+    postgis_debug!("end points: {:?}", end_points);
+
+    let target_entrance = end_points.first().ok_or_else(|| {
+        postgis_error!("no first point to end vertiport found");
+        PostgisError::BestPath(PathError::NoPath)
+    })?;
+
+    let starting_path = Path {
+        path: start_points.clone(), // must include starting path
+        distance_to_target_meters: super::utils::distance_meters(
+            &start_points
+                .last()
+                .ok_or_else(|| {
+                    postgis_error!("no last point found");
+                    PostgisError::BestPath(PathError::NoPath)
+                })?
+                .geom,
+            &target_entrance.geom,
+        ),
+        distance_traversed_meters: 0.,
+    };
+
     // Get all possible waypoints, including at different
     //  flight elevations
     let mut path_points = waypoints
@@ -449,31 +561,11 @@ async fn mod_a_star(
         .collect::<VecDeque<PathNode>>();
 
     // Add the destination as a path point
-    path_points.push_front(target_node.clone());
-
-    // Add starting node
-    let starting_path = Path {
-        path: vec![origin_node.clone()],
-        distance_to_target_meters: super::utils::distance_meters(
-            &origin_node.geom,
-            &target_node.geom,
-        ),
-        distance_traversed_meters: 0.,
-    };
+    path_points.push_front(target_entrance.clone());
 
     potentials.push(starting_path);
 
-    let pool = crate::postgis::DEADPOOL_POSTGIS.get().ok_or_else(|| {
-        postgis_error!("could not get psql pool.");
-        PostgisError::BestPath(PathError::Client)
-    })?;
-
-    let client = pool.get().await.map_err(|e| {
-        postgis_error!("could not get client from psql connection pool: {}", e);
-        PostgisError::BestPath(PathError::Client)
-    })?;
-
-    // TODO(R5): Conditional approval zones
+    // TODO(R6): Conditional approval zones
     //  For now all zones are considered no-fly zones
     //  So limit query to one result
 
@@ -506,38 +598,41 @@ async fn mod_a_star(
                 PostgisError::BestPath(PathError::NoPath)
             })?;
 
-            let distance_meters = super::utils::distance_meters(&last.geom, &p.geom);
             let mut tmp = current.clone();
-            tmp.distance_traversed_meters += distance_meters;
+            tmp.distance_traversed_meters += super::utils::distance_meters(&last.geom, &p.geom);
 
             // Don't allow flights to exceed max distance
             if tmp.distance_traversed_meters > MAX_FLIGHT_DISTANCE_METERS {
                 continue;
             }
 
-            tmp.path.push(p.clone());
             tmp.distance_to_target_meters =
-                super::utils::distance_meters(&p.geom, &target_node.geom);
+                super::utils::distance_meters(&p.geom, &target_entrance.geom);
 
             // If the path has reached the target, shove it into the
             //  potentials list and move on
-            if p.identifier != target_node.identifier {
+            if p.identifier != target_entrance.identifier {
                 // Limit the max number of nodes to prevent crazy winding paths
                 //  waypoints should only be used to get around a local no-fly zone, to
                 //  so the total path length should be 2 (origin and target) plus a limited
                 //  number of nodes needed to circumvent 1-2 no-fly zones
                 if tmp.path.len() < MAX_PATH_NODE_COUNT_LIMIT {
+                    tmp.path.push(p.clone());
                     potentials.push(tmp);
                 }
 
                 continue;
             }
 
+            // If target entrance reached, add the end points
+            tmp.path.extend(end_points.clone());
+
             // If the path has reached the target, do final checks
             //  to ensure flight safety
 
             // Path 3D linestring for zone intersection check
             let points = tmp.path.iter().map(|p| p.geom).collect::<Vec<PointZ>>();
+
             match intersection_checks(
                 &client,
                 points,
@@ -627,9 +722,9 @@ pub async fn best_path(request: BestPathRequest) -> Result<Vec<GrpcPath>, Postgi
     )
     .await?;
 
-    postgis_info!("origin: {:?}", origin_geom);
-    postgis_info!("target: {:?}", target_geom);
-    postgis_info!("nearby waypoints: {:?}", waypoints);
+    // postgis_info!("origin: {:?}", origin_geom);
+    // postgis_info!("target: {:?}", target_geom);
+    // postgis_info!("nearby waypoints: {:?}", waypoints);
 
     let origin_node = PathNode {
         node_type: request.origin_type as i32,

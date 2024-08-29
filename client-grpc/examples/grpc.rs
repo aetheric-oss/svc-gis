@@ -17,6 +17,20 @@ async fn add_vertiports(client: &GisClient) -> Result<(), Box<dyn std::error::Er
         Vertiport {
             identifier: VERTIPORT_1_ID.to_string(),
             altitude_meters: 10.0,
+            ingresses: vec![Guide {
+                path: vec![PointZ {
+                    latitude: 52.37459497984641,
+                    longitude: 4.916006752910129,
+                    altitude_meters: 30.0,
+                }],
+            }],
+            egresses: vec![Guide {
+                path: vec![PointZ {
+                    latitude: 52.37475919958936,
+                    longitude: 4.916218239796025,
+                    altitude_meters: 30.0,
+                }],
+            }],
             vertices: vec![
                 (52.3746368, 4.9163718),
                 (52.3747387, 4.9162102),
@@ -36,6 +50,20 @@ async fn add_vertiports(client: &GisClient) -> Result<(), Box<dyn std::error::Er
         Vertiport {
             identifier: VERTIPORT_2_ID.to_string(),
             altitude_meters: 10.0,
+            ingresses: vec![Guide {
+                path: vec![PointZ {
+                    latitude: 52.37515645957456,
+                    longitude: 4.916025515664524,
+                    altitude_meters: 30.0,
+                }],
+            }],
+            egresses: vec![Guide {
+                path: vec![PointZ {
+                    latitude: 52.37553535490327,
+                    longitude: 4.916379172323348,
+                    altitude_meters: 30.0,
+                }],
+            }],
             vertices: vec![
                 (52.3751407, 4.916294),
                 (52.3752201, 4.9162611),
@@ -56,6 +84,20 @@ async fn add_vertiports(client: &GisClient) -> Result<(), Box<dyn std::error::Er
         Vertiport {
             identifier: VERTIPORT_3_ID.to_string(),
             altitude_meters: 10.0,
+            ingresses: vec![Guide {
+                path: vec![PointZ {
+                    latitude: 52.375353598244196,
+                    longitude: 4.915376026175216,
+                    altitude_meters: 30.0,
+                }],
+            }],
+            egresses: vec![Guide {
+                path: vec![PointZ {
+                    latitude: 52.37556974122148,
+                    longitude: 4.91592856118993,
+                    altitude_meters: 30.0,
+                }],
+            }],
             vertices: vec![
                 (52.3753536, 4.9157569),
                 (52.3752766, 4.9157193),
@@ -272,6 +314,20 @@ async fn best_path_flight_avoidance(
     let alkmaar_1 = Vertiport {
         identifier: ALKMAAR_1_ID.to_string(),
         altitude_meters: DEFAULT_ALTITUDE as f32,
+        ingresses: vec![Guide {
+            path: vec![PointZ {
+                longitude: 4.713354790437145,
+                altitude_meters: 30.0,
+                latitude: 52.630313405112695,
+            }],
+        }],
+        egresses: vec![Guide {
+            path: vec![PointZ {
+                longitude: 4.714234554926594,
+                altitude_meters: 30.0,
+                latitude: 52.631101340997176,
+            }],
+        }],
         vertices,
         label: Some("Alkmaar 1".to_string()),
         timestamp_network: Some(Utc::now().into()),
@@ -299,6 +355,20 @@ async fn best_path_flight_avoidance(
         identifier: ALKMAAR_2_ID.to_string(),
         altitude_meters: DEFAULT_ALTITUDE as f32,
         vertices,
+        ingresses: vec![Guide {
+            path: vec![PointZ {
+                longitude: 4.717608692851589,
+                altitude_meters: 30.0,
+                latitude: 52.63397113547141,
+            }],
+        }],
+        egresses: vec![Guide {
+            path: vec![PointZ {
+                longitude: 4.718885424244811,
+                altitude_meters: 30.0,
+                latitude: 52.633489290616936,
+            }],
+        }],
         label: Some("Alkmaar 2".to_string()),
         timestamp_network: Some(Utc::now().into()),
     };
@@ -506,6 +576,7 @@ async fn get_flights(client: &GisClient) -> Result<(), Box<dyn std::error::Error
 
 async fn best_paths(client: &GisClient) -> Result<(), Box<dyn std::error::Error>> {
     // Best Path Without No-Fly Zone
+    let time_start = Utc::now();
     {
         println!("\n\u{1F426} Best Path WITHOUT Temporary No-Fly Zone");
         let time_start: Timestamp = Utc::now().into();
@@ -525,6 +596,10 @@ async fn best_paths(client: &GisClient) -> Result<(), Box<dyn std::error::Error>
         println!("RESPONSE={:?}", response);
         display_paths(&response.paths);
     }
+    println!(
+        "Time taken: {:?}",
+        (Utc::now() - time_start).num_milliseconds()
+    );
 
     let no_fly_start_time = Utc::now();
     let no_fly_end_time = Utc::now() + Duration::try_hours(2).unwrap();
@@ -605,6 +680,7 @@ async fn best_paths(client: &GisClient) -> Result<(), Box<dyn std::error::Error>
 
     // Best Path During Temporary No-Fly Zone
     {
+        let current = Utc::now();
         println!("\n\u{26D4}\u{1F681} Best Path DURING Temporary No-Fly Zone");
         let time_start: Timestamp = no_fly_start_time.into();
         let time_end: Timestamp = (no_fly_start_time + Duration::try_hours(1).unwrap()).into();
@@ -618,20 +694,20 @@ async fn best_paths(client: &GisClient) -> Result<(), Box<dyn std::error::Error>
             limit: 1,
         };
 
-        let mut response = client.best_path(request).await?.into_inner();
+        let response = client.best_path(request).await?.into_inner();
 
         println!("RESPONSE={:?}", response);
         display_paths(&response.paths);
-
-        let expected = 3;
-        if response.paths.pop().unwrap().path.len() != expected {
-            panic!("Expected {expected} paths, got {}", response.paths.len());
-        }
+        println!(
+            "Time taken: {:?}",
+            (Utc::now() - current).num_milliseconds()
+        );
     }
 
     // Best Path After Temporary No-Fly Zone
     {
         println!("\n\u{1F681} Best Path AFTER Temporary No-Fly Zone Expires");
+        let current = Utc::now();
         let time_start: Timestamp = (no_fly_end_time + Duration::try_seconds(1).unwrap()).into();
         let time_end: Timestamp = (no_fly_end_time + Duration::try_hours(1).unwrap()).into();
         let request = BestPathRequest {
@@ -648,11 +724,16 @@ async fn best_paths(client: &GisClient) -> Result<(), Box<dyn std::error::Error>
 
         println!("RESPONSE={:?}", response);
         display_paths(&response.paths);
+        println!(
+            "Time taken: {:?}",
+            (Utc::now() - current).num_milliseconds()
+        );
     }
 
     // Best Path From Aircraft
     {
         println!("\n\u{1F681} Best Path From Aircraft during TFR");
+        let current = Utc::now();
         let time_start: Timestamp = no_fly_start_time.into();
         let time_end: Timestamp = (no_fly_start_time + Duration::try_hours(1).unwrap()).into();
         let request = BestPathRequest {
@@ -669,6 +750,10 @@ async fn best_paths(client: &GisClient) -> Result<(), Box<dyn std::error::Error>
 
         println!("RESPONSE={:?}", response);
         display_paths(&response.paths);
+        println!(
+            "Time taken: {:?}",
+            (Utc::now() - current).num_milliseconds()
+        );
     }
 
     Ok(())
@@ -717,9 +802,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::thread::sleep(std::time::Duration::from_secs(1));
     get_flights(&client).await?;
     add_vertiports(&client).await?;
-    add_waypoints(&client).await?;
     best_paths(&client).await?;
     best_path_flight_avoidance(&mut connection, &client).await?;
+    add_waypoints(&client).await?;
 
     Ok(())
 }

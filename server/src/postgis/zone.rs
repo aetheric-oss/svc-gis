@@ -192,8 +192,8 @@ pub async fn psql_init() -> Result<(), PostgisError> {
             BEGIN
                 DELETE FROM {waypoints_table} WHERE "zone_id" = NEW."id";
 
-                FOR pt in 
-                    SELECT (ST_DumpPoints(ST_Expand(ST_Envelope(ST_Force2D(NEW."geom")), {distance_degrees})))."geom"
+                FOR pt in
+                    SELECT (ST_DumpPoints(ST_Buffer(ST_PatchN(NEW."geom", 1), {distance_degrees}, 'join=mitre mitre_limit=5.0')))."geom"
                 LOOP
                     INSERT INTO {waypoints_table} (
                         "identifier",
