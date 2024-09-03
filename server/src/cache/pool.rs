@@ -60,21 +60,21 @@ impl RedisPool {
         // the .env file must have REDIS__URL="redis://\<host\>:\<port\>"
         let cfg: deadpool_redis::Config = config.redis.clone();
         let details = cfg.url.clone().ok_or_else(|| {
-            cache_error!("(RedisPool new) no connection address found.");
+            cache_error!("no connection address found.");
         })?;
 
         cache_info!(
-            "(RedisPool new) creating pool with key folder '{}' at {:?}...",
+            "creating pool with key folder '{}' at {:?}...",
             key_folder,
             details
         );
 
         cfg.create_pool(Some(Runtime::Tokio1))
             .map_err(|e| {
-                cache_error!("(RedisPool new) could not create pool: {}", e);
+                cache_error!("could not create pool: {}", e);
             })
             .map(|pool| {
-                cache_info!("(RedisPool new) pool created.");
+                cache_info!("pool created.");
                 Self {
                     pool,
                     key_folder: String::from(key_folder),

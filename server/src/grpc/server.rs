@@ -109,7 +109,7 @@ impl RpcService for ServerImpl {
         let request = request.into_inner();
 
         let paths = best_path::best_path(request).await.map_err(|e| {
-            grpc_error!("error getting best path.");
+            grpc_error!("error getting best path: {e}");
             Status::internal(e.to_string())
         })?;
 
@@ -195,7 +195,7 @@ impl RpcService for ServerImpl {
         let request = request.into_inner();
 
         let flights = flight::get_flights(request).await.map_err(|e| {
-            grpc_error!("error getting flights.");
+            grpc_error!("error getting flights: {e}");
             Status::internal(e.to_string())
         })?;
 
@@ -416,7 +416,7 @@ mod tests {
         let result = imp.is_ready(Request::new(ReadyRequest {})).await;
         assert!(result.is_ok());
         let result: ReadyResponse = result.unwrap().into_inner();
-        assert_eq!(result.ready, true);
+        assert!(result.ready);
     }
 
     #[tokio::test]
