@@ -9,6 +9,7 @@ service RpcService {
     rpc updateZones(UpdateZonesRequest) returns (UpdateResponse);
     rpc updateFlightPath(UpdateFlightPathRequest) returns (UpdateResponse);
     rpc bestPath(BestPathRequest) returns (BestPathResponse);
+    rpc checkIntersection(CheckIntersectionRequest) returns (CheckIntersectionResponse);
     rpc getFlights(GetFlightsRequest) returns (GetFlightsResponse);
 }
 
@@ -177,6 +178,30 @@ message BestPathRequest {
     int32 limit = 7;
 }
 
+// Check Intersection Request object
+message CheckIntersectionRequest {
+    // Start Node Identifier
+    string origin_identifier = 1;
+
+    // End Node (Vertiport UUID)
+    string target_identifier = 2;
+
+    // The path to check
+    repeated PointZ path = 3;
+
+    // Time of departure
+    google.protobuf.Timestamp time_start = 4;
+
+    // Time of arrival
+    google.protobuf.Timestamp time_end = 5;
+}
+
+// Check Intersection Response object
+message CheckIntersectionResponse {
+    // True if the path intersects a zone or previous plan
+    bool intersects = 1;
+}
+
 /// Geospatial Point with Altitude
 message PointZ {
     // Latitude
@@ -312,40 +337,3 @@ message GetFlightsResponse {
     // Flights in the requested zone
     repeated Flight flights = 1;
 }
-
-// // Nearest Neighbor Request object
-// message NearestNeighborRequest {
-//     // Start Node - UUID for Vertiports, identifiers for Aircraft
-//     string start_node_id = 1;
-
-//     // Start Node Type (Vertiport or Aircraft Allowed)
-//     NodeType start_type = 2;
-
-//     // End Node Type (Vertiport or Aircraft Allowed)
-//     NodeType end_type = 3;
-
-//     // Limit to this many results
-//     int32 limit = 4;
-
-//     // Limit to this range
-//     float max_range_meters = 5;
-// }
-
-// // Distance to a node
-// message DistanceTo {
-//     // Vertiport or Aircraft ID
-//     string identifier = 1;
-
-//     // Vertiport or Aircraft Type
-//     NodeType target_type = 2;
-
-//     // Distance to vertiport
-//     float distance_meters = 3;
-// }
-
-// // Nearest Vertiports Request object
-// message NearestNeighborResponse {
-
-//     // Distances to nearby objects
-//     repeated DistanceTo distances = 1;
-// }

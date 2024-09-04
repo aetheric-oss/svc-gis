@@ -1,7 +1,7 @@
 [package]
-description = "Arrow GIS server gRPC client"
+description = "Aetheric GIS server gRPC client"
 name        = "svc-gis-client-grpc"
-version     = "0.1.1-develop.7"
+version     = "0.1.1-develop.13"
 
 categories.workspace   = true
 edition.workspace      = true
@@ -29,7 +29,6 @@ stub_client = ["svc-gis"]
 
 [dependencies]
 cfg-if            = "1.0"
-chrono            = { version = "0.4", features = ["serde"] }
 deadpool-postgres = { version = "0.11", optional = true }
 log               = { version = "0.4" }
 num-derive        = "0.4"
@@ -44,7 +43,6 @@ svc-gis           = { path = "../server", optional = true }
 tokio-postgres    = { version = "0.7", optional = true }
 tonic             = "0.10"
 tower             = { version = "0.4", optional = true }
-uuid              = { version = "1.4", features = ["v4"] }
 
 [dependencies.postgres-types]
 features = ["with-uuid-1", "with-geo-types-0_7", "with-chrono-0_4", "derive"]
@@ -52,11 +50,11 @@ version  = "0.2"
 
 [dependencies.lib-common]
 features = ["grpc"]
-git      = "https://github.com/Arrow-air/lib-common.git"
-tag      = "v0.2.1-develop.0"
+git      = "https://github.com/aetheric-oss/lib-common.git"
+tag      = "v2.0.0"
 
 [dev-dependencies]
-geo  = "0.27.0"
+geo  = "0.27"
 rand = "0.8"
 
 [dependencies.tokio]

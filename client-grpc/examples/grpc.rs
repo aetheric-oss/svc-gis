@@ -1,10 +1,9 @@
 //! gRPC client implementation
 //! Helps to use https://www.keene.edu/campus/maps/tool/ to create polygons on a map
 
-use chrono::Duration;
 use geo::{polygon, Centroid};
 use lib_common::grpc::get_endpoint_from_env;
-use lib_common::time::{DateTime, Utc};
+use lib_common::time::{DateTime, Duration, Utc};
 use svc_gis_client_grpc::prelude::{gis::*, *};
 
 const VERTIPORT_1_ID: &str = "Kamino";
@@ -721,46 +720,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     add_waypoints(&client).await?;
     best_paths(&client).await?;
     best_path_flight_avoidance(&mut connection, &client).await?;
-
-    // // Nearest Neighbor to Vertiport
-    // {
-    //     println!("\n\u{1F3E0} Nearest Vertiport Neighbors to Vertiport");
-    //     let request = NearestNeighborRequest {
-    //         start_node_id: VERTIPORT_1_ID.to_string(),
-    //         start_type: NodeType::Vertiport as i32,
-    //         end_type: NodeType::Vertiport as i32,
-    //         limit: 10,
-    //         max_range_meters: 3000.0,
-    //     };
-
-    //     let response = client.nearest_neighbors(request).await?.into_inner();
-
-    //     println!("RESPONSE={:?}", response);
-    //     println!(
-    //         "\x1b[33;3m{} nearest neighbors(s).\x1b[0m",
-    //         response.distances.len()
-    //     );
-    // }
-
-    // // Nearest Neighbor to Aircraft
-    // {
-    //     println!("\n\u{1F3E0} Nearest Vertiport Neighbors to Aircraft");
-    //     let request = NearestNeighborRequest {
-    //         start_node_id: AIRCRAFT_1_ID.to_string(),
-    //         start_type: NodeType::Aircraft as i32,
-    //         end_type: NodeType::Vertiport as i32,
-    //         limit: 10,
-    //         max_range_meters: 3000.0,
-    //     };
-
-    //     let response = client.nearest_neighbors(request).await?.into_inner();
-
-    //     println!("RESPONSE={:?}", response);
-    //     println!(
-    //         "\x1b[33;3m{} nearest neighbors(s).\x1b[0m",
-    //         response.distances.len()
-    //     );
-    // }
 
     Ok(())
 }

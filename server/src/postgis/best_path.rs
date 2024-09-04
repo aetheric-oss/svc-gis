@@ -8,11 +8,12 @@ use crate::postgis::aircraft::get_aircraft_pointz;
 use crate::postgis::flight::FlightError;
 use crate::postgis::utils::Segment;
 use crate::postgis::vertiport::get_vertiport_centroidz;
-use chrono::Duration;
+use lib_common::time::Duration;
 use lib_common::time::*;
 use num_traits::FromPrimitive;
 use postgis::ewkb::{LineStringT, PointZ};
 use std::collections::{BinaryHeap, VecDeque};
+use std::fmt::{self, Display, Formatter};
 
 /// Look for waypoints within N meters when routing between two points
 ///  Saves computation time by doing shortest path on a smaller graph
@@ -22,13 +23,18 @@ const WAYPOINT_RANGE_METERS: f32 = 10_000.0;
 const FLIGHT_LEVELS: [f32; 3] = [40.0, 80.0, 120.0];
 
 /// Max distance a flight can travel
-const MAX_FLIGHT_DISTANCE_METERS: f32 = 300_000.; // 500KM
+const MAX_FLIGHT_DISTANCE_METERS: f32 = 300_000.;
 
-/// Max number of nodes in best path (to get around no fly zones)
+/// Max number of nodes in best path (to circumvent no fly zones)
 const MAX_PATH_NODE_COUNT_LIMIT: usize = 5;
 
 /// Max paths to return
 const MAX_PATH_COUNT_LIMIT: usize = 5;
+
+/// Best Path Time Limit
+///  ~1 seconds per aircraft availability check
+///  Prevent runaway calculation with impossible to reach target
+const BEST_PATH_TIME_LIMIT_MS: i64 = 1000;
 
 impl From<PointZ> for GrpcPointZ {
     fn from(field: PointZ) -> Self {
@@ -136,8 +142,8 @@ pub enum PathError {
     FlightPlanIntersection,
 }
 
-impl std::fmt::Display for PathError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+impl Display for PathError {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
             PathError::NoPath => write!(f, "No path was found."),
             PathError::InvalidStartNode => write!(f, "Invalid start node."),
@@ -170,90 +176,79 @@ impl TryFrom<BestPathRequest> for PathRequest {
     type Error = PostgisError;
 
     fn try_from(request: BestPathRequest) -> Result<Self, Self::Error> {
-        let Ok(limit) = usize::try_from(request.limit) else {
+        let limit = usize::try_from(request.limit).map_err(|_| {
             postgis_error!(
-                "(try_from BestPathRequest) invalid limit on number of paths to return: {:?}",
+                "invalid limit on number of paths to return: {:?}",
                 request.limit
             );
-            return Err(PostgisError::BestPath(PathError::InvalidLimit));
-        };
+
+            PostgisError::BestPath(PathError::InvalidLimit)
+        })?;
 
         if limit == 0 || limit > MAX_PATH_COUNT_LIMIT {
-            postgis_error!(
-                "(try_from BestPathRequest) invalid limit on number of paths to return: {:?}",
-                limit
-            );
+            postgis_error!("invalid limit on number of paths to return: {:?}", limit);
+
             return Err(PostgisError::BestPath(PathError::InvalidLimit));
         }
 
-        let Some(origin_type) = FromPrimitive::from_i32(request.origin_type) else {
-            postgis_error!(
-                "(try_from BestPathRequest) invalid start node type: {:?}",
-                request.origin_type
-            );
-            return Err(PostgisError::BestPath(PathError::InvalidStartNode));
+        let origin_type = FromPrimitive::from_i32(request.origin_type).ok_or_else(|| {
+            postgis_error!("invalid start node type: {:?}", request.origin_type);
+
+            PostgisError::BestPath(PathError::InvalidStartNode)
+        })?;
+
+        let target_type = FromPrimitive::from_i32(request.target_type).ok_or_else(|| {
+            postgis_error!("invalid end node type: {:?}", request.target_type);
+
+            PostgisError::BestPath(PathError::InvalidEndNode)
+        })?;
+
+        let regex = match origin_type {
+            NodeType::Vertiport => crate::postgis::vertiport::IDENTIFIER_REGEX,
+            NodeType::Aircraft => crate::postgis::aircraft::IDENTIFIER_REGEX,
+            _ => {
+                postgis_error!("invalid start node type: {:?}", origin_type);
+                return Err(PostgisError::BestPath(PathError::InvalidStartNode));
+            }
         };
 
-        let Ok(_) = super::utils::check_string(
-            &request.origin_identifier,
-            match origin_type {
-                NodeType::Vertiport => crate::postgis::vertiport::IDENTIFIER_REGEX,
-                NodeType::Aircraft => crate::postgis::aircraft::IDENTIFIER_REGEX,
-                _ => {
-                    postgis_error!(
-                        "(try_from BestPathRequest) invalid start node type: {:?}",
-                        origin_type
-                    );
-                    return Err(PostgisError::BestPath(PathError::InvalidStartNode));
-                }
-            },
-        ) else {
+        super::utils::check_string(&request.origin_identifier, regex).map_err(|_| {
             postgis_error!(
-                "(try_from BestPathRequest) invalid start node identifier: {:?}",
+                "invalid start node identifier: {:?}",
                 request.origin_identifier
             );
 
-            return Err(PostgisError::BestPath(PathError::InvalidStartNode));
+            PostgisError::BestPath(PathError::InvalidStartNode)
+        })?;
+
+        let regex = match target_type {
+            NodeType::Vertiport => crate::postgis::vertiport::IDENTIFIER_REGEX,
+            _ => {
+                postgis_error!("invalid end node type: {:?}", target_type);
+                return Err(PostgisError::BestPath(PathError::InvalidEndNode));
+            }
         };
 
-        let Some(target_type) = FromPrimitive::from_i32(request.target_type) else {
+        super::utils::check_string(&request.target_identifier, regex).map_err(|_| {
             postgis_error!(
-                "(try_from BestPathRequest) invalid end node type: {:?}",
-                request.target_type
-            );
-            return Err(PostgisError::BestPath(PathError::InvalidEndNode));
-        };
-
-        let Ok(_) = super::utils::check_string(
-            &request.target_identifier,
-            match target_type {
-                NodeType::Vertiport => crate::postgis::vertiport::IDENTIFIER_REGEX,
-                _ => {
-                    postgis_error!(
-                        "(try_from BestPathRequest) invalid end node type: {:?}",
-                        target_type
-                    );
-                    return Err(PostgisError::BestPath(PathError::InvalidEndNode));
-                }
-            },
-        ) else {
-            postgis_error!(
-                "(try_from BestPathRequest) invalid end node identifier: {:?}",
+                "invalid end node identifier: {:?}",
                 request.target_identifier
             );
 
-            return Err(PostgisError::BestPath(PathError::InvalidEndNode));
-        };
+            PostgisError::BestPath(PathError::InvalidEndNode)
+        })?;
 
         let time_start: DateTime<Utc> = match request.time_start {
             None => Utc::now(),
             Some(time) => time.into(),
         };
 
-        let Some(delta) = Duration::try_days(1) else {
-            postgis_error!("(try_from BestPathRequest) could not get time delta for 1 day.");
-            return Err(PostgisError::BestPath(PathError::InvalidTimeWindow));
-        };
+        #[cfg(not(tarpaulin_include))]
+        // no_coverage: (Rnever) this will never fail
+        let delta = Duration::try_days(1).ok_or_else(|| {
+            postgis_error!("could not get time delta for 1 day.");
+            PostgisError::BestPath(PathError::InvalidTimeWindow)
+        })?;
 
         let time_end: DateTime<Utc> = match request.time_end {
             None => Utc::now() + delta,
@@ -281,7 +276,9 @@ impl TryFrom<BestPathRequest> for PathRequest {
 }
 
 /// Checks if the path intersects with any no-fly zones or existing flights
-async fn intersection_checks(
+#[cfg(not(tarpaulin_include))]
+// no_coverage: (R5) need to run with a real database
+pub async fn intersection_checks(
     client: &deadpool_postgres::Client,
     points: Vec<PointZ>,
     distance: f32,
@@ -302,7 +299,7 @@ async fn intersection_checks(
 
     // Check if any of the zones overlap this path
     let zone_stmt = crate::postgis::zone::get_zone_intersection_stmt(client).await?;
-    if let Ok(result) = client
+    if let Ok(row) = client
         .query_one(
             &zone_stmt,
             &[
@@ -315,13 +312,9 @@ async fn intersection_checks(
         )
         .await
     {
-        postgis_debug!(
-            "(intersection_checks) flight path intersects with no-fly zone: {:?}",
-            result
-        );
+        postgis_debug!("flight path intersects with no-fly zone: {:?}", row);
         return Err(PostgisError::BestPath(PathError::ZoneIntersection));
     }
-
     // Check if this conflicts with other flights' segments
     let flights_stmt = crate::postgis::flight::get_flight_intersection_stmt(client).await?;
     let result = client
@@ -332,19 +325,19 @@ async fn intersection_checks(
         .await
         .map_err(|e| {
             postgis_error!(
-                "(intersection_checks) could not query for existing flight paths intersection: {}",
+                "could not query for existing flight paths intersection: {}",
                 e
             );
             PostgisError::BestPath(PathError::DBError)
         })?;
 
     if result.is_empty() {
-        postgis_debug!("(intersection_checks) no flight path intersections.");
+        postgis_debug!("no flight path intersections.");
         return Ok(());
     }
 
     postgis_debug!(
-        "(intersection_checks) whole flight path intersects with another whole flight path, checking segments.",
+        "whole flight path intersects with another whole flight path, checking segments.",
     );
 
     let stmt = client
@@ -359,10 +352,7 @@ async fn intersection_checks(
         )
         .await
         .map_err(|e| {
-            postgis_error!(
-                "(get_flight_intersection_stmt) could not prepare cached statement: {}",
-                e
-            );
+            postgis_error!("could not prepare cached statement: {}", e);
             PostgisError::BestPath(PathError::DBError)
         })?;
 
@@ -373,24 +363,24 @@ async fn intersection_checks(
     };
 
     for row in result {
-        postgis_debug!("(intersection_checks) row: {:?}", row);
+        postgis_debug!("row: {:?}", row);
         let b_segment = Segment {
             geom: row.try_get("geom").map_err(|e| {
-                postgis_debug!("(intersection_checks) {e}");
+                postgis_debug!("{e}");
                 PostgisError::BestPath(PathError::DBError)
             })?,
             time_start: row.try_get("time_start").map_err(|e| {
-                postgis_debug!("(intersection_checks) {e}");
+                postgis_debug!("{e}");
                 PostgisError::BestPath(PathError::DBError)
             })?,
             time_end: row.try_get("time_end").map_err(|e| {
-                postgis_debug!("(intersection_checks) {e}");
+                postgis_debug!("{e}");
                 PostgisError::BestPath(PathError::DBError)
             })?,
         };
 
         let b_distance: f64 = row.try_get("distance").map_err(|e| {
-            postgis_debug!("(intersection_checks) {e}");
+            postgis_debug!("{e}");
             PostgisError::BestPath(PathError::DBError)
         })?;
 
@@ -419,6 +409,8 @@ async fn intersection_checks(
 
 /// Modified A* algorithm for finding the best path between two points
 ///  Potentials are sorted by (distance to target + distance traversed)
+#[cfg(not(tarpaulin_include))]
+// no_coverage: (R5) need to run with a real database
 async fn mod_a_star(
     origin_node: PathNode,
     target_node: PathNode,
@@ -427,7 +419,7 @@ async fn mod_a_star(
     waypoints: Vec<super::waypoint::Waypoint>,
     limit: usize,
 ) -> Result<Vec<Path>, PostgisError> {
-    postgis_debug!("(mod_a_star) entry.");
+    postgis_debug!("entry.");
 
     // Using a binary heap to store potential paths
     //  means potentials are sorted on insert with O(log n)
@@ -471,16 +463,13 @@ async fn mod_a_star(
 
     potentials.push(starting_path);
 
-    let Some(pool) = crate::postgis::DEADPOOL_POSTGIS.get() else {
-        postgis_error!("(mod_a_star) could not get psql pool.");
-        return Err(PostgisError::BestPath(PathError::Client));
-    };
+    let pool = crate::postgis::DEADPOOL_POSTGIS.get().ok_or_else(|| {
+        postgis_error!("could not get psql pool.");
+        PostgisError::BestPath(PathError::Client)
+    })?;
 
     let client = pool.get().await.map_err(|e| {
-        postgis_error!(
-            "(mod_a_star) could not get client from psql connection pool: {}",
-            e
-        );
+        postgis_error!("could not get client from psql connection pool: {}", e);
         PostgisError::BestPath(PathError::Client)
     })?;
 
@@ -489,22 +478,22 @@ async fn mod_a_star(
     //  So limit query to one result
 
     // Run until we have 'limit' paths or we run out of potentials
-    let time_limit = Duration::try_seconds(10).ok_or_else(|| {
-        postgis_error!("(mod_a_star) could not get time limit for path calculation.");
+    let time_limit = Duration::try_milliseconds(BEST_PATH_TIME_LIMIT_MS).ok_or_else(|| {
+        postgis_error!("could not get time limit for path calculation.");
         PostgisError::BestPath(PathError::Internal)
     })?;
 
     let start_time = Utc::now();
     while completed.len() < limit && !potentials.is_empty() {
         if Utc::now() - start_time > time_limit {
-            postgis_warn!("(mod_a_star) max calculation time reached");
-            return Err(PostgisError::BestPath(PathError::NoPath));
+            postgis_warn!("max calculation time reached");
+            break;
         }
 
-        let Some(current) = potentials.pop() else {
-            postgis_error!("(mod_a_star) no path found");
-            return Err(PostgisError::BestPath(PathError::NoPath));
-        };
+        let current = potentials.pop().ok_or_else(|| {
+            postgis_error!("no path found");
+            PostgisError::BestPath(PathError::NoPath)
+        })?;
 
         for p in path_points.iter() {
             // Don't backtrack
@@ -512,10 +501,10 @@ async fn mod_a_star(
                 continue;
             }
 
-            let Some(last) = current.path.last() else {
-                postgis_error!("(mod_a_star) no last point found");
-                return Err(PostgisError::BestPath(PathError::NoPath));
-            };
+            let last = current.path.last().ok_or_else(|| {
+                postgis_error!("no last point found");
+                PostgisError::BestPath(PathError::NoPath)
+            })?;
 
             let distance_meters = super::utils::distance_meters(&last.geom, &p.geom);
             let mut tmp = current.clone();
@@ -568,7 +557,7 @@ async fn mod_a_star(
                     continue;
                 }
                 Err(e) => {
-                    postgis_error!("(mod_a_star) intersection checks failed: {}", e);
+                    postgis_error!("intersection checks failed: {}", e);
                     return Err(e);
                 }
             }
@@ -584,7 +573,7 @@ async fn mod_a_star(
     let mut completed = completed.into_sorted_vec();
     completed.reverse();
 
-    postgis_debug!("(mod_a_star) completed paths: {:?}", completed);
+    postgis_debug!("completed paths: {:?}", completed);
     Ok(completed)
 }
 
@@ -597,8 +586,9 @@ async fn mod_a_star(
 ///
 /// No-Fly zones can extend flights, isolate aircraft, or disable vertiports entirely.
 #[cfg(not(tarpaulin_include))]
+// no_coverage: (Rnever) need running postgresql instance, not unit testable
 pub async fn best_path(request: BestPathRequest) -> Result<Vec<GrpcPath>, PostgisError> {
-    postgis_info!("(best_path) request: {:?}", request);
+    postgis_info!("request: {:?}", request);
     let request = PathRequest::try_from(request)?;
 
     let origin_geom = match request.origin_type {
@@ -606,7 +596,7 @@ pub async fn best_path(request: BestPathRequest) -> Result<Vec<GrpcPath>, Postgi
         NodeType::Aircraft => get_aircraft_pointz(&request.origin_identifier).await?,
         _ => {
             postgis_error!(
-                "(best_path) invalid node types: {:?} -> {:?}",
+                "invalid node types: {:?} -> {:?}",
                 request.origin_type,
                 request.target_type
             );
@@ -618,7 +608,7 @@ pub async fn best_path(request: BestPathRequest) -> Result<Vec<GrpcPath>, Postgi
         NodeType::Vertiport => get_vertiport_centroidz(&request.target_identifier).await?,
         _ => {
             postgis_error!(
-                "(best_path) invalid node types: {:?} -> {:?}",
+                "invalid node types: {:?} -> {:?}",
                 request.origin_type,
                 request.target_type
             );
@@ -637,9 +627,9 @@ pub async fn best_path(request: BestPathRequest) -> Result<Vec<GrpcPath>, Postgi
     )
     .await?;
 
-    postgis_info!("(best_path) origin: {:?}", origin_geom);
-    postgis_info!("(best_path) target: {:?}", target_geom);
-    postgis_info!("(best_path) nearby waypoints: {:?}", waypoints);
+    postgis_info!("origin: {:?}", origin_geom);
+    postgis_info!("target: {:?}", target_geom);
+    postgis_info!("nearby waypoints: {:?}", waypoints);
 
     let origin_node = PathNode {
         node_type: request.origin_type as i32,
@@ -686,12 +676,13 @@ pub async fn best_path(request: BestPathRequest) -> Result<Vec<GrpcPath>, Postgi
 mod tests {
     use super::*;
     use crate::grpc::server::grpc_server;
+    use lib_common::uuid::Uuid;
 
     #[test]
     fn ut_request_valid() {
         let request = BestPathRequest {
-            origin_identifier: uuid::Uuid::new_v4().to_string(),
-            target_identifier: uuid::Uuid::new_v4().to_string(),
+            origin_identifier: Uuid::new_v4().to_string(),
+            target_identifier: Uuid::new_v4().to_string(),
             origin_type: grpc_server::NodeType::Vertiport as i32,
             target_type: grpc_server::NodeType::Vertiport as i32,
             time_start: None,
@@ -707,7 +698,7 @@ mod tests {
     fn ut_request_invalid_aircraft() {
         let request = BestPathRequest {
             origin_identifier: "      ".to_string(),
-            target_identifier: uuid::Uuid::new_v4().to_string(),
+            target_identifier: Uuid::new_v4().to_string(),
             origin_type: grpc_server::NodeType::Aircraft as i32,
             target_type: grpc_server::NodeType::Vertiport as i32,
             time_start: None,
@@ -723,7 +714,7 @@ mod tests {
     fn ut_request_invalid_origin_node() {
         let request = BestPathRequest {
             origin_identifier: "test-123".to_string(),
-            target_identifier: uuid::Uuid::new_v4().to_string(),
+            target_identifier: Uuid::new_v4().to_string(),
             origin_type: grpc_server::NodeType::Waypoint as i32,
             target_type: grpc_server::NodeType::Vertiport as i32,
             time_start: None,
@@ -742,8 +733,8 @@ mod tests {
 
         // Start time is after end time
         let request = BestPathRequest {
-            origin_identifier: uuid::Uuid::new_v4().to_string(),
-            target_identifier: uuid::Uuid::new_v4().to_string(),
+            origin_identifier: Uuid::new_v4().to_string(),
+            target_identifier: Uuid::new_v4().to_string(),
             origin_type: grpc_server::NodeType::Vertiport as i32,
             target_type: grpc_server::NodeType::Vertiport as i32,
             time_start: Some(time_start),
@@ -756,8 +747,8 @@ mod tests {
 
         // Start time (assumed) is after current time
         let request = BestPathRequest {
-            origin_identifier: uuid::Uuid::new_v4().to_string(),
-            target_identifier: uuid::Uuid::new_v4().to_string(),
+            origin_identifier: Uuid::new_v4().to_string(),
+            target_identifier: Uuid::new_v4().to_string(),
             origin_type: grpc_server::NodeType::Vertiport as i32,
             target_type: grpc_server::NodeType::Vertiport as i32,
             time_start: None,
@@ -772,8 +763,8 @@ mod tests {
         let time_start: Timestamp = (Utc::now() + Duration::try_days(10).unwrap()).into();
 
         let request = BestPathRequest {
-            origin_identifier: uuid::Uuid::new_v4().to_string(),
-            target_identifier: uuid::Uuid::new_v4().to_string(),
+            origin_identifier: Uuid::new_v4().to_string(),
+            target_identifier: Uuid::new_v4().to_string(),
             origin_type: grpc_server::NodeType::Vertiport as i32,
             target_type: grpc_server::NodeType::Vertiport as i32,
             time_start: Some(time_start),
@@ -793,8 +784,8 @@ mod tests {
 
         // Won't route for a time in the past
         let request = BestPathRequest {
-            origin_identifier: uuid::Uuid::new_v4().to_string(),
-            target_identifier: uuid::Uuid::new_v4().to_string(),
+            origin_identifier: Uuid::new_v4().to_string(),
+            target_identifier: Uuid::new_v4().to_string(),
             origin_type: grpc_server::NodeType::Vertiport as i32,
             target_type: grpc_server::NodeType::Vertiport as i32,
             time_start: Some(time_start),
@@ -814,8 +805,8 @@ mod tests {
 
         // Won't route for a time in the past
         let mut request = BestPathRequest {
-            origin_identifier: uuid::Uuid::new_v4().to_string(),
-            target_identifier: uuid::Uuid::new_v4().to_string(),
+            origin_identifier: Uuid::new_v4().to_string(),
+            target_identifier: Uuid::new_v4().to_string(),
             origin_type: grpc_server::NodeType::Vertiport as i32,
             target_type: grpc_server::NodeType::Vertiport as i32,
             time_start: Some(time_start),
@@ -857,5 +848,225 @@ mod tests {
 
         assert_eq!(paths.pop().unwrap().distance_traversed_meters, 1.);
         assert_eq!(paths.pop().unwrap().distance_traversed_meters, 2.);
+    }
+
+    #[test]
+    fn test_path_error_display() {
+        assert_eq!(format!("{}", PathError::NoPath), "No path was found.");
+        assert_eq!(
+            format!("{}", PathError::InvalidStartNode),
+            "Invalid start node."
+        );
+        assert_eq!(
+            format!("{}", PathError::InvalidEndNode),
+            "Invalid end node."
+        );
+        assert_eq!(
+            format!("{}", PathError::InvalidStartTime),
+            "Invalid start time."
+        );
+        assert_eq!(
+            format!("{}", PathError::InvalidEndTime),
+            "Invalid end time."
+        );
+        assert_eq!(
+            format!("{}", PathError::InvalidTimeWindow),
+            "Invalid time window."
+        );
+        assert_eq!(
+            format!("{}", PathError::Client),
+            "Could not get backend client."
+        );
+        assert_eq!(format!("{}", PathError::DBError), "Unknown backend error.");
+        assert_eq!(
+            format!("{}", PathError::InvalidLimit),
+            "Invalid number of paths to return."
+        );
+        assert_eq!(format!("{}", PathError::Internal), "Internal error.");
+        assert_eq!(
+            format!("{}", PathError::ZoneIntersection),
+            "Zone intersection error."
+        );
+        assert_eq!(
+            format!("{}", PathError::FlightPlanIntersection),
+            "Flight plan intersection error."
+        );
+    }
+
+    #[test]
+    fn test_partial_eq_path_node() {
+        let node = PathNode {
+            node_type: 0,
+            identifier: "test".to_string(),
+            geom: PointZ {
+                x: 0.,
+                y: 0.,
+                z: 0.,
+                srid: None,
+            },
+        };
+
+        let other = PathNode {
+            identifier: "test2".to_string(),
+            ..node.clone()
+        };
+
+        assert_ne!(node, other);
+
+        let other = PathNode {
+            node_type: 1,
+            geom: PointZ {
+                x: 1.,
+                y: 1.,
+                z: 1.,
+                srid: None,
+            },
+            ..node.clone()
+        };
+        assert_eq!(node, other);
+    }
+
+    #[test]
+    fn test_from_pointz() {
+        let pointz = PointZ {
+            x: rand::random(),
+            y: rand::random(),
+            z: rand::random(),
+            srid: None,
+        };
+
+        let grpc_pointz: GrpcPointZ = pointz.into();
+        assert_eq!(grpc_pointz.longitude, pointz.x);
+        assert_eq!(grpc_pointz.latitude, pointz.y);
+        assert_eq!(grpc_pointz.altitude_meters, pointz.z as f32);
+    }
+
+    #[test]
+    fn test_path_eq() {
+        let mut path = Path {
+            path: vec![],
+            distance_traversed_meters: 0.,
+            distance_to_target_meters: 0.,
+        };
+
+        let heuristic = path.heuristic();
+        assert_eq!(
+            heuristic,
+            path.distance_to_target_meters + path.distance_traversed_meters
+        );
+
+        path.distance_traversed_meters = 1.;
+        let heuristic = path.heuristic();
+        assert_eq!(
+            heuristic,
+            path.distance_to_target_meters + path.distance_traversed_meters
+        );
+
+        path.distance_to_target_meters = 2.;
+        let heuristic = path.heuristic();
+        assert_eq!(
+            heuristic,
+            path.distance_to_target_meters + path.distance_traversed_meters
+        );
+
+        let mut other = path.clone();
+        assert!(path.eq(&other));
+
+        other.distance_traversed_meters = 2.;
+        assert!(!path.eq(&other));
+
+        // ordering is reversed for the min heap, comparison is reversed
+        assert!(path > other);
+
+        path.distance_traversed_meters = 10.0;
+        assert!(path < other);
+    }
+
+    #[test]
+    fn test_try_from_path_request() {
+        let now = Utc::now();
+        let request = BestPathRequest {
+            origin_identifier: Uuid::new_v4().to_string(),
+            target_identifier: Uuid::new_v4().to_string(),
+            origin_type: grpc_server::NodeType::Aircraft as i32,
+            target_type: grpc_server::NodeType::Vertiport as i32,
+            time_start: Some(now.into()),
+            time_end: Some((now + Duration::try_hours(1).unwrap()).into()),
+            limit: 1,
+        };
+
+        // valid request
+        let result = PathRequest::try_from(request.clone()).unwrap();
+        assert_eq!(result.origin_identifier, request.origin_identifier);
+        assert_eq!(result.target_identifier, request.target_identifier);
+        assert_eq!(result.origin_type, NodeType::Aircraft);
+        assert_eq!(result.target_type, NodeType::Vertiport);
+        assert_eq!(result.limit, request.limit as usize);
+        assert_eq!(result.time_start, now);
+        assert_eq!(result.time_end, now + Duration::try_hours(1).unwrap());
+
+        // invalid start node
+        let tmp = BestPathRequest {
+            origin_type: 10000,
+            ..request.clone()
+        };
+        let error = PathRequest::try_from(tmp).unwrap_err();
+        assert_eq!(error, PostgisError::BestPath(PathError::InvalidStartNode));
+        let tmp = BestPathRequest {
+            origin_type: NodeType::Waypoint as i32,
+            ..request.clone()
+        };
+        let error = PathRequest::try_from(tmp).unwrap_err();
+        assert_eq!(error, PostgisError::BestPath(PathError::InvalidStartNode));
+
+        // invalid end node
+        let tmp = BestPathRequest {
+            target_type: 10000,
+            ..request.clone()
+        };
+        let error = PathRequest::try_from(tmp).unwrap_err();
+        assert_eq!(error, PostgisError::BestPath(PathError::InvalidEndNode));
+        let tmp = BestPathRequest {
+            target_type: NodeType::Waypoint as i32,
+            ..request.clone()
+        };
+        let error = PathRequest::try_from(tmp).unwrap_err();
+        assert_eq!(error, PostgisError::BestPath(PathError::InvalidEndNode));
+
+        // invalid origin identifier
+        let tmp = BestPathRequest {
+            origin_identifier: "tes  t".to_string(),
+            ..request.clone()
+        };
+        let error = PathRequest::try_from(tmp).unwrap_err();
+        assert_eq!(error, PostgisError::BestPath(PathError::InvalidStartNode));
+
+        // invalid target identifier
+        let tmp = BestPathRequest {
+            target_identifier: "tes  t".to_string(),
+            ..request.clone()
+        };
+        let error = PathRequest::try_from(tmp).unwrap_err();
+        assert_eq!(error, PostgisError::BestPath(PathError::InvalidEndNode));
+
+        // invalid time window
+        let tmp = BestPathRequest {
+            time_start: Some(Timestamp::from(Utc::now() + Duration::try_days(1).unwrap())),
+            time_end: Some(Timestamp::from(Utc::now())),
+            ..request.clone()
+        };
+        let error = PathRequest::try_from(tmp).unwrap_err();
+        assert_eq!(error, PostgisError::BestPath(PathError::InvalidTimeWindow));
+
+        // invalid end time (before Utc::now())
+        let time_end = Utc::now() - Duration::try_days(1).unwrap();
+        let time_start = time_end - Duration::try_hours(1).unwrap();
+        let tmp = BestPathRequest {
+            time_end: Some(time_end.into()),
+            time_start: Some(time_start.into()),
+            ..request.clone()
+        };
+        let error = PathRequest::try_from(tmp).unwrap_err();
+        assert_eq!(error, PostgisError::BestPath(PathError::InvalidEndTime));
     }
 }

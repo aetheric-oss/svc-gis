@@ -13,13 +13,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .type_attribute("ReadyRequest", "#[derive(Eq, Copy)]")
         .type_attribute("ReadyResponse", "#[derive(Eq, Copy)]")
         .type_attribute("UpdateResponse", "#[derive(Eq, Copy)]")
-        .type_attribute("PointZ", "#[derive(Copy)]")
+        .type_attribute("CheckIntersectionResponse", "#[derive(Eq, Copy)]")
+        .type_attribute(
+            "PointZ",
+            "#[derive(Copy, ::serde::Serialize, ::serde::Deserialize)]",
+        )
         .type_attribute("PathSegment", "#[derive(Copy)]")
         .type_attribute("Coordinates", "#[derive(Copy)]");
 
     let client_config = server_config.clone();
 
     client_config
+        .client_mod_attribute("grpc", "#[cfg(not(tarpaulin_include))]")
         .extern_path(".grpc.AircraftType", "crate::prelude::AircraftType")
         .extern_path(
             ".grpc.OperationalStatus",

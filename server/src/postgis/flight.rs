@@ -9,10 +9,11 @@ use crate::postgis::utils::Segment;
 use crate::postgis::utils::StringError;
 use crate::types::AircraftType;
 use crate::types::OperationalStatus;
-use chrono::{DateTime, Utc};
 use deadpool_postgres::Object;
+use lib_common::time::{DateTime, Utc};
 use num_traits::FromPrimitive;
 use postgis::ewkb::{LineStringT, Point, PointZ};
+use std::fmt::{self, Display, Formatter};
 
 /// Allowed characters in a identifier
 pub const FLIGHT_IDENTIFIER_REGEX: &str = r"^[\-0-9A-Za-z_\.]{1,255}$";
@@ -51,8 +52,8 @@ pub enum FlightError {
     Intersection,
 }
 
-impl std::fmt::Display for FlightError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+impl Display for FlightError {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
             FlightError::AircraftId => write!(f, "Invalid aircraft ID provided."),
             FlightError::AircraftType => write!(f, "Invalid aircraft type provided."),
@@ -79,6 +80,8 @@ pub fn check_flight_identifier(identifier: &str) -> Result<(), StringError> {
 }
 
 /// Initializes the PostGIS database for aircraft.
+#[cfg(not(tarpaulin_include))]
+// no_coverage: (R5) need psql backend to test, use integration tests
 pub async fn psql_init() -> Result<(), PostgisError> {
     // Create Aircraft Table
     let enum_name = "aircrafttype";
@@ -112,32 +115,29 @@ pub async fn psql_init() -> Result<(), PostgisError> {
 }
 
 /// Validates the provided aircraft identification.
-fn validate_flight_path(item: &UpdateFlightPathRequest) -> Result<(), PostgisError> {
-    let Some(ref identifier) = item.flight_identifier else {
-        postgis_error!("(validate_flight_path) no identifier provided.");
-        return Err(PostgisError::FlightPath(FlightError::Label));
-    };
+fn validate_flight_identifier(id: &Option<String>) -> Result<(), PostgisError> {
+    let identifier = id.as_ref().ok_or_else(|| {
+        postgis_error!("no identifier provided.");
+        PostgisError::FlightPath(FlightError::Label)
+    })?;
 
-    if let Err(e) = check_flight_identifier(identifier) {
-        postgis_error!(
-            "(validate_flight_path) invalid identifier {}: {}",
-            identifier,
-            e
-        );
-
-        return Err(PostgisError::FlightPath(FlightError::Label));
-    }
+    check_flight_identifier(identifier).map_err(|e| {
+        postgis_error!("invalid identifier {}: {}", identifier, e);
+        PostgisError::FlightPath(FlightError::Label)
+    })?;
 
     Ok(())
 }
 
 /// Pulls queued flight path messages from Redis Queue (from svc-scheduler)
+#[cfg(not(tarpaulin_include))]
+// no_coverage: (R5) need psql backend to test
 pub async fn update_flight_path(flight: UpdateFlightPathRequest) -> Result<(), PostgisError> {
-    postgis_debug!("(update_flight_path) entry.");
+    postgis_debug!("entry.");
 
-    validate_flight_path(&flight).map_err(|e| {
+    validate_flight_identifier(&flight.flight_identifier).map_err(|e| {
         postgis_error!(
-            "(update_flight_path) could not validate id for flight id {:?}: {:?}",
+            "could not validate id for flight id {:?}: {:?}",
             flight.flight_identifier,
             e
         );
@@ -145,24 +145,23 @@ pub async fn update_flight_path(flight: UpdateFlightPathRequest) -> Result<(), P
         e
     })?;
 
-    let Some(timestamp_start) = flight.timestamp_start else {
-        postgis_error!("(update_flight_path) no start time provided.");
-        return Err(PostgisError::FlightPath(FlightError::Time));
-    };
+    let timestamp_start = flight.timestamp_start.ok_or_else(|| {
+        postgis_error!("no start time provided.");
+        PostgisError::FlightPath(FlightError::Time)
+    })?;
 
-    let Some(timestamp_end) = flight.timestamp_end else {
-        postgis_error!("(update_flight_path) no end time provided.");
-        return Err(PostgisError::FlightPath(FlightError::Time));
-    };
+    let timestamp_end = flight.timestamp_end.ok_or_else(|| {
+        postgis_error!("no end time provided.");
+        PostgisError::FlightPath(FlightError::Time)
+    })?;
 
     let timestamp_start: DateTime<Utc> = timestamp_start.into();
     let timestamp_end: DateTime<Utc> = timestamp_end.into();
-
-    let Some(aircraft_type): Option<AircraftType> = FromPrimitive::from_i32(flight.aircraft_type)
-    else {
-        postgis_error!("(update_flight_path) invalid aircraft type provided.");
-        return Err(PostgisError::FlightPath(FlightError::AircraftType));
-    };
+    let aircraft_type: AircraftType =
+        FromPrimitive::from_i32(flight.aircraft_type).ok_or_else(|| {
+            postgis_error!("invalid aircraft type provided.");
+            PostgisError::FlightPath(FlightError::AircraftType)
+        })?;
 
     let flights_insertion_stmt: String = format!(
         r#"INSERT INTO {table_name} (
@@ -187,21 +186,21 @@ pub async fn update_flight_path(flight: UpdateFlightPathRequest) -> Result<(), P
         table_name = get_flights_table_name()
     );
 
-    let Some(pool) = crate::postgis::DEADPOOL_POSTGIS.get() else {
-        postgis_error!("(update_flight_path) could not get psql pool.");
-        return Err(PostgisError::FlightPath(FlightError::DBError));
-    };
-
-    let mut client = pool.get().await.map_err(|e| {
-        postgis_error!(
-            "(update_flight_path) could not get client from psql connection pool: {}",
-            e
-        );
-        PostgisError::FlightPath(FlightError::Client)
-    })?;
+    let mut client = crate::postgis::DEADPOOL_POSTGIS
+        .get()
+        .ok_or_else(|| {
+            postgis_error!("could not get psql pool.");
+            PostgisError::FlightPath(FlightError::DBError)
+        })?
+        .get()
+        .await
+        .map_err(|e| {
+            postgis_error!("could not get client from psql connection pool: {}", e);
+            PostgisError::FlightPath(FlightError::Client)
+        })?;
 
     let transaction = client.transaction().await.map_err(|e| {
-        postgis_error!("(update_flight_path) could not create transaction: {}", e);
+        postgis_error!("could not create transaction: {}", e);
         PostgisError::FlightPath(FlightError::Client)
     })?;
 
@@ -212,7 +211,7 @@ pub async fn update_flight_path(flight: UpdateFlightPathRequest) -> Result<(), P
         .map(PointZ::try_from)
         .collect::<Result<Vec<PointZ>, _>>()
         .map_err(|_| {
-            postgis_error!("(update_flight_path) could not convert path to Vec<PointZ>.");
+            postgis_error!("could not convert path to Vec<PointZ>.");
             PostgisError::FlightPath(FlightError::Location)
         })?;
 
@@ -222,7 +221,7 @@ pub async fn update_flight_path(flight: UpdateFlightPathRequest) -> Result<(), P
         srid: Some(DEFAULT_SRID),
     };
 
-    // postgis_debug!("(update_flight_path) found segments: {:?}", segments);
+    // postgis_debug!("found segments: {:?}", segments);
 
     transaction
         .execute(
@@ -239,23 +238,22 @@ pub async fn update_flight_path(flight: UpdateFlightPathRequest) -> Result<(), P
         )
         .await
         .map_err(|e| {
-            postgis_error!(
-                "(update_flight_path) could not execute transaction to insert flight: {}",
-                e
-            );
+            postgis_error!("could not execute transaction to insert flight: {}", e);
             PostgisError::FlightPath(FlightError::DBError)
         })?;
 
     transaction.commit().await.map_err(|e| {
-        postgis_error!("(update_flight_path) could not commit transaction: {}", e);
+        postgis_error!("could not commit transaction: {}", e);
         PostgisError::FlightPath(FlightError::DBError)
     })?;
 
-    postgis_info!("(update_flight_path) success.");
+    postgis_info!("success.");
     Ok(())
 }
 
 /// Prepares a statement that checks zone intersections with the provided geometry
+#[cfg(not(tarpaulin_include))]
+// no_coverage: (R5) need psql backend to test
 pub async fn get_flight_intersection_stmt(
     client: &Object,
 ) -> Result<tokio_postgres::Statement, PostgisError> {
@@ -285,16 +283,15 @@ pub async fn get_flight_intersection_stmt(
         ))
         .await
         .map_err(|e| {
-            postgis_error!(
-                "(get_flight_intersection_stmt) could not prepare cached statement: {}",
-                e
-            );
+            postgis_error!("could not prepare cached statement: {}", e);
             PostgisError::FlightPath(FlightError::DBError)
         })
 }
 
 /// Splits intersecting flight paths into smaller segments to check for intersections
 ///  on a higher resolution
+#[cfg(not(tarpaulin_include))]
+// no_coverage: (R5) need psql backend to test
 pub async fn intersection_check(
     client: &deadpool_postgres::Client,
     stmt: &tokio_postgres::Statement,
@@ -303,19 +300,16 @@ pub async fn intersection_check(
     a_segment: Segment,
     b_segment: Segment,
 ) -> Result<(), PostgisError> {
-    postgis_debug!("(intersection_check) entry.");
+    postgis_debug!("entry.");
     let mut pairs: Vec<(Segment, Segment, f32)> = vec![(a_segment, b_segment, segment_length)];
 
     while let Some((a_segment, b_segment, segment_length)) = pairs.pop() {
         if (segment_length as f64) < allowable_distance {
-            postgis_debug!("(intersection_check) intersection < {allowable_distance} m found.");
+            postgis_debug!("intersection < {allowable_distance} m found.");
             return Err(PostgisError::FlightPath(FlightError::Intersection));
         }
 
-        postgis_debug!(
-            "(intersection_check) subdividing segments with length: {}",
-            segment_length
-        );
+        postgis_debug!("subdividing segments with length: {}", segment_length);
 
         let a_segments = super::utils::segmentize(
             &a_segment.geom,
@@ -325,7 +319,7 @@ pub async fn intersection_check(
         )
         .await
         .map_err(|e| {
-            postgis_error!("(intersection_check) could not segmentize path: {}", e);
+            postgis_error!("could not segmentize path: {}", e);
             PostgisError::FlightPath(FlightError::DBError)
         })?;
 
@@ -337,7 +331,7 @@ pub async fn intersection_check(
         )
         .await
         .map_err(|e| {
-            postgis_error!("(intersection_check) could not segmentize path: {}", e);
+            postgis_error!("could not segmentize path: {}", e);
             PostgisError::FlightPath(FlightError::DBError)
         })?;
 
@@ -349,34 +343,24 @@ pub async fn intersection_check(
                 }
 
                 let conflict: bool = client
-                    .query_one(
-                        stmt,
-                        &[
-                            &a.geom,
-                            &b.geom,
-                            &allowable_distance
-                        ],
-                    )
+                    .query_one(stmt, &[&a.geom, &b.geom, &allowable_distance])
                     .await
                     .map_err(|e| {
                         postgis_error!(
-                        "(intersection_check) could not query for existing flight paths intersection: {}",
-                        e
-                    );
+                            "could not query for existing flight paths intersection: {}",
+                            e
+                        );
                         PostgisError::FlightPath(FlightError::DBError)
                     })?
                     .try_get("conflict")
                     .map_err(|e| {
-                        postgis_error!(
-                            "(intersection_check) could not get 'conflict' field: {}",
-                            e
-                        );
+                        postgis_error!("could not get 'conflict' field: {}", e);
 
                         PostgisError::FlightPath(FlightError::DBError)
                     })?;
 
                 if conflict {
-                    postgis_debug!("(intersection_check) found intersection, subdividing.");
+                    postgis_debug!("found intersection, subdividing.");
                     pairs.push((a.clone(), b.clone(), segment_length / 2.0));
                 }
             }
@@ -386,20 +370,68 @@ pub async fn intersection_check(
     Ok(())
 }
 
+#[cfg(not(tarpaulin_include))]
+// no_coverage: (R5) need psql backend to test, no way to create a Row without querying it
+//  from a postgres instance
+fn process_row(
+    row: tokio_postgres::Row,
+    base: &Flight,
+) -> Result<Flight, tokio_postgres::error::Error> {
+    let mut flight = base.clone();
+    let identifier: Option<String> = row.try_get("identifier")?;
+    let session_id: Option<String> = row.try_get("session_id")?;
+    let geom: PointZ = row.try_get("geom")?;
+    let velocity_horizontal_ground_mps: f32 = row.try_get("velocity_horizontal_ground_mps")?;
+    let velocity_vertical_mps: f32 = row.try_get("velocity_vertical_mps")?;
+    let track_angle_degrees: f32 = row.try_get("track_angle_degrees")?;
+    let last_position_update: DateTime<Utc> = row.try_get("last_position_update")?;
+    let status: OperationalStatus = row.try_get("op_status")?;
+
+    flight.session_id = session_id;
+    flight.aircraft_id = identifier;
+    flight.positions.push(TimePosition {
+        position: Some(GrpcPointZ {
+            latitude: geom.y,
+            longitude: geom.x,
+            altitude_meters: geom.z as f32,
+        }),
+        timestamp: Some(last_position_update.into()),
+    });
+
+    let state = AircraftState {
+        timestamp: Some(last_position_update.into()),
+        ground_speed_mps: velocity_horizontal_ground_mps,
+        vertical_speed_mps: velocity_vertical_mps,
+        track_angle_degrees,
+        position: Some(GrpcPointZ {
+            latitude: geom.y,
+            longitude: geom.x,
+            altitude_meters: geom.z as f32,
+        }),
+        status: status as i32,
+    };
+
+    flight.state = Some(state);
+
+    Ok(flight)
+}
+
 /// Get flights and their aircraft that intersect with the provided geometry
 ///  and time range.
+#[cfg(not(tarpaulin_include))]
+// no_coverage: (R5) need psql backend to test
 pub async fn get_flights(request: GetFlightsRequest) -> Result<Vec<Flight>, FlightError> {
-    postgis_debug!("(get_flights) entry.");
+    postgis_debug!("entry.");
 
-    let Some(time_start) = request.time_start else {
-        postgis_error!("(get_flights) time_start is required.");
-        return Err(FlightError::Time);
-    };
+    let time_start = request.time_start.ok_or_else(|| {
+        postgis_error!("time_start is required.");
+        FlightError::Time
+    })?;
 
-    let Some(time_end) = request.time_end else {
-        postgis_error!("(get_flights) time_end is required.");
-        return Err(FlightError::Time);
-    };
+    let time_end = request.time_end.ok_or_else(|| {
+        postgis_error!("time_end is required.");
+        FlightError::Time
+    })?;
 
     let time_start: DateTime<Utc> = time_start.into();
     let time_end: DateTime<Utc> = time_end.into();
@@ -419,19 +451,18 @@ pub async fn get_flights(request: GetFlightsRequest) -> Result<Vec<Flight>, Flig
         srid: Some(DEFAULT_SRID),
     };
 
-    let Some(pool) = crate::postgis::DEADPOOL_POSTGIS.get() else {
-        postgis_error!("(get_flights) could not get psql pool.");
-
-        return Err(FlightError::Client);
-    };
-
-    let client = pool.get().await.map_err(|e| {
-        postgis_error!(
-            "(get_flights) could not get client from psql connection pool: {}",
-            e
-        );
-        FlightError::Client
-    })?;
+    let client = crate::postgis::DEADPOOL_POSTGIS
+        .get()
+        .ok_or_else(|| {
+            postgis_error!("could not get psql pool.");
+            FlightError::Client
+        })?
+        .get()
+        .await
+        .map_err(|e| {
+            postgis_error!("could not get client from psql connection pool: {}", e);
+            FlightError::Client
+        })?;
 
     let session_id_str = "flight_identifier";
     let aircraft_id_str = "aircraft_identifier";
@@ -470,19 +501,17 @@ pub async fn get_flights(request: GetFlightsRequest) -> Result<Vec<Flight>, Flig
         ))
         .await
         .map_err(|e| {
-            postgis_error!("(get_flights) could not prepare cached statement: {}", e);
+            postgis_error!("could not prepare cached statement: {}", e);
             FlightError::DBError
         })?;
 
-    let result = client
+    let mut flights = client
         .query(&stmt, &[&linestring, &time_start, &time_end])
         .await
         .map_err(|e| {
-            postgis_error!("(get_flights) could not execute transaction: {}", e);
+            postgis_error!("could not execute transaction: {}", e);
             FlightError::DBError
-        })?;
-
-    let mut flights = result
+        })?
         .iter()
         .map(|row| {
             let session_id: Option<String> = row.try_get(session_id_str)?;
@@ -501,11 +530,11 @@ pub async fn get_flights(request: GetFlightsRequest) -> Result<Vec<Flight>, Flig
         })
         .collect::<Result<Vec<Flight>, tokio_postgres::error::Error>>()
         .map_err(|e| {
-            postgis_error!("(get_flights) could not get flight data: {}", e);
+            postgis_error!("could not get flight data: {}", e);
             FlightError::DBError
         })?;
 
-    postgis_debug!("(get_flights) found {} flights.", flights.len());
+    postgis_debug!("found {} flights.", flights.len());
 
     // TODO(R5): Change this to use Redis 60s telemetry storage to acquire
     //  telemetry information
@@ -530,74 +559,34 @@ pub async fn get_flights(request: GetFlightsRequest) -> Result<Vec<Flight>, Flig
         ))
         .await
         .map_err(|e| {
-            postgis_error!("(get_flights) could not prepare cached statement: {}", e);
+            postgis_error!("could not prepare cached statement: {}", e);
             FlightError::DBError
         })?;
 
-    fn process_row(
-        row: tokio_postgres::Row,
-        flight: &mut Flight,
-    ) -> Result<(), tokio_postgres::error::Error> {
-        let identifier: Option<String> = row.try_get("identifier")?;
-        let session_id: Option<String> = row.try_get("session_id")?;
-        let geom: PointZ = row.try_get("geom")?;
-        let velocity_horizontal_ground_mps: f32 = row.try_get("velocity_horizontal_ground_mps")?;
-        let velocity_vertical_mps: f32 = row.try_get("velocity_vertical_mps")?;
-        let track_angle_degrees: f32 = row.try_get("track_angle_degrees")?;
-        let last_position_update: DateTime<Utc> = row.try_get("last_position_update")?;
-        let status: OperationalStatus = row.try_get("op_status")?;
-
-        flight.session_id = session_id;
-        flight.aircraft_id = identifier;
-        flight.positions.push(TimePosition {
-            position: Some(GrpcPointZ {
-                latitude: geom.y,
-                longitude: geom.x,
-                altitude_meters: geom.z as f32,
-            }),
-            timestamp: Some(last_position_update.into()),
-        });
-
-        let state = AircraftState {
-            timestamp: Some(last_position_update.into()),
-            ground_speed_mps: velocity_horizontal_ground_mps,
-            vertical_speed_mps: velocity_vertical_mps,
-            track_angle_degrees,
-            position: Some(GrpcPointZ {
-                latitude: geom.y,
-                longitude: geom.x,
-                altitude_meters: geom.z as f32,
-            }),
-            status: status as i32,
-        };
-
-        flight.state = Some(state);
-
-        Ok(())
-    }
-
     let mut result: Vec<Flight> = vec![];
     for flight in &mut flights {
-        let rows = match client
+        let rows = client
             .query(&stmt, &[&flight.session_id, &flight.aircraft_id])
-            .await
-        {
+            .await;
+
+        let rows = match rows {
             Ok(rows) => rows,
             Err(e) => {
-                postgis_error!("(get_flights) could not execute transaction: {}", e);
+                postgis_error!("could not execute transaction: {}", e);
                 continue;
             }
         };
 
-        for row in rows {
-            let mut f = flight.clone();
-            if let Err(e) = process_row(row, &mut f) {
-                postgis_error!("(get_flights) could not get position data: {}", e);
-                continue;
-            }
+        let flight_it = rows.into_iter().filter_map(|row| {
+            process_row(row, flight)
+                .map_err(|e| {
+                    postgis_error!("could not get position data for row: {e}");
+                })
+                .ok()
+        });
 
-            result.push(f);
-        }
+        // 'extend' can take an iterator argument
+        result.extend(flight_it);
     }
 
     Ok(result)
@@ -606,12 +595,12 @@ pub async fn get_flights(request: GetFlightsRequest) -> Result<Vec<Flight>, Flig
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{Duration, Utc};
+    use lib_common::time::{Duration, Utc};
 
     #[tokio::test]
     async fn ut_client_failure() {
-        crate::get_log_handle().await;
-        ut_info!("(ut_client_failure) start");
+        lib_common::logger::get_log_handle().await;
+        ut_info!("start");
 
         let item = UpdateFlightPathRequest {
             flight_identifier: Some("test".to_string()),
@@ -626,6 +615,53 @@ mod tests {
         let result = update_flight_path(item).await.unwrap_err();
         assert_eq!(result, PostgisError::FlightPath(FlightError::DBError));
 
-        ut_info!("(ut_client_failure) success");
+        ut_info!("success");
+    }
+
+    #[test]
+    fn test_flight_error_display() {
+        assert_eq!(
+            FlightError::AircraftId.to_string(),
+            "Invalid aircraft ID provided."
+        );
+        assert_eq!(
+            FlightError::AircraftType.to_string(),
+            "Invalid aircraft type provided."
+        );
+        assert_eq!(
+            FlightError::Location.to_string(),
+            "Invalid location provided."
+        );
+        assert_eq!(FlightError::Time.to_string(), "Invalid time provided.");
+        assert_eq!(FlightError::Label.to_string(), "Invalid label provided.");
+        assert_eq!(
+            FlightError::Client.to_string(),
+            "Could not get backend client."
+        );
+        assert_eq!(FlightError::DBError.to_string(), "Unknown backend error.");
+        assert_eq!(
+            FlightError::Segments.to_string(),
+            "Could not segmentize path."
+        );
+        assert_eq!(
+            FlightError::Intersection.to_string(),
+            "Flight paths intersect."
+        );
+    }
+
+    #[test]
+    fn test_validate_flight_identifier() {
+        let identifier = Some("test".to_string());
+
+        // valid
+        validate_flight_identifier(&identifier).unwrap();
+
+        let identifier = None;
+        let error = validate_flight_identifier(&identifier).unwrap_err();
+        assert_eq!(error, PostgisError::FlightPath(FlightError::Label));
+
+        let identifier = Some("".to_string());
+        let error = validate_flight_identifier(&identifier).unwrap_err();
+        assert_eq!(error, PostgisError::FlightPath(FlightError::Label));
     }
 }

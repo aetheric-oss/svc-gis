@@ -133,7 +133,7 @@ where
     /// ```
     /// use lib_common::grpc::get_endpoint_from_env;
     /// use svc_gis_client_grpc::prelude::*;
-    /// use chrono::Utc;
+    /// use lib_common::time::Utc;
     ///
     /// async fn example () -> Result<(), Box<dyn std::error::Error>> {
     ///     let (host, port) = get_endpoint_from_env("SERVER_HOSTNAME", "SERVER_PORT_GRPC");
@@ -195,6 +195,42 @@ where
         request: super::BestPathRequest,
     ) -> Result<tonic::Response<super::BestPathResponse>, tonic::Status>;
 
+    /// Returns a [`tonic::Response`] containing a [`CheckIntersectionResponse`](super::CheckIntersectionResponse)
+    /// Takes an [`CheckIntersectionRequest`](super::CheckIntersectionRequest).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`tonic::Status`] with [`Code::Unknown`](tonic::Code::Unknown) if
+    /// the server is not ready.
+    ///
+    /// # Examples
+    /// ```
+    /// use lib_common::grpc::get_endpoint_from_env;
+    /// use lib_common::time::{Utc, Timestamp};
+    /// use svc_gis_client_grpc::prelude::*;
+    ///
+    /// async fn example () -> Result<(), Box<dyn std::error::Error>> {
+    ///     let (host, port) = get_endpoint_from_env("SERVER_HOSTNAME", "SERVER_PORT_GRPC");
+    ///     let client = GisClient::new_client(&host, port, "gis");
+    ///     let time_start: Timestamp = Utc::now().into();
+    ///     let time_end: Timestamp = Utc::now().into();
+    ///     let request = gis::CheckIntersectionRequest {
+    ///         origin_identifier: "Kamino".to_string(),
+    ///         target_identifier: "Coruscant".to_string(),
+    ///         path: vec![],
+    ///         time_start: Some(time_start),
+    ///         time_end: Some(time_end)
+    ///     };
+    ///     let response = client.check_intersection(request).await?;
+    ///     println!("RESPONSE={:?}", response.into_inner());
+    ///     Ok(())
+    /// }
+    /// ```
+    async fn check_intersection(
+        &self,
+        request: super::CheckIntersectionRequest,
+    ) -> Result<tonic::Response<super::CheckIntersectionResponse>, tonic::Status>;
+
     /// Returns a [`tonic::Response`] containing a [`GetFlightsResponse`](super::GetFlightsResponse)
     /// Takes an [`GetFlightsRequest`](super::GetFlightsRequest).
     ///
@@ -231,37 +267,4 @@ where
         &self,
         request: super::GetFlightsRequest,
     ) -> Result<tonic::Response<super::GetFlightsResponse>, tonic::Status>;
-
-    // /// Returns a [`tonic::Response`] containing a [`NearestNeighborResponse`](super::NearestNeighborResponse)
-    // /// Takes an [`NearestNeighborRequest`](super::NearestNeighborRequest).
-    // ///
-    // /// # Errors
-    // ///
-    // /// Returns [`tonic::Status`] with [`Code::Unknown`](tonic::Code::Unknown) if
-    // /// the server is not ready.
-    // ///
-    // /// # Examples
-    // /// ```
-    // /// use lib_common::grpc::get_endpoint_from_env;
-    // /// use svc_gis_client_grpc::prelude::*;
-    // ///
-    // /// async fn example () -> Result<(), Box<dyn std::error::Error>> {
-    // ///     let (host, port) = get_endpoint_from_env("SERVER_HOSTNAME", "SERVER_PORT_GRPC");
-    // ///     let client = GisClient::new_client(&host, port, "gis");
-    // ///     let request = gis::NearestNeighborRequest {
-    // ///         start_node_id: "00000000-0000-0000-0000-000000000000".to_string(),
-    // ///         start_type: gis::NodeType::Vertiport as i32,
-    // ///         end_type: gis::NodeType::Vertiport as i32,
-    // ///         limit: 10,
-    // ///         max_range_meters: 3000.0,
-    // ///     };
-    // ///     let response = client.nearest_neighbors(request).await?;
-    // ///     println!("RESPONSE={:?}", response.into_inner());
-    // ///     Ok(())
-    // /// }
-    // /// ```
-    // async fn nearest_neighbors(
-    //     &self,
-    //     request: super::NearestNeighborRequest,
-    // ) -> Result<tonic::Response<super::NearestNeighborResponse>, tonic::Status>;
 }

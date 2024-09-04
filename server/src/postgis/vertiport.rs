@@ -2,10 +2,12 @@
 
 use super::{PostgisError, DEFAULT_SRID, PSQL_SCHEMA};
 use crate::grpc::server::grpc_server;
-use chrono::{DateTime, Utc};
+use deadpool_postgres::Object;
 use grpc_server::Vertiport as RequestVertiport;
 use grpc_server::ZoneType;
+use lib_common::time::{DateTime, Utc};
 use postgis::ewkb::PointZ;
+use std::fmt::{self, Display, Formatter};
 
 /// Allowed characters in a label
 pub const IDENTIFIER_REGEX: &str = r"^[\-0-9A-Za-z_\.]{1,255}$";
@@ -38,8 +40,8 @@ pub enum VertiportError {
     Timestamp,
 }
 
-impl std::fmt::Display for VertiportError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+impl Display for VertiportError {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
             VertiportError::VertiportId => write!(f, "Invalid vertiport ID provided."),
             VertiportError::NoVertiports => write!(f, "No vertiports were provided."),
@@ -58,6 +60,25 @@ fn get_table_name() -> &'static str {
     FULL_NAME
 }
 
+/// Gets a connected postgis client from the pool
+#[cfg(not(tarpaulin_include))]
+// no_coverage: (R5) needs a PostGIS backend to test
+async fn get_client() -> Result<Object, PostgisError> {
+    crate::postgis::DEADPOOL_POSTGIS
+        .get()
+        .ok_or_else(|| {
+            postgis_error!("could not get psql pool.");
+
+            PostgisError::Vertiport(VertiportError::Client)
+        })?
+        .get()
+        .await
+        .map_err(|e| {
+            postgis_error!("could not get client from psql connection pool: {}", e);
+            PostgisError::Vertiport(VertiportError::Client)
+        })
+}
+
 /// Helper Struct for Validating Requests
 struct Vertiport {
     identifier: String,
@@ -72,42 +93,35 @@ impl TryFrom<RequestVertiport> for Vertiport {
     type Error = VertiportError;
 
     fn try_from(vertiport: RequestVertiport) -> Result<Self, Self::Error> {
-        if let Err(e) = super::utils::check_string(&vertiport.identifier, IDENTIFIER_REGEX) {
+        super::utils::check_string(&vertiport.identifier, IDENTIFIER_REGEX).map_err(|e| {
             postgis_error!(
-                "(try_from RequestVertiport) Vertiport {} has invalid label {:?}: {}",
+                "Vertiport {} has invalid identifier {:?}: {}",
                 vertiport.identifier,
-                vertiport.label,
+                vertiport.identifier,
                 e
             );
 
-            return Err(VertiportError::Identifier);
-        }
+            VertiportError::Identifier
+        })?;
 
-        let geom = match super::utils::polygon_from_vertices_z(
-            &vertiport.vertices,
-            vertiport.altitude_meters,
-        ) {
-            Ok(geom) => geom,
-            Err(e) => {
-                postgis_error!(
-                    "(try_from RequestVertiport) Error converting vertiport polygon: {}",
-                    e.to_string()
-                );
-                return Err(VertiportError::Location);
-            }
-        };
+        let geom =
+            super::utils::polygon_from_vertices_z(&vertiport.vertices, vertiport.altitude_meters)
+                .map_err(|e| {
+                postgis_error!("Error converting vertiport polygon: {}", e.to_string());
+                VertiportError::Location
+            })?;
 
-        let Some(timestamp) = vertiport.timestamp_network else {
+        let timestamp = vertiport.timestamp_network.clone().ok_or_else(|| {
             postgis_error!(
-                "(try_from RequestVertiport) Vertiport {} has invalid timestamp {:?}",
+                "Vertiport {} has invalid timestamp {:?}",
                 vertiport.identifier,
                 vertiport.timestamp_network
             );
 
-            return Err(VertiportError::Timestamp);
-        };
+            VertiportError::Timestamp
+        })?;
 
-        // TODO(R4): Check altitude
+        // TODO(R5): Check altitude
 
         Ok(Vertiport {
             identifier: vertiport.identifier,
@@ -121,6 +135,8 @@ impl TryFrom<RequestVertiport> for Vertiport {
 }
 
 /// Initialize the vertiports table in the PostGIS database
+#[cfg(not(tarpaulin_include))]
+// no_coverage: (R5) needs a PostGIS backend to test
 pub async fn psql_init() -> Result<(), PostgisError> {
     // Create Vertiport Table
     let statements = vec![format!(
@@ -143,34 +159,24 @@ pub async fn psql_init() -> Result<(), PostgisError> {
 }
 
 /// Update vertiports in the PostGIS database
-pub async fn update_vertiports(vertiports: Vec<RequestVertiport>) -> Result<(), VertiportError> {
-    postgis_debug!("(update_vertiports) entry.");
+#[cfg(not(tarpaulin_include))]
+// no_coverage: (R5) needs a PostGIS backend to test
+pub async fn update_vertiports(vertiports: Vec<RequestVertiport>) -> Result<(), PostgisError> {
+    postgis_debug!("entry.");
     if vertiports.is_empty() {
-        return Err(VertiportError::NoVertiports);
+        return Err(PostgisError::Vertiport(VertiportError::NoVertiports));
     }
 
     let vertiports: Vec<Vertiport> = vertiports
         .into_iter()
         .map(Vertiport::try_from)
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(PostgisError::Vertiport)?;
 
-    let Some(pool) = crate::postgis::DEADPOOL_POSTGIS.get() else {
-        postgis_error!("(update_vertiports) could not get psql pool.");
-
-        return Err(VertiportError::Client);
-    };
-
-    let mut client = pool.get().await.map_err(|e| {
-        postgis_error!(
-            "(update_vertiports) could not get client from psql connection pool: {}",
-            e
-        );
-        VertiportError::Client
-    })?;
-
+    let mut client = get_client().await?;
     let transaction = client.transaction().await.map_err(|e| {
-        postgis_error!("(update_vertiports) could not create transaction: {}", e);
-        VertiportError::DBError
+        postgis_error!("could not create transaction: {}", e);
+        PostgisError::Vertiport(VertiportError::DBError)
     })?;
 
     let stmt = transaction
@@ -228,11 +234,8 @@ pub async fn update_vertiports(vertiports: Vec<RequestVertiport>) -> Result<(), 
         ))
         .await
         .map_err(|e| {
-            postgis_error!(
-                "(update_vertiports) could not prepare cached statement: {}",
-                e
-            );
-            VertiportError::DBError
+            postgis_error!("could not prepare cached statement: {}", e);
+            PostgisError::Vertiport(VertiportError::DBError)
         })?;
 
     for vertiport in &vertiports {
@@ -251,26 +254,25 @@ pub async fn update_vertiports(vertiports: Vec<RequestVertiport>) -> Result<(), 
             )
             .await
             .map_err(|e| {
-                postgis_error!("(update_vertiports) could not execute transaction: {}", e);
-                VertiportError::DBError
+                postgis_error!("could not execute transaction: {}", e);
+                PostgisError::Vertiport(VertiportError::DBError)
             })?;
     }
 
-    match transaction.commit().await {
-        Ok(_) => {
-            postgis_debug!("(update_vertiports) success.");
-            Ok(())
-        }
-        Err(e) => {
-            postgis_error!("(update_vertiports) could not commit transaction: {}", e);
-            Err(VertiportError::DBError)
-        }
-    }
+    transaction.commit().await.map_err(|e| {
+        postgis_error!("could not commit transaction: {}", e);
+        PostgisError::Vertiport(VertiportError::DBError)
+    })?;
+
+    postgis_debug!("success.");
+    Ok(())
 }
 
 /// Gets the central PointZ geometry of a vertiport (for routing) given its identifier.
+#[cfg(not(tarpaulin_include))]
+// no_coverage: (R5) needs a PostGIS backend to test
 pub async fn get_vertiport_centroidz(identifier: &str) -> Result<PointZ, PostgisError> {
-    postgis_debug!("(get_vertiport_centroidz) entry, vertiport: '{identifier}'.");
+    postgis_debug!("entry, vertiport: '{identifier}'.");
     let stmt = format!(
         r#"
         SELECT ST_Force3DZ (
@@ -282,30 +284,20 @@ pub async fn get_vertiport_centroidz(identifier: &str) -> Result<PointZ, Postgis
         table_name = get_table_name()
     );
 
-    let Some(pool) = crate::postgis::DEADPOOL_POSTGIS.get() else {
-        postgis_error!("(get_vertiport_centroidz) could not get psql pool.");
-
-        return Err(PostgisError::Vertiport(VertiportError::Client));
-    };
-
-    let client = pool.get().await.map_err(|e| {
-        postgis_error!(
-            "(get_vertiport_centroidz) could not get client from psql connection pool: {}",
-            e
-        );
-        PostgisError::Vertiport(VertiportError::Client)
-    })?;
-
-    client
+    get_client()
+        .await?
         .query_one(&stmt, &[&identifier])
         .await
         .map_err(|e| {
-            postgis_error!("(get_vertiport_centroidz) query failed: {}", e);
+            postgis_error!("query failed: {}", e);
             PostgisError::Vertiport(VertiportError::DBError)
         })?
         .try_get::<_, PointZ>(0)
         .map_err(|e| {
-            postgis_error!("(get_vertiport_centroidz) zero or more than one records found for vertiport '{identifier}': {}", e);
+            postgis_error!(
+                "zero or more than one records found for vertiport '{identifier}': {}",
+                e
+            );
             PostgisError::Vertiport(VertiportError::DBError)
         })
 }
@@ -315,7 +307,7 @@ mod tests {
     use super::*;
     use crate::grpc::server::grpc_server::Coordinates;
     use crate::postgis::utils;
-    use uuid::Uuid;
+    use lib_common::uuid::Uuid;
 
     fn square(latitude: f64, longitude: f64) -> Vec<(f64, f64)> {
         vec![
@@ -393,7 +385,7 @@ mod tests {
             .collect();
 
         let result = update_vertiports(vertiports).await.unwrap_err();
-        assert_eq!(result, VertiportError::Client);
+        assert_eq!(result, PostgisError::Vertiport(VertiportError::Client));
     }
 
     #[tokio::test]
@@ -420,7 +412,7 @@ mod tests {
             }];
 
             let result = update_vertiports(vertiports).await.unwrap_err();
-            assert_eq!(result, VertiportError::Identifier);
+            assert_eq!(result, PostgisError::Vertiport(VertiportError::Identifier));
         }
     }
 
@@ -428,7 +420,10 @@ mod tests {
     async fn ut_vertiports_request_to_gis_invalid_no_nodes() {
         let vertiports: Vec<RequestVertiport> = vec![];
         let result = update_vertiports(vertiports).await.unwrap_err();
-        assert_eq!(result, VertiportError::NoVertiports);
+        assert_eq!(
+            result,
+            PostgisError::Vertiport(VertiportError::NoVertiports)
+        );
     }
 
     #[tokio::test]
@@ -454,7 +449,7 @@ mod tests {
             }];
 
             let result = update_vertiports(vertiports).await.unwrap_err();
-            assert_eq!(result, VertiportError::Location);
+            assert_eq!(result, PostgisError::Vertiport(VertiportError::Location));
         }
 
         let polygons = vec![
@@ -485,7 +480,36 @@ mod tests {
             }];
 
             let result = update_vertiports(vertiports).await.unwrap_err();
-            assert_eq!(result, VertiportError::Location);
+            assert_eq!(result, PostgisError::Vertiport(VertiportError::Location));
         }
+    }
+
+    #[test]
+    fn test_vertiport_error_display() {
+        let error = VertiportError::VertiportId;
+        assert_eq!(error.to_string(), "Invalid vertiport ID provided.");
+
+        let error = VertiportError::NoVertiports;
+        assert_eq!(error.to_string(), "No vertiports were provided.");
+
+        let error = VertiportError::Identifier;
+        assert_eq!(error.to_string(), "Invalid label provided.");
+
+        let error = VertiportError::Location;
+        assert_eq!(error.to_string(), "Invalid vertices provided.");
+
+        let error = VertiportError::Client;
+        assert_eq!(error.to_string(), "Could not get backend client.");
+
+        let error = VertiportError::DBError;
+        assert_eq!(error.to_string(), "Unknown backend error.");
+
+        let error = VertiportError::Timestamp;
+        assert_eq!(error.to_string(), "Invalid timestamp provided.");
+    }
+
+    #[test]
+    fn test_get_table_name() {
+        assert_eq!(get_table_name(), r#""arrow"."vertiports""#);
     }
 }

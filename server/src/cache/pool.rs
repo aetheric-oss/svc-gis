@@ -59,29 +59,27 @@ impl RedisPool {
     pub async fn new(config: &crate::config::Config, key_folder: &str) -> Result<Self, ()> {
         // the .env file must have REDIS__URL="redis://\<host\>:\<port\>"
         let cfg: deadpool_redis::Config = config.redis.clone();
-        let Some(details) = cfg.url.clone() else {
-            cache_error!("(RedisPool new) no connection address found.");
-            return Err(());
-        };
+        let details = cfg.url.clone().ok_or_else(|| {
+            cache_error!("no connection address found.");
+        })?;
 
         cache_info!(
-            "(RedisPool new) creating pool with key folder '{}' at {:?}...",
+            "creating pool with key folder '{}' at {:?}...",
             key_folder,
             details
         );
-        match cfg.create_pool(Some(Runtime::Tokio1)) {
-            Ok(pool) => {
-                cache_info!("(RedisPool new) pool created.");
-                Ok(RedisPool {
+
+        cfg.create_pool(Some(Runtime::Tokio1))
+            .map_err(|e| {
+                cache_error!("could not create pool: {}", e);
+            })
+            .map(|pool| {
+                cache_info!("pool created.");
+                Self {
                     pool,
                     key_folder: String::from(key_folder),
-                })
-            }
-            Err(e) => {
-                cache_error!("(RedisPool new) could not create pool: {}", e);
-                Err(())
-            }
-        }
+                }
+            })
     }
 
     fn key_folder(&self) -> String {
@@ -92,9 +90,6 @@ impl RedisPool {
     where
         T: for<'a> Deserialize<'a> + Clone + Debug,
     {
-        let prefix = format!("(process_bulk [{}]) ", std::any::type_name::<T>());
-        cache_debug!("({prefix}) processing bulk values: {:?}", values);
-
         // Remove nil values
         let values = values
             .into_iter()
@@ -102,7 +97,7 @@ impl RedisPool {
                 redis::Value::Nil => None,
                 redis::Value::Bulk(values) => Some(values),
                 _ => {
-                    cache_error!("({prefix}) not valid data: {:?}", value);
+                    cache_error!("not valid data: {:?}", value);
                     None
                 }
             })
@@ -113,68 +108,91 @@ impl RedisPool {
             .into_iter()
             .filter_map(|value| {
                 let redis::Value::Data(data) = value else {
-                    cache_error!("({prefix}) not valid data: {:?}", value);
+                    cache_error!("not valid data: {:?}", value);
                     return None;
                 };
 
-                match serde_json::from_slice::<T>(&data) {
-                    Ok(value) => Some(value.to_owned()),
-                    Err(e) => {
-                        cache_error!("({prefix}) could not deserialize value: {:?}", e);
-                        None
-                    }
-                }
+                serde_json::from_slice::<T>(&data)
+                    .map_err(|e| {
+                        cache_error!("could not deserialize value: {:?}", e);
+                    })
+                    .map(|value| value.to_owned())
+                    .ok()
             })
             .collect::<Vec<T>>();
 
-        cache_debug!("({prefix}) retrieved values: {:?}", values);
+        cache_debug!("retrieved values: {:?}", values);
         Ok(values)
     }
 
     ///
     /// Set the value of multiple keys
     ///
+    #[cfg(not(tarpaulin_include))]
+    // no_coverage: (Rnever) needs redis backend to integration test
     pub async fn pop<T, C>(&mut self, connection: &mut C) -> Result<Vec<T>, CacheError>
     where
         T: for<'a> Deserialize<'a> + Clone + Debug,
         C: redis::aio::ConnectionLike,
     {
-        let prefix = format!("(pop [{}]) ", std::any::type_name::<T>());
-        cache_debug!("({prefix}) popping values...");
-
         // TODO(R5): As static when that is supported
-        let Some(pop_count) = NonZeroUsize::new(20) else {
-            cache_error!("(pop) Operation failed, could not create NonZeroUsize.");
-            return Err(CacheError::OperationFailed);
-        };
+        let pop_count = NonZeroUsize::new(20).ok_or_else(|| {
+            cache_error!("Operation failed, could not create NonZeroUsize.");
+            CacheError::OperationFailed
+        })?;
 
         let mut pipe = redis::pipe();
         let result = pipe
             .atomic()
             .rpop(self.key_folder(), Some(pop_count))
             .query_async(connection)
-            .await;
+            .await
+            .map_err(|e| {
+                cache_error!("Operation failed, redis error: {}", e);
+                CacheError::OperationFailed
+            })?;
 
-        match result {
-            Ok(redis::Value::Bulk(values)) => {
-                if values.is_empty() {
-                    cache_debug!("({prefix}) No values found.");
-                    return Ok(vec![]);
-                }
+        let redis::Value::Bulk(values) = result else {
+            cache_error!("Operation failed, unexpected redis response: {:?}", result);
+            return Err(CacheError::OperationFailed);
+        };
 
-                RedisPool::process_bulk::<T>(values)
-            }
-            Ok(value) => {
-                cache_error!(
-                    "(pop) Operation failed, unexpected redis response: {:?}",
-                    value
-                );
-                Err(CacheError::OperationFailed)
-            }
-            Err(e) => {
-                cache_error!("(pop) Operation failed, redis error: {}", e);
-                Err(CacheError::OperationFailed)
-            }
+        if values.is_empty() {
+            cache_debug!("No values found.");
+            return Ok(vec![]);
         }
+
+        RedisPool::process_bulk::<T>(values)
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cache_error_display() {
+        assert_eq!(
+            format!("{}", CacheError::CouldNotConfigure),
+            "Could not configure cache."
+        );
+        assert_eq!(
+            format!("{}", CacheError::CouldNotConnect),
+            "Could not connect to cache."
+        );
+        assert_eq!(
+            format!("{}", CacheError::OperationFailed),
+            "Cache operation failed."
+        );
+    }
+
+    // #[tokio::test]
+    // async fn test_redis_pool_debug() {
+    //     let key_folder = "test";
+    //     let pool = RedisPool::new(&crate::config::Config::default(), key_folder).await.unwrap();
+    //     assert_eq!(
+    //         format!("{:?}", pool),
+    //         format!("RedisPool {{ key_folder: \"{key_folder}\" }}")
+    //     );
+    // }
 }
