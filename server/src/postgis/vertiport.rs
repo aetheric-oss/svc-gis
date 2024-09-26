@@ -1,12 +1,13 @@
 //! Updates vertiports in the PostGIS database.
 
+use super::utils::{check_string, multipoint_from_points, polygon_from_vertices_z};
 use super::{PostgisError, DEFAULT_SRID, PSQL_SCHEMA};
 use crate::grpc::server::grpc_server;
 use deadpool_postgres::Object;
 use grpc_server::Vertiport as RequestVertiport;
 use grpc_server::ZoneType;
 use lib_common::time::{DateTime, Utc};
-use postgis::ewkb::PointZ;
+use postgis::ewkb::{MultiPointZ, PointZ, PolygonZ};
 use std::fmt::{self, Display, Formatter};
 
 /// Allowed characters in a label
@@ -30,6 +31,12 @@ pub enum VertiportError {
     /// Location of one or more vertices is invalid
     Location,
 
+    /// No Ingress
+    Ingress,
+
+    /// No Egress
+    Egress,
+
     /// Could not get client
     Client,
 
@@ -43,10 +50,12 @@ pub enum VertiportError {
 impl Display for VertiportError {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
-            VertiportError::VertiportId => write!(f, "Invalid vertiport ID provided."),
             VertiportError::NoVertiports => write!(f, "No vertiports were provided."),
+            VertiportError::VertiportId => write!(f, "Invalid vertiport ID provided."),
             VertiportError::Identifier => write!(f, "Invalid label provided."),
             VertiportError::Location => write!(f, "Invalid vertices provided."),
+            VertiportError::Ingress => write!(f, "No ingress line provided."),
+            VertiportError::Egress => write!(f, "No egress line provided."),
             VertiportError::Client => write!(f, "Could not get backend client."),
             VertiportError::DBError => write!(f, "Unknown backend error."),
             VertiportError::Timestamp => write!(f, "Invalid timestamp provided."),
@@ -55,7 +64,7 @@ impl Display for VertiportError {
 }
 
 /// Gets the name of this module's table
-fn get_table_name() -> &'static str {
+pub fn get_table_name() -> &'static str {
     static FULL_NAME: &str = const_format::formatcp!(r#""{PSQL_SCHEMA}"."vertiports""#,);
     FULL_NAME
 }
@@ -83,7 +92,9 @@ async fn get_client() -> Result<Object, PostgisError> {
 struct Vertiport {
     identifier: String,
     label: Option<String>,
-    geom: postgis::ewkb::PolygonZ,
+    geom: PolygonZ,
+    ingress_0: MultiPointZ,
+    egress_0: MultiPointZ,
     altitude_meters_min: f32,
     altitude_meters_max: f32,
     timestamp: DateTime<Utc>,
@@ -93,7 +104,7 @@ impl TryFrom<RequestVertiport> for Vertiport {
     type Error = VertiportError;
 
     fn try_from(vertiport: RequestVertiport) -> Result<Self, Self::Error> {
-        super::utils::check_string(&vertiport.identifier, IDENTIFIER_REGEX).map_err(|e| {
+        check_string(&vertiport.identifier, IDENTIFIER_REGEX).map_err(|e| {
             postgis_error!(
                 "Vertiport {} has invalid identifier {:?}: {}",
                 vertiport.identifier,
@@ -104,9 +115,8 @@ impl TryFrom<RequestVertiport> for Vertiport {
             VertiportError::Identifier
         })?;
 
-        let geom =
-            super::utils::polygon_from_vertices_z(&vertiport.vertices, vertiport.altitude_meters)
-                .map_err(|e| {
+        let geom = polygon_from_vertices_z(&vertiport.vertices, vertiport.altitude_meters)
+            .map_err(|e| {
                 postgis_error!("Error converting vertiport polygon: {}", e.to_string());
                 VertiportError::Location
             })?;
@@ -121,12 +131,35 @@ impl TryFrom<RequestVertiport> for Vertiport {
             VertiportError::Timestamp
         })?;
 
-        // TODO(R5): Check altitude
+        let ingress_0 = vertiport
+            .ingresses
+            .get(0)
+            .and_then(|guide| multipoint_from_points(&guide.path).ok())
+            .ok_or_else(|| {
+                postgis_error!(
+                    "Vertiport {} has invalid ingress line",
+                    vertiport.identifier
+                );
+
+                VertiportError::Ingress
+            })?;
+
+        let egress_0 = vertiport
+            .egresses
+            .get(0)
+            .and_then(|guide| multipoint_from_points(&guide.path).ok())
+            .ok_or_else(|| {
+                postgis_error!("Vertiport {} has invalid egress line", vertiport.identifier);
+
+                VertiportError::Egress
+            })?;
 
         Ok(Vertiport {
             identifier: vertiport.identifier,
             label: vertiport.label,
             geom,
+            ingress_0,
+            egress_0,
             altitude_meters_min: vertiport.altitude_meters,
             altitude_meters_max: vertiport.altitude_meters + VERTIPORT_CLEARANCE_METERS,
             timestamp: timestamp.into(),
@@ -145,6 +178,8 @@ pub async fn psql_init() -> Result<(), PostgisError> {
             "label" VARCHAR(255) NOT NULL,
             "zone_id" INTEGER NOT NULL,
             "geom" GEOMETRY, -- 3D Polygon
+            "ingress_0" GEOMETRY,
+            "egress_0" GEOMETRY,
             "altitude_meters" FLOAT(4),
             "last_updated" TIMESTAMPTZ,
             CONSTRAINT "fk_zone"
@@ -195,12 +230,12 @@ pub async fn update_vertiports(vertiports: Vec<RequestVertiport>) -> Result<(), 
                         $2::GEOMETRY(POLYGONZ, {DEFAULT_SRID}),
                         0,
                         0,
-                        ($4::FLOAT(4) - $3::FLOAT(4))
+                        ($6::FLOAT(4) - $5::FLOAT(4))
                     ),
-                    $3,
-                    $4,
+                    $5,
                     $6,
-                    $7
+                    $8,
+                    $9
                 )
                 ON CONFLICT ("identifier") DO UPDATE
                 SET
@@ -211,6 +246,8 @@ pub async fn update_vertiports(vertiports: Vec<RequestVertiport>) -> Result<(), 
                 "identifier",
                 "zone_id",
                 "geom",
+                "ingress_0",
+                "egress_0",
                 "label",
                 "altitude_meters",
                 "last_updated"
@@ -218,15 +255,19 @@ pub async fn update_vertiports(vertiports: Vec<RequestVertiport>) -> Result<(), 
                 $1::VARCHAR,
                 (SELECT "id" FROM "tmp"),
                 $2::GEOMETRY,
-                $5::VARCHAR,
-                $3::FLOAT(4),
-                $7::TIMESTAMPTZ
+                $3::GEOMETRY,
+                $4::GEOMETRY,
+                $7::VARCHAR,
+                $5::FLOAT(4),
+                $9::TIMESTAMPTZ
             )
             ON CONFLICT ("identifier") DO UPDATE
                 SET
-                    "label" = coalesce($5, {vertiports_table_name}."label"),
+                    "label" = coalesce($7, {vertiports_table_name}."label"),
                     "zone_id" = EXCLUDED."zone_id",
                     "geom" = EXCLUDED."geom",
+                    "ingress_0" = EXCLUDED."ingress_0",
+                    "egress_0" = EXCLUDED."egress_0",
                     "altitude_meters" = EXCLUDED."altitude_meters",
                     "last_updated" = EXCLUDED."last_updated";"#,
             vertiports_table_name = get_table_name(),
@@ -245,6 +286,8 @@ pub async fn update_vertiports(vertiports: Vec<RequestVertiport>) -> Result<(), 
                 &[
                     &vertiport.identifier,
                     &vertiport.geom,
+                    &vertiport.ingress_0,
+                    &vertiport.egress_0,
                     &vertiport.altitude_meters_min,
                     &vertiport.altitude_meters_max,
                     &vertiport.label,
@@ -305,8 +348,7 @@ pub async fn get_vertiport_centroidz(identifier: &str) -> Result<PointZ, Postgis
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::grpc::server::grpc_server::Coordinates;
-    use crate::postgis::utils;
+    use crate::grpc::server::grpc_server::{Coordinates, Guide, PointZ as GrpcPointZ};
     use lib_common::uuid::Uuid;
 
     fn square(latitude: f64, longitude: f64) -> Vec<(f64, f64)> {
@@ -331,6 +373,20 @@ mod tests {
             .iter()
             .map(|(label, points, altitude_meters)| RequestVertiport {
                 label: Some(label.to_string()),
+                ingresses: vec![Guide {
+                    path: vec![GrpcPointZ {
+                        latitude: 52.3745905,
+                        longitude: 4.9160036,
+                        altitude_meters: 10.0,
+                    }],
+                }],
+                egresses: vec![Guide {
+                    path: vec![GrpcPointZ {
+                        latitude: 52.3745905,
+                        longitude: 4.9160036,
+                        altitude_meters: 10.0,
+                    }],
+                }],
                 vertices: points
                     .iter()
                     .map(|(latitude, longitude)| Coordinates {
@@ -356,8 +412,7 @@ mod tests {
         for (i, vertiport) in vertiports.iter().enumerate() {
             assert_eq!(vertiport.label, converted[i].label);
             assert_eq!(
-                utils::polygon_from_vertices_z(&vertiport.vertices, vertiport.altitude_meters)
-                    .unwrap(),
+                polygon_from_vertices_z(&vertiport.vertices, vertiport.altitude_meters).unwrap(),
                 converted[i].geom
             );
         }
@@ -371,6 +426,20 @@ mod tests {
             .iter()
             .map(|(label, points)| RequestVertiport {
                 label: Some(label.to_string()),
+                ingresses: vec![Guide {
+                    path: vec![GrpcPointZ {
+                        latitude: 52.3745905,
+                        longitude: 4.9160036,
+                        altitude_meters: 10.0,
+                    }],
+                }],
+                egresses: vec![Guide {
+                    path: vec![GrpcPointZ {
+                        latitude: 52.3745905,
+                        longitude: 4.9160036,
+                        altitude_meters: 10.0,
+                    }],
+                }],
                 vertices: points
                     .iter()
                     .map(|(latitude, longitude)| Coordinates {
@@ -399,6 +468,20 @@ mod tests {
         ] {
             let vertiports: Vec<RequestVertiport> = vec![RequestVertiport {
                 label: None,
+                ingresses: vec![Guide {
+                    path: vec![GrpcPointZ {
+                        latitude: 52.3745905,
+                        longitude: 4.9160036,
+                        altitude_meters: 10.0,
+                    }],
+                }],
+                egresses: vec![Guide {
+                    path: vec![GrpcPointZ {
+                        latitude: 52.3745905,
+                        longitude: 4.9160036,
+                        altitude_meters: 10.0,
+                    }],
+                }],
                 vertices: square(52.3745905, 4.9160036)
                     .iter()
                     .map(|(latitude, longitude)| Coordinates {

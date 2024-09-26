@@ -118,6 +118,9 @@ services:
       - LOG_CONFIG
 
   example:
+    depends_on:
+      web-server:
+        condition: service_healthy
     extends:
       file: docker-compose-base.yml
       service: example
@@ -133,8 +136,9 @@ services:
     extends:
       file: docker-compose-base.yml
       service: it-coverage
-    links:
-      - postgis
+    depends_on:
+      web-server:
+        condition: service_healthy
     volumes:
       - type: volume
         source: postgis-ssl

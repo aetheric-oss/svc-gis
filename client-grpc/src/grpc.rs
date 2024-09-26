@@ -36,6 +36,14 @@ pub struct Coordinates {
     #[prost(double, tag = "2")]
     pub longitude: f64,
 }
+/// A path into or out of a vertiport
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Guide {
+    /// Path into or out of a vertiport
+    #[prost(message, repeated, tag = "1")]
+    pub path: ::prost::alloc::vec::Vec<PointZ>,
+}
 /// Vertiport Type
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -49,11 +57,17 @@ pub struct Vertiport {
     /// Altitude of this vertiport
     #[prost(float, tag = "3")]
     pub altitude_meters: f32,
+    /// Ingress waypoints for this vertiport
+    #[prost(message, repeated, tag = "4")]
+    pub ingresses: ::prost::alloc::vec::Vec<Guide>,
+    /// Egress waypoints for this vertiport
+    #[prost(message, repeated, tag = "5")]
+    pub egresses: ::prost::alloc::vec::Vec<Guide>,
     /// Vertiport label
-    #[prost(string, optional, tag = "4")]
+    #[prost(string, optional, tag = "6")]
     pub label: ::core::option::Option<::prost::alloc::string::String>,
     /// Network Timestamp
-    #[prost(message, optional, tag = "5")]
+    #[prost(message, optional, tag = "7")]
     pub timestamp_network: ::core::option::Option<::lib_common::time::Timestamp>,
 }
 /// Waypoint Type

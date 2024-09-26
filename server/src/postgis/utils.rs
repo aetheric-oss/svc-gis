@@ -8,7 +8,7 @@ use deadpool_postgres::tokio_postgres::{types::ToSql, Row};
 use geo::algorithm::haversine_distance::HaversineDistance;
 use geo::point;
 use lib_common::time::{DateTime, Duration, Utc};
-use postgis::ewkb::{LineStringT, LineStringZ, Point, PointZ, PolygonZ};
+use postgis::ewkb::{LineStringT, LineStringZ, MultiPointZ, Point, PointZ, PolygonZ};
 use regex;
 use std::fmt::{self, Display, Formatter};
 
@@ -19,7 +19,7 @@ pub const MIN_NUM_POLYGON_VERTICES: usize = 4;
 
 /// Errors converting vertices to a PostGIS Polygon
 #[derive(Debug, Copy, Clone, PartialEq)]
-pub enum PolygonError {
+pub enum GeometryError {
     /// Not enough vertices
     VertexCount,
 
@@ -30,15 +30,15 @@ pub enum PolygonError {
     OutOfBounds,
 }
 
-impl Display for PolygonError {
+impl Display for GeometryError {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
-            PolygonError::VertexCount => write!(f, "Invalid number of vertices provided."),
-            PolygonError::OpenPolygon => write!(
+            GeometryError::VertexCount => write!(f, "Invalid number of vertices provided."),
+            GeometryError::OpenPolygon => write!(
                 f,
                 "The first and last vertices do not match (open polygon)."
             ),
-            PolygonError::OutOfBounds => write!(f, "One or more vertices are out of bounds."),
+            GeometryError::OutOfBounds => write!(f, "One or more vertices are out of bounds."),
         }
     }
 }
@@ -108,9 +108,9 @@ pub fn distance_meters(a: &PointZ, b: &PointZ) -> f32 {
 }
 
 /// Validate a PointZ
-pub fn validate_pointz(point: &PointZ) -> Result<(), PolygonError> {
+pub fn validate_pointz(point: &PointZ) -> Result<(), GeometryError> {
     if point.x < -180.0 || point.x > 180.0 || point.y < -90.0 || point.y > 90.0 {
-        return Err(PolygonError::OutOfBounds);
+        return Err(GeometryError::OutOfBounds);
     }
 
     Ok(())
@@ -156,17 +156,17 @@ impl From<Coordinates> for PointZ {
 pub fn polygon_from_vertices_z(
     vertices: &[Coordinates],
     altitude_meters: f32,
-) -> Result<PolygonZ, PolygonError> {
+) -> Result<PolygonZ, GeometryError> {
     let size = vertices.len();
 
     // Check that the zone has at least N vertices
     if size < MIN_NUM_POLYGON_VERTICES {
-        return Err(PolygonError::VertexCount);
+        return Err(GeometryError::VertexCount);
     }
 
     // Must be a closed polygon
     if vertices.first() != vertices.last() {
-        return Err(PolygonError::OpenPolygon);
+        return Err(GeometryError::OpenPolygon);
     }
 
     // Each coordinate must fit within the valid range of latitude and longitude
@@ -181,7 +181,7 @@ pub fn polygon_from_vertices_z(
         )
         .is_err()
     }) {
-        return Err(PolygonError::OutOfBounds);
+        return Err(GeometryError::OutOfBounds);
     }
 
     Ok(PolygonZ {
@@ -195,6 +195,34 @@ pub fn polygon_from_vertices_z(
                 .collect(),
             srid: Some(DEFAULT_SRID),
         }],
+        srid: Some(DEFAULT_SRID),
+    })
+}
+
+/// Generate a PostGIS linestring from a list of vertices
+/// Each vertex must be within the valid range of latitude and longitude
+pub fn multipoint_from_points(points: &[GrpcPointZ]) -> Result<MultiPointZ, GeometryError> {
+    if points.is_empty() {
+        return Err(GeometryError::VertexCount);
+    }
+
+    let points = points
+        .iter()
+        .map(|pt| PointZ {
+            x: pt.longitude,
+            y: pt.latitude,
+            z: pt.altitude_meters as f64,
+            srid: Some(DEFAULT_SRID),
+        })
+        .collect::<Vec<PointZ>>();
+
+    // Each coordinate must fit within the valid range of latitude and longitude
+    if points.iter().any(|pt| validate_pointz(pt).is_err()) {
+        return Err(GeometryError::OutOfBounds);
+    }
+
+    Ok(MultiPointZ {
+        points: points,
         srid: Some(DEFAULT_SRID),
     })
 }
@@ -433,7 +461,7 @@ mod tests {
         }
 
         let polygon = polygon_from_vertices_z(&vertices, 122.0).unwrap_err();
-        assert_eq!(polygon, PolygonError::VertexCount);
+        assert_eq!(polygon, GeometryError::VertexCount);
 
         // Close the polygon
         vertices.push(vertices.first().unwrap().clone());
@@ -476,7 +504,7 @@ mod tests {
 
         // Do not close the polygon
         let polygon = polygon_from_vertices_z(&vertices, 100.).unwrap_err();
-        assert_eq!(polygon, PolygonError::OpenPolygon);
+        assert_eq!(polygon, GeometryError::OpenPolygon);
 
         // Add an invalid vertex
         vertices.push(Coordinates {
@@ -488,7 +516,7 @@ mod tests {
         vertices.push(vertices.first().unwrap().clone());
 
         let polygon = polygon_from_vertices_z(&vertices, 100.).unwrap_err();
-        assert_eq!(polygon, PolygonError::OutOfBounds);
+        assert_eq!(polygon, GeometryError::OutOfBounds);
     }
 
     #[test]
@@ -532,16 +560,16 @@ mod tests {
 
     #[test]
     fn test_polygon_error_display() {
-        let error = PolygonError::VertexCount;
+        let error = GeometryError::VertexCount;
         assert_eq!(error.to_string(), "Invalid number of vertices provided.");
 
-        let error = PolygonError::OpenPolygon;
+        let error = GeometryError::OpenPolygon;
         assert_eq!(
             error.to_string(),
             "The first and last vertices do not match (open polygon)."
         );
 
-        let error = PolygonError::OutOfBounds;
+        let error = GeometryError::OutOfBounds;
         assert_eq!(error.to_string(), "One or more vertices are out of bounds.");
     }
 
